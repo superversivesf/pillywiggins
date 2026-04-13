@@ -1,0 +1,55 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: pillywiggins
+      POSTGRES_USER: pillywiggins
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-changeme}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pillywiggins"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6379:6379"
+
+  nats:
+    image: nats:2-alpine
+    command: nats-server -js
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+  agent:
+    build: .
+    command: python -m pillywiggins --channel telegram
+    env_file: .env
+    environment:
+      AGENT_ID: puck
+      CHANNEL: telegram
+      PERSONALITY_FILE: /config/telegram.yaml
+    volumes:
+      - ./personalities:/config:ro
+      - skills:/app/skills
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      nats:
+        condition: service_started
+
+volumes:
+  pgdata:
+  redisdata:
+  skills:

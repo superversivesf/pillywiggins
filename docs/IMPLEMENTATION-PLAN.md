@@ -34,7 +34,7 @@
   ├── docker-compose.yaml
   ├── Dockerfile
   ├── pyproject.toml
-  ├── .env.example
+  ├── env.example
   ├── .gitignore
   ├── personalities/
   │   └── discord.yaml
@@ -79,7 +79,7 @@
   ```
 - [ ] Create `pyproject.toml` with dependencies: `pydantic-ai`, `asyncpg`, `redis`, `nats-py`, `discord.py`, `apscheduler`, `pydantic-settings`, `pydantic`
 - [ ] Create `Dockerfile` (multi-stage: build with uv, runtime with Python 3.12 slim)
-- [ ] Create `.env.example` with all required environment variables:
+- [ ] Create `env.example` with all required environment variables:
   ```env
   # Database
   DATABASE_URL=postgresql://pillywiggins:password@postgres:5432/pillywiggins
@@ -900,7 +900,7 @@ Standalone checklist for bringing up the Docker Compose infrastructure from scra
 
 ### Secrets
 
-- [ ] Copy `.env.example` to `.env`
+- [ ] Copy `env.example` to `.env`
 - [ ] Fill in all tokens: `DISCORD_TOKEN`, `SLACK_BOT_TOKEN`, `TELEGRAM_TOKEN`, etc.
 - [ ] Set strong passwords for `PG_PASSWORD` and Redis
 - [ ] Confirm `.env` is in `.gitignore`
@@ -1064,7 +1064,7 @@ Key files from the project structure (overview-v2 §11) mapped to phases:
 | `pyproject.toml` | Project config, dependencies |
 | `Dockerfile` | Multi-stage container build |
 | `docker-compose.yaml` | All services: infra + agents |
-| `.env.example` | Environment variable template |
+| `env.example` | Environment variable template |
 | `.gitignore` | Includes `.env` |
 | `src/pillywiggins/__init__.py` | Package init |
 | `src/pillywiggins/__main__.py` | CLI entrypoint: `--channel` arg |

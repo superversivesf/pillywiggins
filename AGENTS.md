@@ -94,5 +94,5 @@ These recommend Dapr/K8s — the architecture we chose not to build. Kept for re
 - **vLLM vs Ollama** — Design-v2 mentions vLLM for production. We start with Ollama; vLLM is a future upgrade path if throughput becomes a bottleneck.
 - **Personality changes require `docker compose restart`** — YAML files are mounted read-only. Edit the YAML, then restart the agent service. No ConfigMap hot-reload.
 - **Docker Compose healthchecks are not K8s probes** — `depends_on: { condition: service_healthy }` uses the Compose healthcheck. Don't rely on K8s-style liveness probes.
-- **`.env` must never be committed** — `.gitignore` must include `.env`. Use `.env.example` as the template.
+- **`.env` must never be committed** — `.gitignore` must include `.env`. Use `env.example` as the template.
 - **Skill sandbox has limits** — Restricted subprocess with timeouts is not as strong as gVisor. Don't run untrusted code without user approval. See overview-v2 §9.
