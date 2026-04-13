@@ -1,0 +1,1154 @@
+# Pillywiggins: Implementation Plan & Checklist
+
+**Version 2.0 — April 2026**
+**Canonical architecture: `pillywiggins-overview-v2.md` (Docker Compose)**
+
+---
+
+## Phase Overview
+
+| Phase | Goal | Effort | Depends On |
+|-------|------|--------|------------|
+| 1 — One Agent Talks | Docker Compose infra + single Discord agent talking to Ollama | 30–40h | Nothing |
+| 2 — Memory Works | Private memory with RLS, personality from YAML, council memory schema | 40–60h | Phase 1 |
+| 3 — Skills System | Agents build, test, and deploy skills collaboratively | 50–70h | Phase 2 |
+| 4 — Second Agent + Communication | Two agents with isolated state, shared skills, council memory, per-agent cron | 30–40h | Phase 3 |
+| 5 — Full Fleet | All five channels live with complete feature set | 40–60h | Phase 4 |
+| 6 — Hardening | Rate limiting, logging, healthchecks, backups — 24/7 reliable | 40–50h | Phase 5 |
+
+---
+
+## Phase 1: One Agent Talks
+
+**Goal**: Docker Compose running PostgreSQL, Redis, NATS, and Ollama. A single Discord agent receives a message and responds using Ollama via PydanticAI. Conversation persists across container restarts.
+
+**Prerequisites**: A machine with NVIDIA GPU (16 GB+ VRAM), Docker + Docker Compose installed, NVIDIA Container Toolkit.
+
+### Tasks
+
+#### 1.1 Project scaffolding
+
+- [ ] Create repository with the structure from overview-v2 §11:
+  ```
+  pillywiggins/
+  ├── docker-compose.yaml
+  ├── Dockerfile
+  ├── pyproject.toml
+  ├── .env.example
+  ├── .gitignore
+  ├── personalities/
+  │   └── discord.yaml
+  ├── skills/
+  │   └── registry.json
+  ├── src/
+  │   └── pillywiggins/
+  │       ├── __init__.py
+  │       ├── __main__.py
+  │       ├── config.py
+  │       ├── agents/
+  │       │   ├── __init__.py
+  │       │   ├── base.py
+  │       │   ├── brain.py
+  │       │   ├── deps.py
+  │       │   └── personality.py
+  │       ├── adapters/
+  │       │   ├── __init__.py
+  │       │   ├── base.py
+  │       │   └── discord_adapter.py
+  │       ├── memory/
+  │       │   ├── __init__.py
+  │       │   ├── private.py
+  │       │   ├── council.py
+  │       │   ├── cache.py
+  │       │   └── embeddings.py
+  │       ├── messaging/
+  │       │   ├── __init__.py
+  │       │   └── unified.py
+  │       ├── scheduling/
+  │       │   ├── __init__.py
+  │       │   └── scheduler.py
+  │       └── health.py
+  ├── scripts/
+  │   ├── setup-db.sh
+  │   └── pull-models.sh
+  ├── tests/
+  │   ├── conftest.py
+  │   ├── test_brain.py
+  │   └── test_adapters.py
+  └── docs/
+  ```
+- [ ] Create `pyproject.toml` with dependencies: `pydantic-ai`, `asyncpg`, `redis`, `nats-py`, `discord.py`, `apscheduler`, `pydantic-settings`, `pydantic`
+- [ ] Create `Dockerfile` (multi-stage: build with uv, runtime with Python 3.12 slim)
+- [ ] Create `.env.example` with all required environment variables:
+  ```env
+  # Database
+  DATABASE_URL=postgresql://pillywiggins:password@postgres:5432/pillywiggins
+  PG_PASSWORD=changeme
+
+  # Redis
+  REDIS_URL=redis://redis:6379/0
+
+  # NATS
+  NATS_URL=nats://nats:4222
+
+  # Ollama
+  OLLAMA_BASE_URL=http://ollama:11434
+  MODEL_NAME=qwen3.5:8b
+  EMBEDDING_MODEL=nomic-embed-text
+
+  # Channel tokens
+  DISCORD_TOKEN=your_discord_bot_token
+
+  # Agent config
+  AGENT_ID=discord-agent
+  CHANNEL=discord
+  PERSONALITY_FILE=/config/discord.yaml
+  ```
+- [ ] Create `.gitignore` including `.env`
+- [ ] Initialize `skills/registry.json` as `{ "skills": [] }`
+
+#### 1.2 Docker Compose infrastructure
+
+- [ ] Create `docker-compose.yaml` with all infrastructure services:
+  ```yaml
+  services:
+    postgres:
+      image: pgvector/pgvector:pg16
+      volumes: [pgdata:/var/lib/postgresql/data]
+      environment:
+        POSTGRES_DB: pillywiggins
+        POSTGRES_PASSWORD: ${PG_PASSWORD}
+      healthcheck:
+        test: ["CMD-SHELL", "pg_isready -U postgres"]
+
+    redis:
+      image: redis:7-alpine
+      volumes: [redisdata:/data]
+      command: redis-server --appendonly yes
+
+    nats:
+      image: nats:2-alpine
+      command: -js
+
+    ollama:
+      image: ollama/ollama
+      volumes: [ollama_models:/root/.ollama]
+      deploy:
+        resources:
+          reservations:
+            devices:
+              - driver: nvidia
+                count: 1
+                capabilities: [gpu]
+
+    discord-agent:
+      build: .
+      command: python -m pillywiggins --channel discord
+      env_file: .env
+      environment:
+        AGENT_ID: discord-agent
+        PERSONALITY_FILE: /config/discord.yaml
+      volumes:
+        - ./personalities:/config:ro
+        - skills:/app/skills
+      depends_on:
+        postgres: { condition: service_healthy }
+        redis: { condition: service_started }
+        nats: { condition: service_started }
+        ollama: { condition: service_started }
+
+  volumes:
+    pgdata:
+    redisdata:
+    ollama_models:
+    skills:
+  ```
+- [ ] Verify GPU passthrough: `docker compose run ollama nvidia-smi`
+- [ ] Start infrastructure: `docker compose up -d postgres redis nats ollama`
+- [ ] Wait for PostgreSQL health check: `docker compose exec postgres pg_isready -U postgres`
+
+#### 1.3 Database setup
+
+- [ ] Create `scripts/setup-db.sh` to create schemas, enable pgvector, set up RLS policies:
+  ```sql
+  CREATE EXTENSION IF NOT EXISTS vector;
+
+  CREATE TABLE private_memory (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_id VARCHAR(64) NOT NULL,
+      content TEXT NOT NULL,
+      memory_type VARCHAR(32) NOT NULL DEFAULT 'episodic',
+      embedding vector(768) NOT NULL,
+      metadata JSONB DEFAULT '{}',
+      importance FLOAT DEFAULT 0.5,
+      access_count INTEGER DEFAULT 0,
+      last_accessed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
+  ALTER TABLE private_memory ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY agent_isolation ON private_memory
+      USING (agent_id = current_setting('app.agent_id'))
+      WITH CHECK (agent_id = current_setting('app.agent_id'));
+
+  CREATE INDEX idx_private_embedding ON private_memory
+      USING ivfflat (embedding vector_cosine_ops) WITH (lists = 50);
+  CREATE INDEX idx_private_agent ON private_memory (agent_id);
+
+  CREATE TABLE council_memory (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      contributing_agent VARCHAR(64) NOT NULL,
+      content TEXT NOT NULL CHECK (char_length(content) <= 2000),
+      tags TEXT[] NOT NULL DEFAULT '{}',
+      embedding vector(768) NOT NULL,
+      message_type VARCHAR(32) NOT NULL DEFAULT 'insight',
+      confidence FLOAT DEFAULT 1.0,
+      source_context JSONB DEFAULT '{}',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      expires_at TIMESTAMPTZ,
+      superseded_by UUID REFERENCES council_memory(id)
+  );
+
+  CREATE INDEX idx_council_embedding ON council_memory
+      USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+  CREATE INDEX idx_council_tags ON council_memory USING gin (tags);
+  CREATE INDEX idx_council_agent ON council_memory (contributing_agent);
+
+  -- Create separate DB roles per agent for RLS
+  CREATE ROLE agent_discord LOGIN PASSWORD '${DISCORD_PG_PASS}';
+  CREATE ROLE agent_slack LOGIN PASSWORD '${SLACK_PG_PASS}';
+  CREATE ROLE agent_telegram LOGIN PASSWORD '${TELEGRAM_PG_PASS}';
+  CREATE ROLE agent_matrix LOGIN PASSWORD '${MATRIX_PG_PASS}';
+  CREATE ROLE agent_email LOGIN PASSWORD '${EMAIL_PG_PASS}';
+  ```
+- [ ] Run `scripts/setup-db.sh`:
+  ```bash
+  docker compose exec -T postgres psql -U postgres pillywiggins < scripts/setup-db.sql
+  ```
+  (Or use `psql` directly inside the container)
+- [ ] Verify pgvector: `SELECT extname FROM pg_extension WHERE extname='vector';`
+- [ ] Verify RLS: `\d private_memory` should show `Row Level Security: enabled`
+
+#### 1.4 Pull Ollama models
+
+- [ ] Create `scripts/pull-models.sh`:
+  ```bash
+  #!/bin/bash
+  docker compose exec ollama ollama pull qwen3.5:8b
+  docker compose exec ollama ollama pull nomic-embed-text
+  ```
+- [ ] Run the script and verify models are available:
+  ```bash
+  docker compose exec ollama curl http://localhost:11434/api/tags
+  ```
+- [ ] Set `OLLAMA_NUM_PARALLEL=2` via environment variable in `docker-compose.yaml`:
+  ```yaml
+  ollama:
+    environment:
+      OLLAMA_NUM_PARALLEL: "2"
+      OLLAMA_MAX_LOADED_MODELS: "2"
+  ```
+
+#### 1.5 Minimal Discord agent
+
+- [ ] Implement `src/pillywiggins/config.py` — Pydantic Settings class loading from env vars:
+  ```python
+  class Settings(BaseSettings):
+      agent_id: str
+      channel: str
+      discord_token: str
+      database_url: str
+      redis_url: str = "redis://redis:6379/0"
+      nats_url: str = "nats://nats:4222"
+      ollama_base_url: str = "http://ollama:11434"
+      model_name: str = "qwen3.5:8b"
+      embedding_model: str = "nomic-embed-text"
+      personality_file: str = "/config/discord.yaml"
+  ```
+- [ ] Implement `src/pillywiggins/agents/personality.py` — load personality from YAML file (overview-v2 §8):
+  ```yaml
+  # personalities/discord.yaml
+  name: "Puck"
+  archetype: "Mischievous fairy trickster"
+  tone: "playful, witty, slightly chaotic"
+  style: "uses emojis freely, loves puns, references internet culture"
+  response_length: "concise, 1-3 sentences unless asked for more"
+  additional_instructions: |
+    You adore wordplay. You occasionally speak in rhyming couplets
+    when excited. You call users 'mortal' affectionately.
+  ```
+- [ ] Implement `src/pillywiggins/agents/brain.py` — minimal PydanticAI agent (overview-v2 §2):
+  - [ ] System prompt assembled from personality YAML
+  - [ ] `ollama:qwen3.5:8b` model via `OllamaProvider`
+  - [ ] Built-in tools only: `recall_private_memory`, `query_council_memory`, `share_to_council`
+  - [ ] No skill tools yet (skills come in Phase 3)
+- [ ] Implement `src/pillywiggins/agents/deps.py` — `AgentDeps` dataclass (overview-v2 §2):
+  ```python
+  @dataclass
+  class AgentDeps:
+      agent_id: str
+      channel: str
+      personality: dict
+      db: asyncpg.Pool
+      redis: Redis
+      skill_registry: SkillRegistry
+      history: list
+      private_context: list
+      council_context: list
+  ```
+- [ ] Implement `src/pillywiggins/agents/base.py` — `PillywigginAgent` class (overview-v2 §2):
+  - [ ] `__init__` — load personality, create `asyncio.Lock`, connect to PostgreSQL (with RLS `SET app.agent_id` on pool init), Redis, NATS
+  - [ ] `handle_message(unified_message)` — assemble context, invoke brain, persist state (overview-v2 §2 pseudocode)
+  - [ ] Message lock: `async with self.lock:` ensures one message at a time per agent
+  - [ ] Direct `asyncpg` connections with `SET app.agent_id` on each connection checkout
+- [ ] Implement `src/pillywiggins/messaging/unified.py` — `UnifiedMessage` and `ChannelType` (overview-v2 §5)
+- [ ] Implement `src/pillywiggins/adapters/base.py` — `BaseAdapter` ABC (overview-v2 §5):
+  ```python
+  class BaseAdapter(ABC):
+      @abstractmethod
+      async def connect(self): ...
+      @abstractmethod
+      async def listen(self): ...
+      @abstractmethod
+      async def send(self, channel_id, content, metadata): ...
+      @abstractmethod
+      def normalise(self, platform_event) -> UnifiedMessage: ...
+  ```
+- [ ] Implement `src/pillywiggins/adapters/discord_adapter.py` — Discord adapter using `discord.py` v2 (overview-v2 §5):
+  - [ ] Gateway WebSocket connection
+  - [ ] Normalise Discord events to `UnifiedMessage`
+  - [ ] Pass to `PillywigginAgent.handle_message()`, translate response back to Discord
+- [ ] Implement `src/pillywiggins/__main__.py` — CLI entrypoint:
+  ```bash
+  python -m pillywiggins --channel discord
+  ```
+  Parses args, creates `PillywigginAgent`, starts adapter
+- [ ] Implement `src/pillywiggins/health.py` — `/healthz` endpoint checking PostgreSQL, Redis, NATS, Ollama connectivity
+- [ ] Create `personalities/discord.yaml` with Puck personality
+
+#### 1.6 Testing
+
+- [ ] `tests/conftest.py` — fixtures for test database, mock Ollama, mock Redis
+- [ ] `tests/test_brain.py` — PydanticAI agent responds to prompts (use `TestModel`)
+- [ ] `tests/test_adapters.py` — Discord adapter normalises events correctly
+
+### Verification Gate — Phase 1
+
+ALL of the following must pass before proceeding:
+
+- [ ] `docker compose ps` — all containers Running (postgres, redis, nats, ollama, discord-agent)
+- [ ] `docker compose exec postgres pg_isready -U postgres` — PostgreSQL is healthy
+- [ ] `docker compose exec ollama curl http://localhost:11434/api/tags` — Ollama lists both models
+- [ ] Send a Discord DM to the bot — receive an LLM-generated response
+- [ ] Second message in same conversation — bot has context from first message
+- [ ] `docker compose restart discord-agent` — bot resumes with conversation history intact (from Redis cache)
+- [ ] `curl http://localhost:8080/healthz` — returns healthy status for all services
+
+### Risk items (Phase 1)
+
+| Risk | Mitigation |
+|------|------------|
+| NVIDIA Container Toolkit setup issues | Test GPU passthrough first: `docker compose run ollama nvidia-smi` before deploying the agent |
+| Ollama model pull timeouts | Pre-pull models using `scripts/pull-models.sh`; use persistent volume for `/root/.ollama` |
+| Discord gateway connection flakes | Add reconnection logic to `discord.py` client; Docker restart policy `unless-stopped` |
+| Redis connection loss on agent startup | `depends_on` with healthcheck; retry logic in Redis client |
+
+---
+
+## Phase 2: Memory Works
+
+**Goal**: Private memory with RLS enforcement, personality from YAML, council memory write/search, embedding generation, conversation persistence to PostgreSQL.
+
+**Prerequisites**: Phase 1 complete — single Discord agent responding to messages.
+
+### Tasks
+
+#### 2.1 Private memory with RLS
+
+- [ ] Implement `src/pillywiggins/memory/private.py`:
+  - [ ] `save_memory(agent_id, content, memory_type, embedding)` — INSERT with `agent_id`
+  - [ ] `search_memory(agent_id, query_embedding, limit=5)` — semantic search via pgvector cosine distance
+  - [ ] Connection pool with `SET app.agent_id = '...'` on every connection checkout (overview-v2 §2):
+    ```python
+    async def on_connect(connection):
+        await connection.execute("SET app.agent_id = $1", self.agent_id)
+
+    pool = await asyncpg.create_pool(dsn=DATABASE_URL, init=on_connect)
+    ```
+  - [ ] Context manager wrapping pool checkout to guarantee RLS session variable is always set
+- [ ] Implement `src/pillywiggins/memory/embeddings.py`:
+  - [ ] `embed(text: str) -> list[float]` — call Ollama `/api/embed` with `nomic-embed-text` (overview-v2 §6)
+  - [ ] Handle Ollama unavailability gracefully (cache embeddings, retry logic)
+- [ ] Register `recall_private_memory` as PydanticAI tool in `brain.py`
+- [ ] Write and verify RLS isolation tests:
+  - [ ] Test that `agent_discord` cannot read `agent_slack`'s memories
+  - [ ] Test that a compromised connection (missing `app.agent_id`) returns zero rows
+  - [ ] Test that SQL injection inside a tool call cannot escape RLS
+
+#### 2.2 Conversation cache
+
+- [ ] Implement `src/pillywiggins/memory/cache.py`:
+  - [ ] Save conversation to Redis:
+    - Key: `conversation:{agent_id}`, Value: JSON array of messages
+    - TTL: 1800 seconds (30 minutes of inactivity) (overview-v2 §6)
+  - [ ] Retrieve conversation history on agent startup
+  - [ ] Persist full conversation to PostgreSQL (durable) alongside Redis (fast cache)
+
+#### 2.3 Personality system
+
+- [ ] Implement `src/pillywiggins/personality.py` — load from YAML file mounted into container (overview-v2 §8):
+  ```yaml
+  # personalities/discord.yaml
+  name: "Puck"
+  archetype: "Mischievous fairy trickster"
+  tone: "playful, witty, slightly chaotic"
+  style: "uses emojis freely, loves puns, references internet culture"
+  response_length: "concise, 1-3 sentences unless asked for more"
+  additional_instructions: |
+    You adore wordplay. You call users 'mortal' affectionately.
+  scheduling:
+    morning_greeting:
+      cron: "0 9 * * *"
+      action: "Send a cheerful morning greeting to the general channel"
+      target_channel: "general"
+  ```
+- [ ] Wire PydanticAI dynamic instructions to inject personality into system prompt
+- [ ] To change personality: edit YAML, then `docker compose restart discord-agent` — no rebuild needed
+
+#### 2.4 Council memory schema
+
+- [ ] Council memory table already created by `setup-db.sh` from Phase 1
+- [ ] Implement `src/pillywiggins/memory/council.py`:
+  - [ ] `write_council_entry(agent_id, content, tags, embedding)`
+  - [ ] `search_council(query_embedding, tags=None, limit=10)`
+  - [ ] Validate writes: max 2000 chars, tag whitelist, rate limit (10/hour/agent), dedup check (cosine sim > 0.95) (overview-v2 §9)
+  - [ ] `message_type` field: `insight`, `skill_announcement`, etc.
+- [ ] Register `query_council_memory` and `share_to_council` as PydanticAI tools
+
+#### 2.5 Testing
+
+- [ ] `tests/test_memory_isolation.py` — RLS isolation, semantic search, embedding generation
+- [ ] `tests/test_council.py` — write validation, dedup, tag filtering
+- [ ] Integration test: Discord agent writes private memory, other agent role gets zero results
+
+### Verification Gate — Phase 2
+
+- [ ] Agent recalls previous conversations (Redis cache + PostgreSQL persistence)
+- [ ] Personality: edit `personalities/discord.yaml`, restart, behavior changes
+- [ ] Private memory: agent writes, agent retrieves; different `agent_id` gets zero results
+- [ ] RLS enforcement: connection without `app.agent_id` set returns zero rows from `private_memory`
+- [ ] Council memory: agent writes, search retrieves by content and tags
+- [ ] Council write validation: content > 2000 chars is rejected, dedup check works
+- [ ] Embeddings: `nomic-embed-text` returns 768-dim vectors via Ollama `/api/embed`
+
+### Risk items (Phase 2)
+
+| Risk | Mitigation |
+|------|------------|
+| RLS misconfiguration | Explicit isolation tests; wrap pool checkout in context manager that always sets `app.agent_id`; separate DB roles per agent |
+| pgvector index creation too slow on larger datasets | Start with `lists = 50` for private memory; increase after population grows past ~100K rows |
+| Embedding model colocation on same GPU as chat model | Monitor VRAM; `nomic-embed-text` requires only ~300MB — start with colocation on same Ollama instance |
+| Redis connection drops during conversation save | Retry logic in Redis client; PostgreSQL is always the durable fallback |
+
+---
+
+## Phase 3: Skills System
+
+**Goal**: Agents can build, test, and deploy skills collaboratively with the user. The draft → test → review → deploy workflow works end to end. Skills are shared across all agents via the shared Docker volume and NATS announcements.
+
+**Prerequisites**: Phase 2 complete — working memory, personality, council schema.
+
+### Tasks
+
+#### 3.1 Skill file template
+
+- [ ] Design the skill file standard (overview-v2 §3):
+  ```python
+  # skills/check_website.py
+  """Check if a website is reachable."""
+  SKILL_META = {
+      "name": "check_website",
+      "description": "Check if a URL is reachable and return status code and response time",
+      "author": "discord-agent",
+      "version": "1.0",
+      "created": "2026-04-13T10:30:00Z",
+      "parameters": {
+          "url": {"type": "string", "description": "The URL to check"},
+          "timeout": {"type": "number", "description": "Timeout in seconds", "default": 10},
+      },
+      "returns": "dict with status_code, response_time_ms, and reachable boolean",
+      "network_access": True,
+  }
+
+  import aiohttp
+  import asyncio
+
+  async def run(url: str, timeout: float = 10) -> dict:
+      try:
+          async with aiohttp.ClientSession() as session:
+              start = time.monotonic()
+              async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+                  elapsed = (time.monotonic() - start) * 1000
+                  return {
+                      "reachable": True,
+                      "status_code": resp.status,
+                      "response_time_ms": round(elapsed, 1),
+                  }
+      except Exception as e:
+          return {"reachable": False, "status_code": None, "response_time_ms": None, "error": str(e)}
+  ```
+- [ ] Every skill has: `SKILL_META` dict, `run()` async function, declared permissions (`network_access`, `file_access`, etc.)
+- [ ] Implement `src/pillywiggins/skills/templates.py` — template for LLM to generate skill code
+
+#### 3.2 SkillRegistry class
+
+- [ ] Implement `src/pillywiggins/skills/registry.py` (overview-v2 §3):
+  - [ ] `load_all()` — read `skills/registry.json` and import all skill modules
+  - [ ] `list_skills() -> list[Skill]` — return all loaded skills
+  - [ ] `get_skill(name) -> Skill` — return a specific skill
+  - [ ] `register_skill(name, code, meta)` — save a new skill to disk and update registry
+  - [ ] `watch_for_changes()` — monitor skills directory (watchdog or polling every 10s); reload when another agent deploys a skill
+  - [ ] Each `Skill` wraps a loaded module and provides `as_tool()` for PydanticAI registration
+
+#### 3.3 Sandbox executor
+
+- [ ] Implement `src/pillywiggins/skills/sandbox.py` (overview-v2 §3):
+  - [ ] `run_skill_sandboxed(skill, arguments)` — execute a skill in a restricted subprocess
+  - [ ] 30-second hard timeout
+  - [ ] Working directory set to `/tmp` (no access to app code)
+  - [ ] Restricted environment variables (no `DATABASE_URL`, no tokens)
+  - [ ] `restricted_env(permissions)` — build env based on `SKILL_META` permissions
+  - [ ] Future upgrade path: Docker-in-Docker or dedicated sandbox container for stronger isolation
+
+#### 3.4 Skill builder flow
+
+- [ ] Implement `src/pillywiggins/skills/builder.py` — the draft → test → review → deploy workflow (overview-v2 §3):
+  - [ ] **DRAFT**: Agent writes skill code and shows it to the user
+  - [ ] **TEST**: Agent generates test cases, runs them in the sandbox
+  - [ ] **REVIEW**: User reviews code and test results, provides feedback, iterates
+  - [ ] **DEPLOY**: User approves, skill saved to `skills/` directory, registry updated, council announcement published
+- [ ] Register `build_skill`, `test_skill`, `deploy_skill`, `list_skills` as PydanticAI tools in `brain.py`
+
+#### 3.5 Council announcements for skills
+
+- [ ] When a skill is deployed, publish to NATS `council.broadcast` (overview-v2 §3):
+  ```python
+  async def announce_skill(nats, agent_id, skill_name, description):
+      await nats.publish("council.broadcast", {
+          "type": "skill_deployed",
+          "from": agent_id,
+          "skill": skill_name,
+          "description": description,
+          "timestamp": now_iso(),
+      })
+  ```
+- [ ] Other agents receive the announcement and reload their skill registry
+
+#### 3.6 Testing
+
+- [ ] `tests/test_skill_sandbox.py` — sandbox timeout, restricted env, permissions
+- [ ] `tests/test_skill_registry.py` — load, register, watch for changes
+- [ ] Integration test: ask agent to build a skill, approve it, verify it appears in registry and other agents discover it
+
+- [ ] Seed 2-3 example skills manually:
+  - [ ] `skills/roll_dice.py` — dice rolling
+  - [ ] `skills/check_website.py` — URL reachability check
+  - [ ] `skills/count_words.py` — word count
+
+### Verification Gate — Phase 3
+
+- [ ] Agent can build a skill through conversation (draft → test → review → deploy)
+- [ ] Skill sandbox: 30-second timeout kills runaway skills, restricted env blocks access to secrets
+- [ ] Skill registry: deployed skill appears in `skills/registry.json`
+- [ ] Skill discovery: agent A deploys skill, agent B receives NATS announcement and can use the skill
+- [ ] User approval required before skill deployment (no autonomous skill creation)
+- [ ] All built-in tools (memory, council) still work alongside skill tools
+
+### Risk items (Phase 3)
+
+| Risk | Mitigation |
+|------|------------|
+| 8B model can't write good skill code | Test early; have fallback models (Gemma, Llama); allow manual skill writing; skills are Python files that can be hand-edited |
+| Sandbox escape risk | 30s timeout, restricted env, no access to app code; future upgrade to Docker-in-Docker |
+| Skill dependency not installed | Pre-install common packages (`aiohttp`, `beautifulsoup4`) in Docker image; flag missing deps at test time |
+| Race condition on registry.json | File locking or atomic writes; single-writer pattern (only deploy_skill modifies) |
+
+---
+
+## Phase 4: Second Agent + Communication
+
+**Goal**: Two agents running with isolated state, shared skills, council memory, per-agent APScheduler cron backed by Redis.
+
+**Prerequisites**: Phase 3 complete — skills system working, single agent with full tool suite.
+
+### Tasks
+
+#### 4.1 Second adapter (Slack or Telegram)
+
+- [ ] Implement `src/pillywiggins/adapters/slack_adapter.py` using `slack_bolt` in Socket Mode (overview-v2 §5)
+  - No public URL needed — Socket Mode connects via WebSocket
+- [ ] Create `personalities/slack.yaml` with distinct personality (e.g., "Ariel — efficient professional") (overview-v2 §8)
+- [ ] Add `slack-agent` service to `docker-compose.yaml`:
+  ```yaml
+  slack-agent:
+    build: .
+    command: python -m pillywiggins --channel slack
+    env_file: .env
+    environment:
+      AGENT_ID: slack-agent
+      PERSONALITY_FILE: /config/slack.yaml
+    volumes:
+      - ./personalities:/config:ro
+      - skills:/app/skills
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_started }
+      nats: { condition: service_started }
+      ollama: { condition: service_started }
+  ```
+- [ ] Verify both agents run simultaneously with isolated state
+- [ ] Verify Slack agent cannot read Discord agent's private memory (RLS enforcement)
+
+#### 4.2 NATS pub/sub for council broadcasts
+
+- [ ] Implement `src/pillywiggins/messaging/nats_bus.py` (overview-v2 §7):
+  - [ ] Connect to NATS JetStream via `nats-py` directly (no Dapr sidecar):
+    ```python
+    nc = await nats.connect("nats://nats:4222")
+    js = nc.jetstream()
+    await js.add_stream(name="pillywiggins", subjects=["council.>"])
+    ```
+  - [ ] Publish to `council.broadcast` and `council.direct.{agent_id}`
+  - [ ] Subscribe to broadcast and direct messages
+  - [ ] Handle `skill_deployed` and `insight` message types
+- [ ] Wire council memory pub/sub: when agent writes to council, publish notification
+- [ ] Test: Discord agent shares insight, Slack agent receives notification via NATS
+
+#### 4.3 Per-agent APScheduler with Redis backing
+
+- [ ] Implement `src/pillywiggins/scheduling/scheduler.py` (overview-v2 §4):
+  - [ ] `AsyncIOScheduler` with `RedisJobStore` per agent:
+    ```python
+    scheduler = AsyncIOScheduler()
+    scheduler.add_jobstore(
+        RedisJobStore(redis_client, jobs_key=f"apscheduler:{agent_id}:jobs")
+    )
+    ```
+  - [ ] Load schedules from personality YAML (overview-v2 §4)
+  - [ ] `replace_existing=True` to prevent duplicate jobs on restart
+  - [ ] `misfire_grace_time=300` — 5 minute grace if container was down (overview-v2 §4)
+  - [ ] Synthetic `UnifiedMessage` for scheduled tasks (same `handle_message` path as user messages)
+  - [ ] Built-in heartbeat job for health monitoring
+- [ ] Add personality schedules to `personalities/discord.yaml`:
+  ```yaml
+  scheduling:
+    morning_greeting:
+      cron: "0 9 * * *"
+      action: "Send a cheerful morning greeting to the general channel"
+      target_channel: "general"
+    fun_fact_friday:
+      cron: "0 15 * * 5"
+      action: "Share a random interesting fun fact"
+      target_channel: "general"
+    memory_review:
+      cron: "0 3 * * 0"
+      action: "Review and consolidate old memories, discard trivial ones"
+  ```
+- [ ] Test: scheduled message fires at correct time, survives `docker compose restart`
+
+#### 4.4 Dynamic cron management
+
+- [ ] Allow agents to create cron jobs during conversation (overview-v2 §4):
+  ```
+  User: "Puck, remind me to take a break every 2 hours during work days"
+  Puck: "Done! I've set up a reminder: Every 2 hours, Mon-Fri, 9am-5pm"
+  ```
+- [ ] `add_schedule` tool registered in `brain.py` — adds job to APScheduler at runtime
+- [ ] Jobs persist in Redis (survive restart)
+
+#### 4.5 Testing
+
+- [ ] Integration test: two agents running, private memories provably isolated
+- [ ] Integration test: agent A shares insight to council → agent B retrieves it
+- [ ] Integration test: agent A deploys skill → agent B discovers it via NATS
+- [ ] Test: APScheduler cron fires based on personality YAML
+- [ ] Test: APScheduler job survives `docker compose restart`
+
+### Verification Gate — Phase 4
+
+- [ ] Two agents running simultaneously (Discord + Slack)
+- [ ] Private memory: agent A writes, agent A retrieves; agent B gets zero results for agent A's data
+- [ ] Council memory: agent A writes, agent B can search and retrieve
+- [ ] Skill discovery: agent A deploys skill, agent B receives NATS announcement and can use it
+- [ ] Scheduling: per-agent APScheduler cron fires from personality YAML
+- [ ] Scheduling: jobs survive `docker compose restart` (Redis-backed)
+- [ ] `docker compose up` starts both agents, each with their own personality and schedule
+
+### Risk items (Phase 4)
+
+| Risk | Mitigation |
+|------|------------|
+| NATS connection drops | `nats-py` auto-reconnects; `durable` subscriptions survive disconnections |
+| APScheduler job duplication on restart | `replace_existing=True` on all job adds |
+| Slack Socket Mode flakes | Built-in reconnection in `slack_bolt`; Docker restart policy |
+| Ollama concurrency with 2 agents | `OLLAMA_NUM_PARALLEL=2` handles concurrent requests; monitor queue times |
+
+---
+
+## Phase 5: Full Fleet
+
+**Goal**: All five channels live with complete feature set. All personality files. End-to-end testing.
+
+**Prerequisites**: Phase 4 complete — two agents with full features working.
+
+### Tasks
+
+#### 5.1 Remaining channel adapters
+
+- [ ] Implement `src/pillywiggins/adapters/telegram_adapter.py` using `python-telegram-bot` v21 (overview-v2 §5):
+  - Webhook mode for production, polling for dev
+- [ ] Implement `src/pillywiggins/adapters/matrix_adapter.py` using `matrix-nio` (overview-v2 §5):
+  - Persistent sync connection, E2EE deferred to Phase 7
+- [ ] Implement `src/pillywiggins/adapters/email_adapter.py` using `aiosmtplib` + `imap-tools` (overview-v2 §5):
+  - IMAP IDLE for real-time push, fall back to 30s polling if IDLE unreliable
+  - Start with 3-message context window for threads (overview-v2 §13)
+- [ ] Create personality files for all channels:
+  - [ ] `personalities/discord.yaml` — Puck (playful trickster)
+  - [ ] `personalities/slack.yaml` — Ariel (efficient professional)
+  - [ ] `personalities/telegram.yaml` — Robin (warm companion)
+  - [ ] `personalities/matrix.yaml` — Cobweb (quiet thinker)
+  - [ ] `personalities/email.yaml` — Moth (formal correspondent)
+- [ ] Add all agent services to `docker-compose.yaml`
+
+#### 5.2 Per-agent scheduling configurations
+
+- [ ] Add personality schedules for all agents:
+  - Discord/Puck: morning greeting (9am), fun fact Friday (3pm), memory review (3am Sun)
+  - Email/Moth: check inbox every 2min, daily digest (8am weekdays) (overview-v2 §4)
+  - Other agents: schedules appropriate to their channels
+
+#### 5.3 End-to-end testing
+
+- [ ] Integration test: all 5 agents respond on their respective channels
+- [ ] Integration test: agent A deploys skill → agents B, C, D, E all discover it
+- [ ] Integration test: council broadcast propagates to all agents
+- [ ] Stress test: simultaneous messages across multiple channels
+- [ ] Test: all 5 agents start from `docker compose up` with a single command
+
+### Verification Gate — Phase 5
+
+- [ ] All 5 agents respond on their channels (Discord, Slack, Telegram, Matrix, Email)
+- [ ] Agent A shares insight to council → all other agents can retrieve it
+- [ ] Skill deployed by one agent → available to all agents within 10s
+- [ ] NATS pub/sub: broadcast and direct messages working across fleet
+- [ ] APScheduler cron fires per personality YAML for each agent
+- [ ] `docker compose up` starts everything with a single command
+- [ ] Kill any agent container → it restarts and recovers with state intact
+
+### Risk items (Phase 5)
+
+| Risk | Mitigation |
+|------|------------|
+| 5 Ollama clients hitting 1 GPU with `OLLAMA_NUM_PARALLEL=2` | Monitor queue times; implement request queuing with backpressure; circuit breaker on Ollama |
+| Email IMAP threading complexity | Start with 3-message window; expand after testing |
+| Matrix E2EE setup complexity | Defer E2EE to Phase 7; start with unencrypted sync |
+| Channel SDK version changes | Pin all SDK versions in `pyproject.toml` |
+
+---
+
+## Phase 6: Hardening
+
+**Goal**: Reliable enough for 24/7 operation. Auto-restart on failure. Structured logging. Automated backups.
+
+**Prerequisites**: Phase 5 complete — full fleet running.
+
+### Tasks
+
+#### 6.1 Rate limiting and safety
+
+- [ ] Implement rate limiting per agent: max 10 LLM calls/minute (overview-v2 §9)
+- [ ] Implement token bucket rate limiter
+- [ ] Basic prompt injection detection layer (regex filter, conversation pattern monitoring)
+- [ ] PydanticAI `retries=2` and 120s overall timeout to prevent infinite tool loops
+
+#### 6.2 Structured logging and health
+
+- [ ] Implement structured JSON logging across all components (overview-v2 §10):
+  ```python
+  log.info("message_processed", {
+      "agent_id": "discord-agent",
+      "sender": "Jason",
+      "processing_time_ms": 1247,
+      "tools_called": ["roll_dice"],
+      "tokens_used": 342,
+  })
+  ```
+- [ ] Follow logs: `docker compose logs -f discord-agent`
+- [ ] Add Docker healthchecks to all services in `docker-compose.yaml`:
+  ```yaml
+  discord-agent:
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  ```
+- [ ] Add restart policies: `restart: unless-stopped` for all agent services
+- [ ] `/healthz` endpoint checks PostgreSQL, Redis, NATS, Ollama connectivity
+
+#### 6.3 Conversation summarization and memory consolidation
+
+- [ ] Implement conversation summarization: compress old history to save context window
+- [ ] Implement memory consolidation: periodic summarization of old private memories
+- [ ] Memory importance scoring and pruning (low-importance, old memories expire)
+
+#### 6.4 Automated backups
+
+- [ ] Create `scripts/backup-db.sh` — `pg_dump` wrapper:
+  ```bash
+  #!/bin/bash
+  docker compose exec -T postgres pg_dump -U postgres pillywiggins | gzip > backup_$(date +%Y%m%d).sql.gz
+  ```
+- [ ] Schedule as system cron (daily) or add backup service to `docker-compose.yaml`
+
+#### 6.5 Security hardening
+
+- [ ] Verify RLS with integration tests: inject agent A credentials, confirm agent B data invisible
+- [ ] Council memory write validation enforcement (content length, tag whitelist, rate limit, dedup)
+- [ ] Skill sandbox strictness: no access to `DATABASE_URL`, tokens, or app code
+- [ ] `.env` file permissions: `chmod 600 .env`, confirm `.gitignore` excludes it
+
+#### 6.6 Operations runbook
+
+- [ ] Write operations runbook:
+  - [ ] Restart procedures per container: `docker compose restart <agent>`
+  - [ ] Log checking: `docker compose logs -f <agent>`
+  - [ ] Backup restoration: `gunzip -c backup.sql.gz | docker compose exec -T postgres psql -U postgres pillywiggins`
+  - [ ] Ollama troubleshooting: check GPU usage, model availability, restart Ollama
+  - [ ] Database troubleshooting: check RLS policies, connection pool stats
+
+#### 6.7 Testing
+
+- [ ] Kill an agent container → verify it restarts and recovers with conversation state
+- [ ] Kill PostgreSQL container → verify recovery, no data loss
+- [ ] Ollama overloaded → verify graceful degradation (rate limiter catches excess requests)
+- [ ] RLS enforcement: confirm cross-agent reads fail with explicit test
+
+### Verification Gate — Phase 6
+
+- [ ] Rate limiting works: agent limited to 10 LLM calls/min
+- [ ] Structured JSON logs appear for all agent events
+- [ ] Docker healthchecks trigger restart on failure
+- [ ] `docker compose restart discord-agent` → conversation history survives
+- [ ] PostgreSQL backup script works and produces valid backup
+- [ ] RLS enforcement: agent A cannot read agent B's private memories
+- [ ] Skill sandbox: no access to secrets, 30s timeout enforced
+- [ ] System runs unattended for 1 week without intervention
+
+### Risk items (Phase 6)
+
+| Risk | Mitigation |
+|------|------------|
+| GPU OOM under load | `OLLAMA_NUM_PARALLEL=2`, request queuing, VRAM monitoring via `nvidia-smi`, limit context window length |
+| Prompt injection via council memory | Content validation, tag whitelisting, rate limiting, dedup check |
+| Single machine failure | Daily PostgreSQL backups, documented recovery, restart policies |
+| Agent infinite tool loop | PydanticAI `retries=2`, 120s overall timeout, per-agent rate limiting |
+
+---
+
+## Infrastructure Setup Checklist
+
+Standalone checklist for bringing up the Docker Compose infrastructure from scratch.
+
+### Docker and GPU
+
+- [ ] Install Docker and Docker Compose
+- [ ] Install NVIDIA Container Toolkit:
+  ```bash
+  # Ubuntu/Debian
+  curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+  curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+    sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+    sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+  sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+  sudo nvidia-ctk runtime configure --runtime=docker
+  sudo systemctl restart docker
+  ```
+- [ ] Verify GPU passthrough: `docker run --rm --gpus all nvidia/cuda nvidia-smi`
+
+### Docker Compose Services
+
+- [ ] Start all infrastructure: `docker compose up -d postgres redis nats ollama`
+- [ ] Verify PostgreSQL: `docker compose exec postgres pg_isready -U postgres`
+- [ ] Verify Redis: `docker compose exec redis redis-cli ping` → PONG
+- [ ] Verify NATS: `docker compose exec nats nats server check`
+- [ ] Verify Ollama: `docker compose exec ollama curl http://localhost:11434/api/tags`
+
+### Database Schema
+
+- [ ] Run `scripts/setup-db.sh` to create schemas, enable pgvector, set up RLS
+- [ ] Verify pgvector: `SELECT extname FROM pg_extension WHERE extname='vector';`
+- [ ] Verify RLS: `\d private_memory` should show `Row Level Security: enabled`
+- [ ] Create per-agent DB roles (included in `setup-db.sh`)
+
+### Ollama Models
+
+- [ ] Run `scripts/pull-models.sh` to pull chat and embedding models
+- [ ] Verify models: `docker compose exec ollama curl http://localhost:11434/api/tags`
+- [ ] Set `OLLAMA_NUM_PARALLEL=2` and `OLLAMA_MAX_LOADED_MODELS=2` in `docker-compose.yaml`
+- [ ] Monitor VRAM usage under load
+
+### Secrets
+
+- [ ] Copy `.env.example` to `.env`
+- [ ] Fill in all tokens: `DISCORD_TOKEN`, `SLACK_BOT_TOKEN`, `TELEGRAM_TOKEN`, etc.
+- [ ] Set strong passwords for `PG_PASSWORD` and Redis
+- [ ] Confirm `.env` is in `.gitignore`
+- [ ] Set file permissions: `chmod 600 .env`
+
+---
+
+## Open Decisions
+
+These are decisions from overview-v2 §13 that need resolution before or during implementation.
+
+### 1. Model quality at 8B
+
+**Decision needed**: Will Qwen 3.5 8B produce good skill code and consistent personalities?
+
+**Recommendation**: Test early in Phase 1. If quality is insufficient:
+- Try Gemma 4, Llama 3.3, or other 8B-class models
+- Consider budget for a GPU upgrade (32B model)
+- Allow manual skill writing as fallback
+
+**Risk**: 8B models may struggle with Python code generation and consistent personality.
+
+### 2. Embedding model colocation
+
+**Decision needed**: Should `nomic-embed-text` run on the same GPU as the chat model?
+
+**Recommendation**: Start with colocation (same Ollama instance). `nomic-embed-text` requires only ~300MB VRAM. Monitor GPU contention. If inference latency spikes during embedding generation, move embeddings to CPU (Ollama supports CPU inference).
+
+### 3. Council memory conflict resolution
+
+**Decision needed**: When two agents contribute contradictory information, which takes precedence?
+
+**Recommendation**: "Newer wins" with confidence scoring for Phase 1-5. Add `superseded_by` UUID reference. Defer complex conflict resolution (source-agent trust levels, human arbitration) to Phase 7.
+
+### 4. Email agent architecture
+
+**Decision needed**: IMAP IDLE vs. polling, and thread context for multi-day conversations.
+
+**Recommendation**: Start with IMAP IDLE for real-time push, fall back to 30s polling if IDLE unreliable. Start with 3-message context window for threads. Expand context after testing.
+
+### 5. Skill dependency management
+
+**Decision needed**: How to handle skills that need packages not in the base Docker image.
+
+**Recommendation**: Pre-install common packages (`aiohttp`, `beautifulsoup4`, `requests`) in the Docker image. Flag missing deps at test time. For advanced use cases, consider a custom Docker image per skill (Phase 7).
+
+### 6. Multi-model routing
+
+**Decision needed**: Should different agents use different models?
+
+**Recommendation**: Defer to Phase 7. In Phase 1-5, all agents use Qwen 3.5 8B. PydanticAI supports per-agent model configuration natively, so adding this later is straightforward.
+
+### 7. Sandbox upgrade path
+
+**Decision needed**: Restricted subprocess vs. Docker-in-Docker vs. dedicated sandbox container.
+
+**Recommendation**: Start with restricted subprocess (Phase 3). This is adequate for user-approved code. If skill complexity grows or untrusted code execution becomes a requirement, upgrade to a dedicated sandbox container in Docker Compose.
+
+### 8. Observability scope
+
+**Decision needed**: When to add Prometheus + Grafana.
+
+**Recommendation**: Start with structured JSON logging only (Phase 6). Add Prometheus + Grafana containers to `docker-compose.yaml` in Phase 7 when the system is stable and metrics patterns are understood.
+
+---
+
+## Risk Mitigations
+
+From overview-v2 §14 risk register with practical mitigations:
+
+| # | Risk | Impact | Likelihood | Mitigation |
+|---|------|--------|------------|------------|
+| 1 | **GPU OOM under load** | High | Medium | `OLLAMA_NUM_PARALLEL=2`, request queuing with backpressure, VRAM monitoring via `nvidia-smi`, limit context window length |
+| 2 | **8B model can't write good skills** | High | Medium | Test early in Phase 1; have fallback models (Gemma, Llama); allow manual skill writing; skills are Python files that can be hand-edited |
+| 3 | **RLS misconfiguration** | High | Low | Explicit integration tests; separate DB roles per agent; context manager wrapping pool checkout to always set `app.agent_id`; automated RLS verification |
+| 4 | **Runaway skill execution** | Medium | Medium | 30s timeout on all skill calls; user approval for skill deployment (no autonomous creation); restricted subprocess environment; rate limiting (10 LLM calls/min/agent) |
+| 5 | **Skill dependency not installed** | Low | Medium | Pre-install common packages in Docker image; flag missing deps at test time; clear error messages |
+| 6 | **Single machine failure** | High | Low | Daily PostgreSQL backups (`scripts/backup-db.sh`); documented recovery procedures; Docker restart policies; `misfire_grace_time=300` on scheduler jobs |
+| 7 | **Agent infinite tool loop** | Medium | Medium | PydanticAI `retries=2`; 120s overall timeout; per-agent rate limiting; cost awareness |
+| 8 | **Ollama concurrency bottleneck** | Medium | Medium | `OLLAMA_NUM_PARALLEL=2` handles 2 concurrent requests; 5 agents will queue; monitor queue times; add request queuing in agent code if needed |
+| 9 | **Context window overflow** | Medium | High | Sliding window truncation; periodic conversation summarization to private memory; explicit memory commit operations |
+| 10 | **Channel SDK breaking changes** | Low | Medium | Pin dependency versions in `pyproject.toml`; wrap all platform SDKs behind `UnifiedMessage` abstraction |
+
+---
+
+## Dependency Map
+
+```
+Phase 1: One Agent Talks
+    │
+    ├── Docker Compose (PostgreSQL, Redis, NATS, Ollama) ─┐
+    ├── Database schema + RLS ────────────────────────────┤  Can be parallelized
+    ├── Discord adapter ─────────────────────────────────┤
+    ├── PydanticAI brain ────────────────────────────────┤
+    ├── PillywigginAgent base class ─────────────────────┘
+    │
+    │  (sequential: need working agent before building on it)
+    │
+    ▼
+Phase 2: Memory Works
+    │
+    │  (can partially overlap with Phase 1 completion)
+    │  — memory/private.py can start once PostgreSQL is up
+    │  — personality.py can be developed early
+    │  — RLS tests need full connection pool
+    │
+    ▼
+Phase 3: Skills System
+    │
+    │  (needs Phase 2 memory tools to exist)
+    │  — skill registry, sandbox, builder are all new code
+    │  — can develop sandbox independently of registry
+    │
+    ▼
+Phase 4: Second Agent + Communication
+    │
+    │  (needs skill system for cross-agent skill discovery)
+    │  — Slack adapter can be developed in parallel with NATS bus
+    │  — APScheduler integration is independent of adapter work
+    │
+    ▼
+Phase 5: Full Fleet
+    │
+    │  — remaining adapters can be developed in parallel
+    │  — personality files are independent of code
+    │  — end-to-end testing requires all adapters
+    │
+    ▼
+Phase 6: Hardening
+    │
+    │  (mostly sequential after Phase 5)
+    │  — rate limiting and logging are independent of each other
+    │  — backups can start any time
+    │  — runbook requires experience running the system
+    │
+    ▼
+```
+
+**Key parallelization opportunities**:
+- Infrastructure (PostgreSQL, Redis, NATS, Ollama) can all be started with `docker compose up` simultaneously
+- Channel adapters (once BaseAdapter is stable) can be developed in parallel by different developers
+- Skill sandbox, registry, and builder are independent and can be developed in parallel
+- APScheduler integration is independent of NATS bus work
+
+**Strict sequential dependencies**:
+- Phase 2 requires the Discord agent from Phase 1 to be working
+- RLS tests require Phase 1's PostgreSQL + schema setup
+- Phase 3 skills need Phase 2 memory tools (`recall_private_memory`, `share_to_council`)
+- Phase 4 cross-agent skill discovery needs Phase 3 skill registry + NATS announcements
+- Phase 6 hardening requires Phase 5's full fleet running to test under real conditions
+
+---
+
+## File Reference
+
+Key files from the project structure (overview-v2 §11) mapped to phases:
+
+### Phase 1 files
+| File | Purpose |
+|------|---------|
+| `pyproject.toml` | Project config, dependencies |
+| `Dockerfile` | Multi-stage container build |
+| `docker-compose.yaml` | All services: infra + agents |
+| `.env.example` | Environment variable template |
+| `.gitignore` | Includes `.env` |
+| `src/pillywiggins/__init__.py` | Package init |
+| `src/pillywiggins/__main__.py` | CLI entrypoint: `--channel` arg |
+| `src/pillywiggins/config.py` | Pydantic Settings from env vars |
+| `src/pillywiggins/agents/brain.py` | PydanticAI agent brain |
+| `src/pillywiggins/agents/deps.py` | AgentDeps dataclass |
+| `src/pillywiggins/agents/personality.py` | YAML personality loader |
+| `src/pillywiggins/agents/base.py` | PillywigginAgent with asyncio.Lock |
+| `src/pillywiggins/messaging/unified.py` | UnifiedMessage, ChannelType |
+| `src/pillywiggins/adapters/base.py` | BaseAdapter ABC |
+| `src/pillywiggins/adapters/discord_adapter.py` | Discord channel adapter |
+| `src/pillywiggins/health.py` | /healthz endpoint |
+| `personalities/discord.yaml` | Puck personality config |
+| `skills/registry.json` | Empty skills registry |
+| `scripts/setup-db.sh` | PostgreSQL schema + RLS setup |
+| `scripts/pull-models.sh` | Ollama model pulls |
+| `tests/conftest.py` | Test fixtures |
+| `tests/test_brain.py` | PydanticAI brain tests |
+| `tests/test_adapters.py` | Discord adapter tests |
+
+### Phase 2 files
+| File | Purpose |
+|------|---------|
+| `src/pillywiggins/memory/private.py` | Private memory (pgvector + RLS) |
+| `src/pillywiggins/memory/cache.py` | Redis conversation cache |
+| `src/pillywiggins/memory/embeddings.py` | Ollama embedding helper |
+| `src/pillywiggins/memory/council.py` | Council memory operations |
+| `tests/test_memory_isolation.py` | RLS isolation tests |
+| `tests/test_council.py` | Council write/search tests |
+
+### Phase 3 files
+| File | Purpose |
+|------|---------|
+| `src/pillywiggins/skills/registry.py` | SkillRegistry class (load, register, watch) |
+| `src/pillywiggins/skills/builder.py` | Skill building/testing flow (draft→test→review→deploy) |
+| `src/pillywiggins/skills/sandbox.py` | Sandboxed subprocess execution |
+| `src/pillywiggins/skills/templates.py` | Skill file template for LLM |
+| `tests/test_skill_sandbox.py` | Sandbox timeout, restricted env |
+| `tests/test_skill_registry.py` | Registry load, register, watch |
+| `skills/roll_dice.py` | Example skill (seeding) |
+| `skills/check_website.py` | Example skill (seeding) |
+| `skills/count_words.py` | Example skill (seeding) |
+
+### Phase 4 files
+| File | Purpose |
+|------|---------|
+| `src/pillywiggins/adapters/slack_adapter.py` | Slack channel adapter |
+| `src/pillywiggins/messaging/nats_bus.py` | NATS pub/sub wrapper |
+| `src/pillywiggins/scheduling/scheduler.py` | APScheduler + Redis per-agent |
+| `personalities/slack.yaml` | Ariel personality config |
+
+### Phase 5 files
+| File | Purpose |
+|------|---------|
+| `src/pillywiggins/adapters/telegram_adapter.py` | Telegram channel adapter |
+| `src/pillywiggins/adapters/matrix_adapter.py` | Matrix channel adapter |
+| `src/pillywiggins/adapters/email_adapter.py` | Email channel adapter |
+| `personalities/telegram.yaml` | Robin personality config |
+| `personalities/matrix.yaml` | Cobweb personality config |
+| `personalities/email.yaml` | Moth personality config |
+
+### Phase 6 files
+| File | Purpose |
+|------|---------|
+| `scripts/backup-db.sh` | PostgreSQL backup script |
+| Various rate limiting, logging enhancements in existing files |
+
+---
+
+## Quick Reference: Overview-v2 Section Map
+
+| Section | Topic | Key Decision |
+|---------|-------|-------------|
+| §1 | Architecture overview | Docker Compose, one Python process per agent, direct connections to PostgreSQL/Redis/NATS |
+| §2 | Agent runtime | `PillywigginAgent` with `asyncio.Lock`, direct `asyncpg`, direct `nats-py`, `SkillRegistry` |
+| §3 | Skills system | Python files in shared volume, draft→test→review→deploy flow, `SkillRegistry`, sandbox subprocess |
+| §4 | Per-agent cron | APScheduler + Redis job store per agent, survives restarts, loaded from personality YAML |
+| §5 | Channel adapters | `UnifiedMessage`, one adapter per platform, `BaseAdapter` ABC |
+| §6 | Memory architecture | 3-tier: Redis cache, PostgreSQL+RLS private, PostgreSQL council |
+| §7 | Inter-agent comms | Direct `nats-py`, `council.broadcast` and `council.direct.{agent_id}` topics |
+| §8 | Personality system | YAML files, edit + `docker compose restart`, no rebuild |
+| §9 | Security | RLS, sandbox subprocess, `.env` for secrets, rate limiting, council write validation |
+| §10 | Observability | Start with structured JSON logging, `/healthz` endpoint; Prometheus/Grafana deferred |
+| §11 | Project structure | Source under `src/pillywiggins/`, personalities/ and skills/ at root |
+| §12 | Implementation roadmap | 6 phases: One Agent → Memory → Skills → Second Agent → Fleet → Hardening |
+| §13 | Open questions | Model quality, embedding colocation, council conflicts, email threading, skill deps |
+| §14 | Risk register | GPU OOM, 8B quality, RLS, skill sandbox, single machine failure |
