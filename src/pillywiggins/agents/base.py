@@ -36,5 +36,5 @@ class PillywigginAgent:
             )
             result = await self._brain.run(message.content, deps=deps)
             self._conversation_history.append({"role": "user", "content": message.content})
-            self._conversation_history.append({"role": "assistant", "content": result.data})
-            return result.data
+            self._conversation_history.append({"role": "assistant", "content": result.output})
+            return result.output
