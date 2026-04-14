@@ -28,6 +28,12 @@ class TelegramAdapter(BaseAdapter):
         super().__init__(agent)
         self.token = token
         self.settings = settings
+        self._allowed_user_ids = settings.get_allowed_user_ids()
+
+    def _is_authorized(self, user_id: int) -> bool:
+        if not self._allowed_user_ids:
+            return True
+        return user_id in self._allowed_user_ids
         self._app: Application | None = None
 
     async def connect(self) -> None:
@@ -127,6 +133,9 @@ class TelegramAdapter(BaseAdapter):
 
     async def _on_message(self, update: Update, context) -> None:
         if not update.message or not update.message.text:
+            return
+        if not self._is_authorized(update.message.from_user.id):
+            await update.message.reply_text("You are not authorized to use this bot.")
             return
         unified = self.normalize(update)
         logger.info("Message from %s: %s", unified.metadata.get("username", "?"), unified.content[:80])

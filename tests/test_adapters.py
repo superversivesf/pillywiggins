@@ -38,6 +38,7 @@ def _make_adapter():
     settings.llm_base_url = "http://localhost:11434"
     settings.llm_api_key = ""
     settings.llm_provider = "ollama"
+    settings.get_allowed_user_ids = MagicMock(return_value=set())
     adapter = TelegramAdapter(agent, "fake-token", settings)
     adapter._app = MagicMock()
     adapter._app.bot = MagicMock()
@@ -372,3 +373,50 @@ async def test_cmd_models_sorted_alphabetically():
     model_lines = [l for l in lines if l.startswith("•")]
     ids = [l.split("`")[1] for l in model_lines]
     assert ids == ["alpha:3b", "mistral:7b", "zephyr:7b"]
+
+
+def test_is_authorized_allows_all_when_no_list():
+    agent = MagicMock()
+    settings = MagicMock()
+    settings.get_allowed_user_ids = MagicMock(return_value=set())
+    adapter = TelegramAdapter(agent, "fake-token", settings)
+
+    assert adapter._is_authorized(999) is True
+    assert adapter._is_authorized(1) is True
+
+
+def test_is_authorized_restricts_to_allowed_ids():
+    agent = MagicMock()
+    settings = MagicMock()
+    settings.get_allowed_user_ids = MagicMock(return_value={42, 100})
+    adapter = TelegramAdapter(agent, "fake-token", settings)
+
+    assert adapter._is_authorized(42) is True
+    assert adapter._is_authorized(100) is True
+    assert adapter._is_authorized(999) is False
+
+
+@pytest.mark.asyncio
+async def test_on_message_rejects_unauthorized_user():
+    adapter = _make_adapter()
+    adapter._allowed_user_ids = {42}
+    update = _make_update(user_id=999, text="hello")
+    context = MagicMock()
+
+    await adapter._on_message(update, context)
+
+    adapter.agent.handle_message.assert_not_called()
+    reply = update.message.reply_text.call_args[0][0]
+    assert "not authorized" in reply
+
+
+@pytest.mark.asyncio
+async def test_on_message_allows_authorized_user():
+    adapter = _make_adapter()
+    adapter._allowed_user_ids = {42}
+    update = _make_update(user_id=42, text="hello")
+    context = MagicMock()
+
+    await adapter._on_message(update, context)
+
+    adapter.agent.handle_message.assert_called_once()
