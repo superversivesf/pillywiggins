@@ -30,7 +30,9 @@ def main():
         agent_id=settings.agent_id,
         personality=personality,
         model_name=settings.model_name,
-        ollama_base_url=settings.ollama_base_url,
+        provider=settings.llm_provider,
+        base_url=settings.llm_base_url,
+        api_key=settings.llm_api_key,
     )
 
     if args.channel == "telegram":

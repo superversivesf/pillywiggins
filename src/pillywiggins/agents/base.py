@@ -10,11 +10,21 @@ logger = logging.getLogger(__name__)
 
 
 class PillywigginAgent:
-    def __init__(self, agent_id: str, personality: Personality, model_name: str, ollama_base_url: str):
+    def __init__(
+        self,
+        agent_id: str,
+        personality: Personality,
+        model_name: str,
+        provider: str,
+        base_url: str,
+        api_key: str,
+    ):
         self.agent_id = agent_id
         self.personality = personality
         self._lock = asyncio.Lock()
-        self._brain: Agent = create_brain(personality.system_prompt, model_name, ollama_base_url)
+        self._brain: Agent = create_brain(
+            personality.system_prompt, model_name, provider, base_url, api_key,
+        )
         self._conversation_history: list = []
 
     async def handle_message(self, message: UnifiedMessage) -> str:

@@ -5,10 +5,24 @@ from pydantic_ai import Agent
 from pillywiggins.agents.deps import AgentDeps
 
 
-def create_brain(personality_prompt: str, model_name: str, ollama_base_url: str) -> Agent:
-    os.environ["OLLAMA_HOST"] = ollama_base_url
+def create_brain(
+    personality_prompt: str,
+    model_name: str,
+    provider: str,
+    base_url: str,
+    api_key: str,
+) -> Agent:
+    if provider == "ollama":
+        os.environ["OLLAMA_HOST"] = base_url
+        model = f"ollama:{model_name}"
+    else:
+        model = f"openai:{model_name}"
+        os.environ["OPENAI_API_KEY"] = api_key
+        if base_url:
+            os.environ["OPENAI_BASE_URL"] = base_url
+
     agent = Agent(
-        model=f"ollama:{model_name}",
+        model=model,
         system_prompt=personality_prompt,
         deps_type=AgentDeps,
     )
