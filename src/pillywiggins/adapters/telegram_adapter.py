@@ -59,6 +59,7 @@ class TelegramAdapter(BaseAdapter):
         unified = self.normalize(update)
         logger.info("Message from %s: %s", unified.metadata.get("username", "?"), unified.content[:80])
         try:
+            await self._app.bot.send_chat_action(chat_id=unified.conversation_key, action="typing")
             response = await self.agent.handle_message(unified)
             await self.send(unified.conversation_key, response)
         except Exception:
