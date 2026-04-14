@@ -70,3 +70,36 @@ def test_settings_partial_override_keeps_defaults(monkeypatch):
     assert s.channel == "telegram"
     assert s.llm_provider == "ollama"
     assert s.llm_api_key == ""
+
+
+def test_get_allowed_user_ids_empty_returns_empty():
+    s = Settings(allowed_user_ids="")
+    assert s.get_allowed_user_ids() == set()
+
+
+def test_get_allowed_user_ids_all_returns_empty():
+    s = Settings(allowed_user_ids="all")
+    assert s.get_allowed_user_ids() == set()
+
+
+def test_get_allowed_user_ids_all_case_insensitive():
+    s = Settings(allowed_user_ids="ALL")
+    assert s.get_allowed_user_ids() == set()
+
+
+def test_get_allowed_user_ids_parses_comma_separated():
+    s = Settings(allowed_user_ids="42,100,999")
+    result = s.get_allowed_user_ids()
+    assert result == {42, 100, 999}
+
+
+def test_get_allowed_user_ids_strips_whitespace():
+    s = Settings(allowed_user_ids=" 42 , 100 ")
+    result = s.get_allowed_user_ids()
+    assert result == {42, 100}
+
+
+def test_get_allowed_user_ids_single_id():
+    s = Settings(allowed_user_ids="42")
+    result = s.get_allowed_user_ids()
+    assert result == {42}

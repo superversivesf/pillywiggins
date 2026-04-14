@@ -39,6 +39,7 @@ def _make_adapter():
     settings.llm_api_key = ""
     settings.llm_provider = "ollama"
     settings.get_allowed_user_ids = MagicMock(return_value=set())
+    settings.allowed_user_ids = "all"
     adapter = TelegramAdapter(agent, "fake-token", settings)
     adapter._app = MagicMock()
     adapter._app.bot = MagicMock()
@@ -375,10 +376,22 @@ async def test_cmd_models_sorted_alphabetically():
     assert ids == ["alpha:3b", "mistral:7b", "zephyr:7b"]
 
 
-def test_is_authorized_allows_all_when_no_list():
+def test_is_authorized_denies_all_by_default():
     agent = MagicMock()
     settings = MagicMock()
     settings.get_allowed_user_ids = MagicMock(return_value=set())
+    settings.allowed_user_ids = ""
+    adapter = TelegramAdapter(agent, "fake-token", settings)
+
+    assert adapter._is_authorized(42) is False
+    assert adapter._is_authorized(1) is False
+
+
+def test_is_authorized_allows_all_with_all_keyword():
+    agent = MagicMock()
+    settings = MagicMock()
+    settings.get_allowed_user_ids = MagicMock(return_value=set())
+    settings.allowed_user_ids = "all"
     adapter = TelegramAdapter(agent, "fake-token", settings)
 
     assert adapter._is_authorized(999) is True
@@ -389,6 +402,7 @@ def test_is_authorized_restricts_to_allowed_ids():
     agent = MagicMock()
     settings = MagicMock()
     settings.get_allowed_user_ids = MagicMock(return_value={42, 100})
+    settings.allowed_user_ids = "42,100"
     adapter = TelegramAdapter(agent, "fake-token", settings)
 
     assert adapter._is_authorized(42) is True
@@ -400,6 +414,7 @@ def test_is_authorized_restricts_to_allowed_ids():
 async def test_on_message_rejects_unauthorized_user():
     adapter = _make_adapter()
     adapter._allowed_user_ids = {42}
+    adapter._allow_all = False
     update = _make_update(user_id=999, text="hello")
     context = MagicMock()
 
@@ -414,6 +429,7 @@ async def test_on_message_rejects_unauthorized_user():
 async def test_on_message_allows_authorized_user():
     adapter = _make_adapter()
     adapter._allowed_user_ids = {42}
+    adapter._allow_all = False
     update = _make_update(user_id=42, text="hello")
     context = MagicMock()
 

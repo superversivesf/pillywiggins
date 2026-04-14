@@ -22,6 +22,6 @@ class Settings(BaseSettings):
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     def get_allowed_user_ids(self) -> set[int]:
-        if not self.allowed_user_ids:
+        if not self.allowed_user_ids or self.allowed_user_ids.strip().lower() == "all":
             return set()
         return {int(uid.strip()) for uid in self.allowed_user_ids.split(",") if uid.strip()}

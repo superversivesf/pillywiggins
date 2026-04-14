@@ -29,12 +29,13 @@ class TelegramAdapter(BaseAdapter):
         self.token = token
         self.settings = settings
         self._allowed_user_ids = settings.get_allowed_user_ids()
+        self._allow_all = settings.allowed_user_ids.strip().lower() == "all"
+        self._app: Application | None = None
 
     def _is_authorized(self, user_id: int) -> bool:
-        if not self._allowed_user_ids:
+        if self._allow_all:
             return True
         return user_id in self._allowed_user_ids
-        self._app: Application | None = None
 
     async def connect(self) -> None:
         self._app = Application.builder().token(self.token).build()
