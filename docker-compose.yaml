@@ -7,6 +7,7 @@ services:
       POSTGRES_PASSWORD: ${PG_PASSWORD:-changeme}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pillywiggins"]
       interval: 5s
