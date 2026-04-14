@@ -27,6 +27,16 @@ class TelegramAdapter(BaseAdapter):
         await self._app.initialize()
         await self._app.start()
         await self._app.updater.start_polling()
+        await self._idle()
+
+    async def _idle(self) -> None:
+        import signal
+
+        event = asyncio.Event()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            asyncio.get_event_loop().add_signal_handler(sig, event.set)
+        await event.wait()
+        await self.shutdown()
 
     async def send(self, conversation_key: str, text: str, **kwargs) -> None:
         chat_id = int(conversation_key)
@@ -47,6 +57,7 @@ class TelegramAdapter(BaseAdapter):
         if not update.message or not update.message.text:
             return
         unified = self.normalize(update)
+        logger.info("Message from %s: %s", unified.metadata.get("username", "?"), unified.content[:80])
         try:
             response = await self.agent.handle_message(unified)
             await self.send(unified.conversation_key, response)
