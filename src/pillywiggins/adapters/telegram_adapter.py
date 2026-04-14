@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import signal
 from datetime import datetime, timezone
 
 from telegram import Update
@@ -30,8 +32,6 @@ class TelegramAdapter(BaseAdapter):
         await self._idle()
 
     async def _idle(self) -> None:
-        import signal
-
         event = asyncio.Event()
         for sig in (signal.SIGINT, signal.SIGTERM):
             asyncio.get_event_loop().add_signal_handler(sig, event.set)
