@@ -1,6 +1,11 @@
 import logging
 
+from aiohttp import web
+
 logger = logging.getLogger(__name__)
+
+
+SETTINGS_KEY = web.AppKey("settings", object)
 
 
 async def check_health(settings) -> dict:
@@ -30,11 +35,36 @@ async def check_health(settings) -> dict:
         import aiohttp
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(f"{settings.ollama_base_url}/api/tags") as resp:
-                checks["ollama"] = "ok" if resp.status == 200 else f"error: status {resp.status}"
+            async with session.get(f"{settings.llm_base_url}/api/tags") as resp:
+                checks["llm"] = "ok" if resp.status == 200 else f"error: status {resp.status}"
     except Exception as e:
-        checks["ollama"] = f"error: {e}"
+        checks["llm"] = f"error: {e}"
 
     overall = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
     logger.info("Health check: %s — %s", overall, checks)
     return {"status": overall, "checks": checks}
+
+
+async def _healthz_handler(request):
+    settings = request.app[SETTINGS_KEY]
+    result = await check_health(settings)
+    if result["status"] == "ok":
+        return web.json_response(result, status=200)
+    return web.json_response(result, status=503)
+
+
+def create_health_app(settings):
+    app = web.Application()
+    app[SETTINGS_KEY] = settings
+    app.router.add_get("/healthz", _healthz_handler)
+    return app
+
+
+async def start_health_server(settings, host="0.0.0.0", port=8080):
+    app = create_health_app(settings)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host, port)
+    await site.start()
+    logger.info("Healthz server listening on %s:%s", host, port)
+    return runner
