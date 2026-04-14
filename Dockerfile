@@ -6,8 +6,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# Copy dependency specs first for layer caching
+# Copy dependency specs and source for package installation
 COPY pyproject.toml uv.lock* ./
+COPY src/ ./src/
 
 # Install dependencies and the package itself
 RUN uv pip install --system .

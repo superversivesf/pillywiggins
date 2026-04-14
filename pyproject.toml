@@ -2,7 +2,6 @@
 name = "pillywiggins"
 version = "0.1.0"
 description = "A council of AI agents, not a chatbot with multiple faces."
-readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
