@@ -36,7 +36,7 @@ def main():
     )
 
     if args.channel == "telegram":
-        adapter = TelegramAdapter(agent=agent, token=settings.telegram_bot_token)
+        adapter = TelegramAdapter(agent=agent, token=settings.telegram_bot_token, settings=settings)
     else:
         raise ValueError(f"Channel {args.channel} not yet implemented")
 

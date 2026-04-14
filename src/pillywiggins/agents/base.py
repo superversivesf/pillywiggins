@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 
 from pydantic_ai.messages import ModelMessage
 
@@ -23,11 +24,30 @@ class PillywigginAgent:
     ):
         self.agent_id = agent_id
         self.personality = personality
+        self._model_name = model_name
+        self._provider = provider
+        self._base_url = base_url
+        self._api_key = api_key
         self._lock = asyncio.Lock()
         self._brain: Agent = create_brain(
             personality.system_prompt, model_name, provider, base_url, api_key,
         )
         self._message_history: list[ModelMessage] = []
+
+    @property
+    def model_name(self) -> str:
+        return self._model_name
+
+    def switch_model(self, new_model: str) -> None:
+        self._model_name = new_model
+        self._brain = create_brain(
+            self.personality.system_prompt, new_model, self._provider, self._base_url, self._api_key,
+        )
+        logger.info("Switched model to %s", new_model)
+
+    def clear_history(self) -> None:
+        self._message_history = []
+        logger.info("Cleared conversation history")
 
     async def handle_message(self, message: UnifiedMessage) -> str:
         async with self._lock:

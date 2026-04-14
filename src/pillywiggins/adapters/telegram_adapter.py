@@ -4,23 +4,36 @@ import signal
 from datetime import datetime, timezone
 
 from telegram import Update
-from telegram.ext import Application, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from pillywiggins.adapters.base import BaseAdapter
+from pillywiggins.adapters.models import list_models
 from pillywiggins.agents.base import PillywigginAgent
+from pillywiggins.config import Settings
 from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
 
 logger = logging.getLogger(__name__)
 
+HELP_TEXT = """*Pillywiggins Commands*
+/help — Show this message
+/models — List available LLM models
+/model <name> — Switch to a different model
+/reset — Clear conversation history"""
+
 
 class TelegramAdapter(BaseAdapter):
-    def __init__(self, agent: PillywigginAgent, token: str):
+    def __init__(self, agent: PillywigginAgent, token: str, settings: Settings):
         super().__init__(agent)
         self.token = token
+        self.settings = settings
         self._app: Application | None = None
 
     async def connect(self) -> None:
         self._app = Application.builder().token(self.token).build()
+        self._app.add_handler(CommandHandler("help", self._cmd_help))
+        self._app.add_handler(CommandHandler("models", self._cmd_models))
+        self._app.add_handler(CommandHandler("model", self._cmd_model))
+        self._app.add_handler(CommandHandler("reset", self._cmd_reset))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message))
 
     async def listen(self) -> None:
@@ -52,6 +65,37 @@ class TelegramAdapter(BaseAdapter):
             timestamp=datetime.now(timezone.utc),
             metadata={"username": message.from_user.username},
         )
+
+    async def _cmd_help(self, update: Update, context) -> None:
+        await update.message.reply_text(HELP_TEXT, parse_mode="Markdown")
+
+    async def _cmd_models(self, update: Update, context) -> None:
+        models = await list_models(
+            self.settings.llm_base_url,
+            self.settings.llm_api_key,
+            self.settings.llm_provider,
+        )
+        if not models:
+            await update.message.reply_text("Could not fetch model list.")
+            return
+        current = self.agent.model_name
+        lines = ["*Available models:*"]
+        for m in models:
+            marker = " ✅" if m.id == current else ""
+            lines.append(f"• `{m.id}`{marker}")
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+    async def _cmd_model(self, update: Update, context) -> None:
+        if not context.args:
+            await update.message.reply_text(f"Current model: `{self.agent.model_name}`", parse_mode="Markdown")
+            return
+        new_model = " ".join(context.args)
+        self.agent.switch_model(new_model)
+        await update.message.reply_text(f"Switched to `{new_model}`", parse_mode="Markdown")
+
+    async def _cmd_reset(self, update: Update, context) -> None:
+        self.agent.clear_history()
+        await update.message.reply_text("Conversation history cleared.")
 
     async def _keep_typing(self, chat_id: str, done: asyncio.Event) -> None:
         while not done.is_set():
