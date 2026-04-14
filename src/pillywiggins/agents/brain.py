@@ -38,6 +38,37 @@ async def recall_private_memory(ctx: RunContext[AgentDeps], query: str) -> str:
     return "\n".join(lines)
 
 
+async def save_to_private_memory(ctx: RunContext[AgentDeps], content: str) -> str:
+    """Save something to your private memory for later recall.
+
+    Use this to remember important facts, user preferences, or key moments
+    from the conversation that you might want to reference later.
+
+    Args:
+        content: What to remember. Be concise and specific.
+
+    Returns:
+        Confirmation that the memory was saved, or an error message.
+    """
+    if ctx.deps.private_memory is None:
+        return "Private memory is not available."
+    from pillywiggins.memory.embeddings import embed
+    from pillywiggins.config import Settings
+
+    settings = Settings()
+    embedding = await embed(
+        content,
+        base_url=settings.llm_base_url,
+        api_key=settings.llm_api_key,
+        provider=settings.llm_provider,
+        model=settings.embedding_model,
+    )
+    if embedding is None:
+        return "Could not generate embedding — memory not saved."
+    await ctx.deps.private_memory.save(content, embedding)
+    return f"Remembered: {content}"
+
+
 def create_brain(
     personality_prompt: str,
     model_name: str,
@@ -62,4 +93,5 @@ def create_brain(
         deps_type=AgentDeps,
     )
     agent.tool(recall_private_memory)
+    agent.tool(save_to_private_memory)
     return agent
