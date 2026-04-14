@@ -223,3 +223,23 @@ async def test_create_health_app_registers_route(settings):
     app = create_health_app(settings)
     routes = [r.resource.canonical for r in app.router.routes()]
     assert "/healthz" in routes
+
+
+@pytest.mark.asyncio
+async def test_start_health_server_returns_runner(settings):
+    from pillywiggins.health import start_health_server
+
+    with patch("pillywiggins.health.web.AppRunner") as mock_runner_cls, \
+         patch("pillywiggins.health.web.TCPSite") as mock_site_cls:
+        mock_runner = AsyncMock()
+        mock_runner.setup = AsyncMock()
+        mock_runner_cls.return_value = mock_runner
+        mock_site = AsyncMock()
+        mock_site.start = AsyncMock()
+        mock_site_cls.return_value = mock_site
+
+        runner = await start_health_server(settings, host="127.0.0.1", port=9999)
+
+    assert runner is mock_runner
+    mock_runner.setup.assert_called_once()
+    mock_site.start.assert_called_once()
