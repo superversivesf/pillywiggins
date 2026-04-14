@@ -112,3 +112,113 @@ async def test_handle_message_uses_brain(personality):
     assert result == "Hello from Puck!"
     mock_brain_instance.run.assert_called_once()
     assert len(agent._message_history) == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_message_saves_to_cache(personality):
+    mock_result = MagicMock()
+    mock_result.output = "Cached response"
+    mock_result.all_messages = MagicMock(return_value=[MagicMock()])
+
+    mock_brain_instance = MagicMock()
+    mock_brain_instance.run = AsyncMock(return_value=mock_result)
+
+    mock_cache = AsyncMock()
+
+    with patch("pillywiggins.agents.base.create_brain", return_value=mock_brain_instance):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+            cache=mock_cache,
+        )
+
+    from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
+
+    msg = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="123",
+        content="Hello!",
+        conversation_key="456",
+    )
+
+    await agent.handle_message(msg)
+
+    mock_cache.save.assert_called_once()
+    assert mock_cache.save.call_args[0][0] == "puck"
+
+
+@pytest.mark.asyncio
+async def test_load_history_from_cache(personality):
+    mock_cache = AsyncMock()
+    mock_messages = [MagicMock(), MagicMock()]
+    mock_cache.load = AsyncMock(return_value=mock_messages)
+
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+            cache=mock_cache,
+        )
+
+    await agent.load_history()
+
+    assert len(agent._message_history) == 2
+    mock_cache.load.assert_called_once_with("puck")
+
+
+@pytest.mark.asyncio
+async def test_load_history_no_cache(personality):
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+
+    await agent.load_history()
+
+    assert agent._message_history == []
+
+
+@pytest.mark.asyncio
+async def test_handle_message_without_cache_does_not_error(personality):
+    mock_result = MagicMock()
+    mock_result.output = "No cache"
+    mock_result.all_messages = MagicMock(return_value=[MagicMock()])
+
+    mock_brain_instance = MagicMock()
+    mock_brain_instance.run = AsyncMock(return_value=mock_result)
+
+    with patch("pillywiggins.agents.base.create_brain", return_value=mock_brain_instance):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+
+    from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
+
+    msg = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="123",
+        content="Hello!",
+        conversation_key="456",
+    )
+
+    result = await agent.handle_message(msg)
+
+    assert result == "No cache"

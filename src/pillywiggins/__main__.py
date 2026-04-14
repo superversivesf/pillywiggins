@@ -2,11 +2,12 @@ import argparse
 import asyncio
 import logging
 
+from pillywiggins.adapters.telegram_adapter import TelegramAdapter
 from pillywiggins.agents.base import PillywigginAgent
 from pillywiggins.agents.personality import load_personality
-from pillywiggins.adapters.telegram_adapter import TelegramAdapter
 from pillywiggins.config import Settings
 from pillywiggins.health import start_health_server
+from pillywiggins.memory.cache import ConversationCache
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ def main():
 
     settings = Settings()
     personality = load_personality(settings.personality_file)
+    cache = ConversationCache(redis_url=settings.redis_url)
     agent = PillywigginAgent(
         agent_id=settings.agent_id,
         personality=personality,
@@ -34,6 +36,7 @@ def main():
         provider=settings.llm_provider,
         base_url=settings.llm_base_url,
         api_key=settings.llm_api_key,
+        cache=cache,
     )
 
     if args.channel == "telegram":
@@ -43,15 +46,17 @@ def main():
 
     logger.info("Starting %s on %s", personality.name, args.channel)
 
-    asyncio.run(_run(adapter, settings))
+    asyncio.run(_run(adapter, agent, settings))
 
 
-async def _run(adapter, settings):
+async def _run(adapter, agent, settings):
     health_runner = await start_health_server(settings)
+    await agent.load_history()
     try:
         await adapter.connect()
         await adapter.listen()
     finally:
+        await agent._cache.close()
         await health_runner.cleanup()
 
 

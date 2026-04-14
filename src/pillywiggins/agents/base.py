@@ -1,12 +1,13 @@
 import asyncio
 import logging
-import os
+from typing import Optional
 
 from pydantic_ai.messages import ModelMessage
 
 from pillywiggins.agents.brain import Agent, create_brain
 from pillywiggins.agents.deps import AgentDeps
 from pillywiggins.agents.personality import Personality
+from pillywiggins.memory.cache import ConversationCache
 from pillywiggins.messaging.unified import UnifiedMessage
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,7 @@ class PillywigginAgent:
         provider: str,
         base_url: str,
         api_key: str,
+        cache: Optional[ConversationCache] = None,
     ):
         self.agent_id = agent_id
         self.personality = personality
@@ -28,11 +30,20 @@ class PillywigginAgent:
         self._provider = provider
         self._base_url = base_url
         self._api_key = api_key
+        self._cache = cache
         self._lock = asyncio.Lock()
         self._brain: Agent = create_brain(
             personality.system_prompt, model_name, provider, base_url, api_key,
         )
         self._message_history: list[ModelMessage] = []
+
+    async def load_history(self) -> None:
+        if self._cache is None:
+            return
+        cached = await self._cache.load(self.agent_id)
+        if cached is not None:
+            self._message_history = cached
+            logger.info("Loaded %d messages from cache for %s", len(cached), self.agent_id)
 
     @property
     def model_name(self) -> str:
@@ -61,4 +72,6 @@ class PillywigginAgent:
                 message_history=self._message_history,
             )
             self._message_history = result.all_messages()
+            if self._cache is not None:
+                await self._cache.save(self.agent_id, self._message_history)
             return result.output
