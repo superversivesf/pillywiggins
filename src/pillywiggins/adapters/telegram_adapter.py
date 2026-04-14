@@ -53,14 +53,27 @@ class TelegramAdapter(BaseAdapter):
             metadata={"username": message.from_user.username},
         )
 
+    async def _keep_typing(self, chat_id: str, done: asyncio.Event) -> None:
+        while not done.is_set():
+            await self._app.bot.send_chat_action(chat_id=chat_id, action="typing")
+            try:
+                await asyncio.wait_for(done.wait(), timeout=4)
+            except TimeoutError:
+                pass
+
     async def _on_message(self, update: Update, context) -> None:
         if not update.message or not update.message.text:
             return
         unified = self.normalize(update)
         logger.info("Message from %s: %s", unified.metadata.get("username", "?"), unified.content[:80])
         try:
-            await self._app.bot.send_chat_action(chat_id=unified.conversation_key, action="typing")
-            response = await self.agent.handle_message(unified)
+            done = asyncio.Event()
+            typing_task = asyncio.create_task(self._keep_typing(unified.conversation_key, done))
+            try:
+                response = await self.agent.handle_message(unified)
+            finally:
+                done.set()
+                typing_task.cancel()
             await self.send(unified.conversation_key, response)
         except Exception:
             logger.exception("Error handling Telegram message")
