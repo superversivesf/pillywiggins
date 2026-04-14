@@ -9,6 +9,7 @@ from pillywiggins.agents.deps import AgentDeps
 from pillywiggins.agents.personality import Personality
 from pillywiggins.memory.cache import ConversationCache
 from pillywiggins.memory.private import PrivateMemory
+from pillywiggins.memory.store import ConversationStore
 from pillywiggins.messaging.unified import UnifiedMessage
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ class PillywigginAgent:
         base_url: str,
         api_key: str,
         cache: Optional[ConversationCache] = None,
+        store: Optional[ConversationStore] = None,
         private_memory: Optional[PrivateMemory] = None,
         compact_keep_messages: int = 6,
         compact_truncate_message_chars: int = 2000,
@@ -35,6 +37,7 @@ class PillywigginAgent:
         self._base_url = base_url
         self._api_key = api_key
         self._cache = cache
+        self._store = store
         self._private_memory = private_memory
         self._compact_keep_messages = compact_keep_messages
         self._compact_truncate_message_chars = compact_truncate_message_chars
@@ -44,13 +47,18 @@ class PillywigginAgent:
         )
         self._message_history: list[ModelMessage] = []
 
-    async def load_history(self) -> None:
-        if self._cache is None:
-            return
-        cached = await self._cache.load(self.agent_id)
-        if cached is not None:
-            self._message_history = cached
-            logger.info("Loaded %d messages from cache for %s", len(cached), self.agent_id)
+    async def load_history(self, conversation_key: Optional[str] = None) -> None:
+        if self._cache is not None:
+            cached = await self._cache.load(self.agent_id)
+            if cached is not None:
+                self._message_history = cached
+                logger.info("Loaded %d messages from Redis for %s", len(cached), self.agent_id)
+                return
+        if self._store is not None and conversation_key is not None:
+            stored = await self._store.load(conversation_key)
+            if stored is not None:
+                self._message_history = stored
+                logger.info("Loaded %d messages from PostgreSQL for %s/%s", len(stored), self.agent_id, conversation_key)
 
     @property
     def model_name(self) -> str:
@@ -145,4 +153,6 @@ class PillywigginAgent:
             self._message_history = result.all_messages()
             if self._cache is not None:
                 await self._cache.save(self.agent_id, self._message_history)
+            if self._store is not None:
+                await self._store.save(message.conversation_key, self._message_history)
             return result.output

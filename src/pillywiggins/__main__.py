@@ -9,6 +9,7 @@ from pillywiggins.config import Settings
 from pillywiggins.health import start_health_server
 from pillywiggins.memory.cache import ConversationCache
 from pillywiggins.memory.private import PrivateMemory
+from pillywiggins.memory.store import ConversationStore
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ def main():
     settings = Settings()
     personality = load_personality(settings.personality_file)
     cache = ConversationCache(redis_url=settings.redis_url)
+    store = ConversationStore(database_url=settings.database_url, agent_id=settings.agent_id, channel=settings.channel)
     private_memory = PrivateMemory(database_url=settings.database_url, agent_id=settings.agent_id)
     agent = PillywigginAgent(
         agent_id=settings.agent_id,
@@ -39,6 +41,7 @@ def main():
         base_url=settings.llm_base_url,
         api_key=settings.llm_api_key,
         cache=cache,
+        store=store,
         private_memory=private_memory,
         compact_keep_messages=settings.compact_keep_messages,
         compact_truncate_message_chars=settings.compact_truncate_message_chars,
@@ -57,12 +60,14 @@ def main():
 async def _run(adapter, agent, settings):
     health_runner = await start_health_server(settings)
     await agent._private_memory.connect()
+    await agent._store.connect()
     await agent.load_history()
     try:
         await adapter.connect()
         await adapter.listen()
     finally:
         await agent._private_memory.close()
+        await agent._store.close()
         await agent._cache.close()
         await health_runner.cleanup()
 

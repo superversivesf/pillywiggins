@@ -13,6 +13,9 @@ def _make_mock_agent():
     mock_agent._private_memory = MagicMock()
     mock_agent._private_memory.connect = AsyncMock()
     mock_agent._private_memory.close = AsyncMock()
+    mock_agent._store = MagicMock()
+    mock_agent._store.connect = AsyncMock()
+    mock_agent._store.close = AsyncMock()
     return mock_agent
 
 
@@ -90,6 +93,7 @@ async def test_run_cleans_up_on_exit():
             await _run(mock_adapter, mock_agent, mock_settings)
 
     mock_agent._private_memory.close.assert_called_once()
+    mock_agent._store.close.assert_called_once()
     mock_agent._cache.close.assert_called_once()
     mock_runner.cleanup.assert_called_once()
 
@@ -111,6 +115,7 @@ async def test_run_connects_private_memory():
             await _run(mock_adapter, mock_agent, mock_settings)
 
     mock_agent._private_memory.connect.assert_called_once()
+    mock_agent._store.connect.assert_called_once()
 
 
 def test_main_parses_args():
