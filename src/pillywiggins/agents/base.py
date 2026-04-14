@@ -8,6 +8,7 @@ from pillywiggins.agents.brain import Agent, create_brain
 from pillywiggins.agents.deps import AgentDeps
 from pillywiggins.agents.personality import Personality
 from pillywiggins.memory.cache import ConversationCache
+from pillywiggins.memory.private import PrivateMemory
 from pillywiggins.messaging.unified import UnifiedMessage
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,7 @@ class PillywigginAgent:
         base_url: str,
         api_key: str,
         cache: Optional[ConversationCache] = None,
+        private_memory: Optional[PrivateMemory] = None,
         compact_keep_messages: int = 6,
         compact_truncate_message_chars: int = 2000,
     ):
@@ -33,6 +35,7 @@ class PillywigginAgent:
         self._base_url = base_url
         self._api_key = api_key
         self._cache = cache
+        self._private_memory = private_memory
         self._compact_keep_messages = compact_keep_messages
         self._compact_truncate_message_chars = compact_truncate_message_chars
         self._lock = asyncio.Lock()
@@ -91,7 +94,7 @@ class PillywigginAgent:
         summary_prompt = ModelRequest(
             parts=[UserPromptPart(content="Summarize this conversation so far in 2-3 concise sentences.")]
         )
-        deps = AgentDeps(agent_id=self.agent_id, channel="system")
+        deps = AgentDeps(agent_id=self.agent_id, channel="system", private_memory=self._private_memory)
         result = await self._brain.run(
             "",
             deps=deps,
@@ -132,6 +135,7 @@ class PillywigginAgent:
             deps = AgentDeps(
                 agent_id=self.agent_id,
                 channel=message.channel.value,
+                private_memory=self._private_memory,
             )
             result = await self._brain.run(
                 message.content,
