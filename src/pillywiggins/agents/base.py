@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
 
 from pillywiggins.agents.brain import Agent, create_brain
 from pillywiggins.agents.deps import AgentDeps
@@ -23,6 +23,8 @@ class PillywigginAgent:
         base_url: str,
         api_key: str,
         cache: Optional[ConversationCache] = None,
+        compact_keep_messages: int = 6,
+        compact_truncate_message_chars: int = 2000,
     ):
         self.agent_id = agent_id
         self.personality = personality
@@ -31,6 +33,8 @@ class PillywigginAgent:
         self._base_url = base_url
         self._api_key = api_key
         self._cache = cache
+        self._compact_keep_messages = compact_keep_messages
+        self._compact_truncate_message_chars = compact_truncate_message_chars
         self._lock = asyncio.Lock()
         self._brain: Agent = create_brain(
             personality.system_prompt, model_name, provider, base_url, api_key,
@@ -59,6 +63,69 @@ class PillywigginAgent:
     def clear_history(self) -> None:
         self._message_history = []
         logger.info("Cleared conversation history")
+
+    def get_status(self) -> dict:
+        total_chars = sum(
+            len(getattr(p, "content", "")) if hasattr(p, "content") else len(str(p))
+            for msg in self._message_history
+            for p in (msg.parts if hasattr(msg, "parts") else [])
+        )
+        return {
+            "model_name": self._model_name,
+            "message_count": len(self._message_history),
+            "estimated_tokens": round(total_chars / 4),
+            "agent_id": self.agent_id,
+            "channel": self.personality.channel,
+        }
+
+    async def compact_history(self) -> str:
+        keep_count = self._compact_keep_messages
+        total = len(self._message_history)
+
+        if total <= keep_count:
+            return f"Nothing to compact — only {total} messages."
+
+        old_messages = self._message_history[:-keep_count]
+        kept_messages = self._message_history[-keep_count:]
+
+        summary_prompt = ModelRequest(
+            parts=[UserPromptPart(content="Summarize this conversation so far in 2-3 concise sentences.")]
+        )
+        deps = AgentDeps(agent_id=self.agent_id, channel="system")
+        result = await self._brain.run(
+            "",
+            deps=deps,
+            message_history=[summary_prompt, *old_messages],
+        )
+
+        summary_text = result.output
+        summary_parts = [
+            p for p in result.all_messages() if hasattr(p, "kind") and p.kind == "response"
+        ]
+        if summary_parts:
+            summary_response = summary_parts[-1]
+        else:
+            summary_response = ModelResponse(parts=[TextPart(content=summary_text)])
+
+        truncated_kept = []
+        for msg in kept_messages:
+            new_parts = []
+            for part in (msg.parts if hasattr(msg, "parts") else []):
+                if hasattr(part, "content") and isinstance(part.content, str):
+                    if len(part.content) > self._compact_truncate_message_chars:
+                        truncated = part.content[:self._compact_truncate_message_chars] + "...[truncated]"
+                        new_parts.append(TextPart(content=truncated))
+                    else:
+                        new_parts.append(part)
+                else:
+                    new_parts.append(part)
+            if hasattr(msg, "kind") and msg.kind == "request":
+                truncated_kept.append(ModelRequest(parts=new_parts))
+            else:
+                truncated_kept.append(ModelResponse(parts=new_parts))
+
+        self._message_history = [summary_prompt, summary_response, *truncated_kept]
+        return f"Compacted {len(old_messages)} messages into summary. Keeping {keep_count} recent."
 
     async def handle_message(self, message: UnifiedMessage) -> str:
         async with self._lock:

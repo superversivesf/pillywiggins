@@ -26,6 +26,14 @@ def _make_adapter():
     agent.handle_message = AsyncMock(return_value="response")
     agent.switch_model = MagicMock()
     agent.clear_history = MagicMock()
+    agent.get_status = MagicMock(return_value={
+        "agent_id": "puck",
+        "channel": "telegram",
+        "model_name": "qwen3.5:8b",
+        "message_count": 7,
+        "estimated_tokens": 1500,
+    })
+    agent.compact_history = AsyncMock(return_value="Compacted: 7 messages → 1 summary")
     settings = MagicMock()
     settings.llm_base_url = "http://localhost:11434"
     settings.llm_api_key = ""
@@ -49,8 +57,10 @@ def test_help_text_constant_exists():
     assert HELP_TEXT is not None
     assert isinstance(HELP_TEXT, str)
     assert "/help" in HELP_TEXT
+    assert "/status" in HELP_TEXT
     assert "/models" in HELP_TEXT
     assert "/model" in HELP_TEXT
+    assert "/compact" in HELP_TEXT
     assert "/reset" in HELP_TEXT
 
 
@@ -308,3 +318,57 @@ async def test_connect_builds_app():
         await adapter.connect()
 
     assert adapter._app is not None
+
+
+@pytest.mark.asyncio
+async def test_cmd_status_shows_fields():
+    adapter = _make_adapter()
+    update = _make_update()
+    context = MagicMock()
+
+    await adapter._cmd_status(update, context)
+
+    reply = update.message.reply_text.call_args[0][0]
+    assert "`puck`" in reply
+    assert "`telegram`" in reply
+    assert "`qwen3.5:8b`" in reply
+    assert "7" in reply
+    assert "~1500" in reply
+
+
+@pytest.mark.asyncio
+async def test_cmd_compact_calls_agent():
+    adapter = _make_adapter()
+    update = _make_update()
+    context = MagicMock()
+
+    await adapter._cmd_compact(update, context)
+
+    adapter.agent.compact_history.assert_called_once()
+    update.message.reply_text.assert_called_once_with("Compacted: 7 messages → 1 summary")
+
+
+@pytest.mark.asyncio
+async def test_cmd_models_sorted_alphabetically():
+    adapter = _make_adapter()
+    update = _make_update()
+    context = MagicMock()
+
+    model_z = MagicMock()
+    model_z.id = "zephyr:7b"
+    model_z.owned_by = "ollama"
+    model_a = MagicMock()
+    model_a.id = "alpha:3b"
+    model_a.owned_by = "ollama"
+    model_m = MagicMock()
+    model_m.id = "mistral:7b"
+    model_m.owned_by = "ollama"
+
+    with patch("pillywiggins.adapters.telegram_adapter.list_models", new_callable=AsyncMock, return_value=[model_z, model_a, model_m]):
+        await adapter._cmd_models(update, context)
+
+    reply = update.message.reply_text.call_args[0][0]
+    lines = reply.split("\n")
+    model_lines = [l for l in lines if l.startswith("•")]
+    ids = [l.split("`")[1] for l in model_lines]
+    assert ids == ["alpha:3b", "mistral:7b", "zephyr:7b"]

@@ -15,5 +15,7 @@ class Settings(BaseSettings):
     model_name: str = "qwen3.5:8b"
     embedding_model: str = "nomic-embed-text"
     telegram_bot_token: str = ""
+    compact_keep_messages: int = 6
+    compact_truncate_message_chars: int = 2000
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}

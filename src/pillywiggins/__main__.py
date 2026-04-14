@@ -37,6 +37,8 @@ def main():
         base_url=settings.llm_base_url,
         api_key=settings.llm_api_key,
         cache=cache,
+        compact_keep_messages=settings.compact_keep_messages,
+        compact_truncate_message_chars=settings.compact_truncate_message_chars,
     )
 
     if args.channel == "telegram":

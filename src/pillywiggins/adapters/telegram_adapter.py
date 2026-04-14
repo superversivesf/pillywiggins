@@ -16,8 +16,10 @@ logger = logging.getLogger(__name__)
 
 HELP_TEXT = """*Pillywiggins Commands*
 /help — Show this message
+/status — Show agent status (model, context size, etc.)
 /models — List available LLM models
 /model <name> — Switch to a different model
+/compact — Summarize conversation history to free context
 /reset — Clear conversation history"""
 
 
@@ -31,8 +33,10 @@ class TelegramAdapter(BaseAdapter):
     async def connect(self) -> None:
         self._app = Application.builder().token(self.token).build()
         self._app.add_handler(CommandHandler("help", self._cmd_help))
+        self._app.add_handler(CommandHandler("status", self._cmd_status))
         self._app.add_handler(CommandHandler("models", self._cmd_models))
         self._app.add_handler(CommandHandler("model", self._cmd_model))
+        self._app.add_handler(CommandHandler("compact", self._cmd_compact))
         self._app.add_handler(CommandHandler("reset", self._cmd_reset))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message))
 
@@ -69,6 +73,17 @@ class TelegramAdapter(BaseAdapter):
     async def _cmd_help(self, update: Update, context) -> None:
         await update.message.reply_text(HELP_TEXT, parse_mode="Markdown")
 
+    async def _cmd_status(self, update: Update, context) -> None:
+        status = self.agent.get_status()
+        lines = [
+            f"*Agent:* `{status['agent_id']}`",
+            f"*Channel:* `{status['channel']}`",
+            f"*Model:* `{status['model_name']}`",
+            f"*Messages:* {status['message_count']}",
+            f"*Est. tokens:* ~{status['estimated_tokens']}",
+        ]
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
     async def _cmd_models(self, update: Update, context) -> None:
         models = await list_models(
             self.settings.llm_base_url,
@@ -78,6 +93,7 @@ class TelegramAdapter(BaseAdapter):
         if not models:
             await update.message.reply_text("Could not fetch model list.")
             return
+        models = sorted(models, key=lambda m: m.id)
         current = self.agent.model_name
         lines = ["*Available models:*"]
         for m in models:
@@ -96,6 +112,10 @@ class TelegramAdapter(BaseAdapter):
     async def _cmd_reset(self, update: Update, context) -> None:
         self.agent.clear_history()
         await update.message.reply_text("Conversation history cleared.")
+
+    async def _cmd_compact(self, update: Update, context) -> None:
+        result = await self.agent.compact_history()
+        await update.message.reply_text(result)
 
     async def _keep_typing(self, chat_id: str, done: asyncio.Event) -> None:
         while not done.is_set():
