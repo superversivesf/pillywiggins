@@ -1,6 +1,8 @@
 import asyncio
 import logging
 
+from pydantic_ai.messages import ModelMessage
+
 from pillywiggins.agents.brain import Agent, create_brain
 from pillywiggins.agents.deps import AgentDeps
 from pillywiggins.agents.personality import Personality
@@ -25,16 +27,18 @@ class PillywigginAgent:
         self._brain: Agent = create_brain(
             personality.system_prompt, model_name, provider, base_url, api_key,
         )
-        self._conversation_history: list = []
+        self._message_history: list[ModelMessage] = []
 
     async def handle_message(self, message: UnifiedMessage) -> str:
         async with self._lock:
             deps = AgentDeps(
                 agent_id=self.agent_id,
                 channel=message.channel.value,
-                conversation_history=self._conversation_history,
             )
-            result = await self._brain.run(message.content, deps=deps)
-            self._conversation_history.append({"role": "user", "content": message.content})
-            self._conversation_history.append({"role": "assistant", "content": result.output})
+            result = await self._brain.run(
+                message.content,
+                deps=deps,
+                message_history=self._message_history,
+            )
+            self._message_history = result.all_messages()
             return result.output
