@@ -13,7 +13,10 @@ def create_brain(
     api_key: str,
 ) -> Agent:
     if provider == "ollama":
-        os.environ["OLLAMA_HOST"] = base_url
+        if base_url:
+            os.environ["OLLAMA_HOST"] = base_url
+        if api_key:
+            os.environ["OLLAMA_API_KEY"] = api_key
         model = f"ollama:{model_name}"
     else:
         model = f"openai:{model_name}"
