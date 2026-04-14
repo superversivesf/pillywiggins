@@ -10,6 +10,7 @@ from pillywiggins.health import start_health_server
 from pillywiggins.memory.cache import ConversationCache
 from pillywiggins.memory.private import PrivateMemory
 from pillywiggins.memory.store import ConversationStore
+from pillywiggins.skills.registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,8 @@ def main():
     cache = ConversationCache(redis_url=settings.redis_url)
     store = ConversationStore(database_url=settings.database_url, agent_id=settings.agent_id, channel=settings.channel)
     private_memory = PrivateMemory(database_url=settings.database_url, agent_id=settings.agent_id)
+    skill_registry = SkillRegistry()
+    skill_registry.load_all()
     agent = PillywigginAgent(
         agent_id=settings.agent_id,
         personality=personality,
@@ -43,6 +46,7 @@ def main():
         cache=cache,
         store=store,
         private_memory=private_memory,
+        skill_registry=skill_registry,
         compact_keep_messages=settings.compact_keep_messages,
         compact_truncate_message_chars=settings.compact_truncate_message_chars,
     )

@@ -19,6 +19,7 @@ HELP_TEXT = """*Pillywiggins Commands*
 /status — Show agent status (model, context size, etc.)
 /models — List available LLM models
 /model <name> — Switch to a different model
+/skills — List loaded skills
 /compact — Summarize conversation history to free context
 /reset — Clear conversation history"""
 
@@ -43,6 +44,7 @@ class TelegramAdapter(BaseAdapter):
         self._app.add_handler(CommandHandler("status", self._cmd_status))
         self._app.add_handler(CommandHandler("models", self._cmd_models))
         self._app.add_handler(CommandHandler("model", self._cmd_model))
+        self._app.add_handler(CommandHandler("skills", self._cmd_skills))
         self._app.add_handler(CommandHandler("compact", self._cmd_compact))
         self._app.add_handler(CommandHandler("reset", self._cmd_reset))
         self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message))
@@ -123,6 +125,17 @@ class TelegramAdapter(BaseAdapter):
     async def _cmd_compact(self, update: Update, context) -> None:
         result = await self.agent.compact_history()
         await update.message.reply_text(result)
+
+    async def _cmd_skills(self, update: Update, context) -> None:
+        skills = self.agent._skill_registry.list_skills()
+        if not skills:
+            await update.message.reply_text("No skills loaded.")
+            return
+        lines = ["*Loaded skills:*"]
+        for skill in skills:
+            desc = skill.description[:60] + "..." if len(skill.description) > 60 else skill.description
+            lines.append(f"• `{skill.name}` — {desc}")
+        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
     async def _keep_typing(self, chat_id: str, done: asyncio.Event) -> None:
         while not done.is_set():

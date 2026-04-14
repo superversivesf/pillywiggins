@@ -1,4 +1,5 @@
 import os
+from typing import Optional
 
 from pydantic_ai import Agent, RunContext
 
@@ -69,12 +70,29 @@ async def save_to_private_memory(ctx: RunContext[AgentDeps], content: str) -> st
     return f"Remembered: {content}"
 
 
+def _make_skill_tool(skill):
+    async def skill_tool(ctx: RunContext[AgentDeps], **kwargs) -> str:
+        import json
+        result = await skill.execute(**kwargs)
+        if isinstance(result, str):
+            return result
+        return json.dumps(result)
+
+    skill_tool.__name__ = skill.name
+    skill_tool.__doc__ = skill.description + ("\n\nArgs:\n" + "\n".join(
+        f"    {k}: {v.get('description', v.get('type', 'any'))}"
+        for k, v in skill.meta.get("parameters", {}).items()
+    ) if skill.meta.get("parameters") else "")
+    return skill_tool
+
+
 def create_brain(
     personality_prompt: str,
     model_name: str,
     provider: str,
     base_url: str,
     api_key: str,
+    skill_registry: Optional[object] = None,
 ) -> Agent:
     if provider == "ollama":
         os.environ["OLLAMA_BASE_URL"] = base_url or "http://localhost:11434"
@@ -94,4 +112,9 @@ def create_brain(
     )
     agent.tool(recall_private_memory)
     agent.tool(save_to_private_memory)
+
+    if skill_registry is not None:
+        for skill in skill_registry.list_skills():
+            agent.tool(_make_skill_tool(skill))
+
     return agent

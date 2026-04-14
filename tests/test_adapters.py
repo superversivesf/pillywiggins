@@ -62,6 +62,7 @@ def test_help_text_constant_exists():
     assert "/status" in HELP_TEXT
     assert "/models" in HELP_TEXT
     assert "/model" in HELP_TEXT
+    assert "/skills" in HELP_TEXT
     assert "/compact" in HELP_TEXT
     assert "/reset" in HELP_TEXT
 
@@ -436,3 +437,37 @@ async def test_on_message_allows_authorized_user():
     await adapter._on_message(update, context)
 
     adapter.agent.handle_message.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_cmd_skills_lists_skills():
+    adapter = _make_adapter()
+    mock_skill = MagicMock()
+    mock_skill.name = "roll_dice"
+    mock_skill.description = "Roll one or more dice"
+    mock_skill.meta = {"name": "roll_dice", "description": "Roll one or more dice", "parameters": {}, "version": "1.0", "network_access": False}
+    adapter.agent._skill_registry = MagicMock()
+    adapter.agent._skill_registry.list_skills = MagicMock(return_value=[mock_skill])
+
+    update = _make_update()
+    context = MagicMock()
+
+    await adapter._cmd_skills(update, context)
+
+    reply = update.message.reply_text.call_args[0][0]
+    assert "roll_dice" in reply
+    assert "Roll one or more dice" in reply
+
+
+@pytest.mark.asyncio
+async def test_cmd_skills_no_skills():
+    adapter = _make_adapter()
+    adapter.agent._skill_registry = MagicMock()
+    adapter.agent._skill_registry.list_skills = MagicMock(return_value=[])
+
+    update = _make_update()
+    context = MagicMock()
+
+    await adapter._cmd_skills(update, context)
+
+    update.message.reply_text.assert_called_once_with("No skills loaded.")

@@ -10,6 +10,7 @@ from pillywiggins.agents.personality import Personality
 from pillywiggins.memory.cache import ConversationCache
 from pillywiggins.memory.private import PrivateMemory
 from pillywiggins.memory.store import ConversationStore
+from pillywiggins.skills.registry import SkillRegistry
 from pillywiggins.messaging.unified import UnifiedMessage
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ class PillywigginAgent:
         cache: Optional[ConversationCache] = None,
         store: Optional[ConversationStore] = None,
         private_memory: Optional[PrivateMemory] = None,
+        skill_registry: Optional[SkillRegistry] = None,
         compact_keep_messages: int = 6,
         compact_truncate_message_chars: int = 2000,
     ):
@@ -39,11 +41,13 @@ class PillywigginAgent:
         self._cache = cache
         self._store = store
         self._private_memory = private_memory
+        self._skill_registry = skill_registry
         self._compact_keep_messages = compact_keep_messages
         self._compact_truncate_message_chars = compact_truncate_message_chars
         self._lock = asyncio.Lock()
         self._brain: Agent = create_brain(
             personality.system_prompt, model_name, provider, base_url, api_key,
+            skill_registry=skill_registry,
         )
         self._message_history: list[ModelMessage] = []
 
@@ -102,7 +106,7 @@ class PillywigginAgent:
         summary_prompt = ModelRequest(
             parts=[UserPromptPart(content="Summarize this conversation so far in 2-3 concise sentences.")]
         )
-        deps = AgentDeps(agent_id=self.agent_id, channel="system", private_memory=self._private_memory)
+        deps = AgentDeps(agent_id=self.agent_id, channel="system", private_memory=self._private_memory, skill_registry=self._skill_registry)
         result = await self._brain.run(
             "",
             deps=deps,
@@ -144,6 +148,7 @@ class PillywigginAgent:
                 agent_id=self.agent_id,
                 channel=message.channel.value,
                 private_memory=self._private_memory,
+                skill_registry=self._skill_registry,
             )
             result = await self._brain.run(
                 message.content,
