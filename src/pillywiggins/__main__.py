@@ -30,6 +30,7 @@ def main():
         agent_id=settings.agent_id,
         personality=personality,
         model_name=settings.model_name,
+        ollama_base_url=settings.ollama_base_url,
     )
 
     if args.channel == "telegram":

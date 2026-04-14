@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     pg_password: str = "changeme"
     redis_url: str = "redis://redis:6379/0"
     nats_url: str = "nats://nats:4222"
-    ollama_base_url: str = "http://host.docker.internal:11434"
+    ollama_base_url: str = "http://localhost:11434"
     model_name: str = "qwen3.5:8b"
     embedding_model: str = "nomic-embed-text"
     telegram_bot_token: str = ""
