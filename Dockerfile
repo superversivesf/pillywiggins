@@ -9,8 +9,8 @@ WORKDIR /app
 # Copy dependency specs first for layer caching
 COPY pyproject.toml uv.lock* ./
 
-# Install dependencies into a virtual environment
-RUN uv pip install --system -r pyproject.toml
+# Install dependencies and the package itself
+RUN uv pip install --system .
 
 # Runtime stage: minimal image with installed packages
 FROM python:3.12-slim AS runtime
@@ -21,8 +21,7 @@ WORKDIR /app
 COPY --from=build /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=build /usr/local/bin /usr/local/bin
 
-# Copy application source code
-COPY src/ ./src/
+# Copy data directories (not Python packages)
 COPY personalities/ ./personalities/
 COPY skills/ ./skills/
 
