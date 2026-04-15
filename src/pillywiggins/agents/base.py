@@ -8,9 +8,11 @@ from pillywiggins.agents.brain import Agent, create_brain
 from pillywiggins.agents.deps import AgentDeps
 from pillywiggins.agents.personality import Personality
 from pillywiggins.memory.cache import ConversationCache
+from pillywiggins.memory.council import CouncilMemory
 from pillywiggins.memory.private import PrivateMemory
 from pillywiggins.memory.store import ConversationStore
 from pillywiggins.skills.registry import SkillRegistry
+from pillywiggins.messaging.nats_bus import NatsBus
 from pillywiggins.messaging.unified import UnifiedMessage
 
 logger = logging.getLogger(__name__)
@@ -31,6 +33,8 @@ class PillywigginAgent:
         skill_registry: Optional[SkillRegistry] = None,
         compact_keep_messages: int = 6,
         compact_truncate_message_chars: int = 2000,
+        database_url: Optional[str] = None,
+        nats_url: Optional[str] = None,
     ):
         self.agent_id = agent_id
         self.personality = personality
@@ -44,6 +48,10 @@ class PillywigginAgent:
         self._skill_registry = skill_registry
         self._compact_keep_messages = compact_keep_messages
         self._compact_truncate_message_chars = compact_truncate_message_chars
+        self._database_url = database_url
+        self._nats_url = nats_url
+        self._council_memory: Optional[CouncilMemory] = None
+        self._nats_bus: Optional[NatsBus] = None
         self._lock = asyncio.Lock()
         self._brain: Agent = create_brain(
             personality.system_prompt, model_name, provider, base_url, api_key,
@@ -63,6 +71,40 @@ class PillywigginAgent:
             if stored is not None:
                 self._message_history = stored
                 logger.info("Loaded %d messages from PostgreSQL for %s/%s", len(stored), self.agent_id, conversation_key)
+
+    async def start(self) -> None:
+        if self._database_url is not None:
+            try:
+                council = CouncilMemory(self._database_url, self.agent_id)
+                await council.connect()
+                self._council_memory = council
+                logger.info("Council memory connected for %s", self.agent_id)
+            except Exception:
+                logger.warning("Failed to connect council memory for %s", self.agent_id, exc_info=True)
+                self._council_memory = None
+        if self._nats_url is not None:
+            try:
+                bus = NatsBus(self._nats_url, self.agent_id)
+                await bus.connect()
+                self._nats_bus = bus
+                logger.info("NATS bus connected for %s", self.agent_id)
+            except Exception:
+                logger.warning("Failed to connect NATS bus for %s", self.agent_id, exc_info=True)
+                self._nats_bus = None
+
+    async def shutdown(self) -> None:
+        if self._council_memory is not None:
+            try:
+                await self._council_memory.close()
+            except Exception:
+                logger.warning("Error closing council memory for %s", self.agent_id, exc_info=True)
+            self._council_memory = None
+        if self._nats_bus is not None:
+            try:
+                await self._nats_bus.close()
+            except Exception:
+                logger.warning("Error closing NATS bus for %s", self.agent_id, exc_info=True)
+            self._nats_bus = None
 
     @property
     def model_name(self) -> str:
@@ -106,7 +148,14 @@ class PillywigginAgent:
         summary_prompt = ModelRequest(
             parts=[UserPromptPart(content="Summarize this conversation so far in 2-3 concise sentences.")]
         )
-        deps = AgentDeps(agent_id=self.agent_id, channel="system", private_memory=self._private_memory, skill_registry=self._skill_registry)
+        deps = AgentDeps(
+            agent_id=self.agent_id,
+            channel="system",
+            private_memory=self._private_memory,
+            skill_registry=self._skill_registry,
+            council_memory=self._council_memory,
+            nats_bus=self._nats_bus,
+        )
         result = await self._brain.run(
             "",
             deps=deps,
@@ -149,6 +198,8 @@ class PillywigginAgent:
                 channel=message.channel.value,
                 private_memory=self._private_memory,
                 skill_registry=self._skill_registry,
+                council_memory=self._council_memory,
+                nats_bus=self._nats_bus,
             )
             result = await self._brain.run(
                 message.content,

@@ -8,6 +8,8 @@ from pillywiggins.agents.brain import (
     create_brain,
     recall_private_memory,
     save_to_private_memory,
+    query_council_memory,
+    share_to_council,
     _make_skill_tool,
     build_skill,
     review_skill_code,
@@ -17,13 +19,15 @@ from pillywiggins.agents.deps import AgentDeps
 from pillywiggins.skills.registry import Skill, SkillRegistry
 
 
-def _make_ctx(agent_id="puck", channel="discord", private_memory=None, skill_registry=None):
+def _make_ctx(agent_id="puck", channel="discord", private_memory=None, skill_registry=None, council_memory=None, nats_bus=None):
     ctx = MagicMock(spec=RunContext)
     ctx.deps = AgentDeps(
         agent_id=agent_id,
         channel=channel,
         private_memory=private_memory,
         skill_registry=skill_registry,
+        council_memory=council_memory,
+        nats_bus=nats_bus,
     )
     return ctx
 
@@ -166,6 +170,8 @@ def test_create_brain_registers_builtin_tools(monkeypatch):
     tool_names = list(agent._function_toolset.tools.keys())
     assert "recall_private_memory" in tool_names
     assert "save_to_private_memory" in tool_names
+    assert "query_council_memory" in tool_names
+    assert "share_to_council" in tool_names
     assert "build_skill" in tool_names
     assert "test_skill_code" in tool_names
     assert "review_skill_code" in tool_names
@@ -202,7 +208,9 @@ def test_create_brain_no_skill_registry_no_skill_tools(monkeypatch):
     tool_names = list(agent._function_toolset.tools.keys())
     assert "recall_private_memory" in tool_names
     assert "save_to_private_memory" in tool_names
-    assert len(tool_names) == 6
+    assert "query_council_memory" in tool_names
+    assert "share_to_council" in tool_names
+    assert len(tool_names) == 8
     assert "build_skill" in tool_names
     assert "test_skill_code" in tool_names
     assert "review_skill_code" in tool_names
@@ -222,7 +230,7 @@ def test_create_brain_empty_skill_registry(monkeypatch):
         skill_registry=registry,
     )
     tool_names = list(agent._function_toolset.tools.keys())
-    assert len(tool_names) == 6
+    assert len(tool_names) == 8
 
 
 def test_create_brain_multiple_skill_tools(monkeypatch):
@@ -244,7 +252,7 @@ def test_create_brain_multiple_skill_tools(monkeypatch):
     assert "weather" in tool_names
     assert "calculator" in tool_names
     assert "translator" in tool_names
-    assert len(tool_names) == 9
+    assert len(tool_names) == 11
 
 
 def test_create_brain_deps_type_is_agent_deps(monkeypatch):
@@ -376,3 +384,152 @@ class TestSaveToPrivateMemoryEdgeCases:
         result = await save_to_private_memory(ctx, "user likes cats")
         assert "Remembered:" in result
         assert "user likes cats" in result
+
+
+class TestQueryCouncilMemory:
+    @pytest.mark.asyncio
+    async def test_returns_unavailable_when_council_memory_none(self):
+        ctx = _make_ctx(council_memory=None)
+        result = await query_council_memory(ctx, "test query")
+        assert result == "Council memory is not available."
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.memory.embeddings.embed")
+    @patch("pillywiggins.config.Settings")
+    async def test_returns_not_found_when_search_empty(self, mock_settings_cls, mock_embed):
+        mock_settings_cls.return_value = MagicMock()
+        mock_embed.return_value = [0.1, 0.2, 0.3]
+        council = MagicMock()
+        council.search = AsyncMock(return_value=[])
+        ctx = _make_ctx(council_memory=council)
+        result = await query_council_memory(ctx, "nothing here")
+        assert result == "No council insights found matching that query."
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.memory.embeddings.embed")
+    @patch("pillywiggins.config.Settings")
+    async def test_returns_formatted_results_when_found(self, mock_settings_cls, mock_embed):
+        mock_settings_cls.return_value = MagicMock()
+        mock_embed.return_value = [0.1, 0.2, 0.3]
+        council = MagicMock()
+        council.search = AsyncMock(return_value=[
+            {"content": "sky is blue", "contributing_agent": "puck", "message_type": "insight"},
+            {"content": "water is wet", "contributing_agent": "oberon", "message_type": "observation"},
+        ])
+        ctx = _make_ctx(council_memory=council)
+        result = await query_council_memory(ctx, "nature facts")
+        assert "[insight]" in result
+        assert "sky is blue" in result
+        assert "puck" in result
+        assert "[observation]" in result
+        assert "water is wet" in result
+        assert "oberon" in result
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.memory.embeddings.embed")
+    @patch("pillywiggins.config.Settings")
+    async def test_returns_message_when_embedding_is_none(self, mock_settings_cls, mock_embed):
+        mock_settings_cls.return_value = MagicMock()
+        mock_embed.return_value = None
+        council = MagicMock()
+        ctx = _make_ctx(council_memory=council)
+        result = await query_council_memory(ctx, "test")
+        assert result == "Could not generate embedding for council search."
+        council.search.assert_not_called()
+
+
+class TestShareToCouncil:
+    @pytest.mark.asyncio
+    async def test_returns_unavailable_when_council_memory_none(self):
+        ctx = _make_ctx(council_memory=None)
+        result = await share_to_council(ctx, "insight content")
+        assert result == "Council memory is not available."
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.memory.embeddings.embed")
+    @patch("pillywiggins.config.Settings")
+    async def test_returns_error_when_embedding_is_none(self, mock_settings_cls, mock_embed):
+        mock_settings_cls.return_value = MagicMock()
+        mock_embed.return_value = None
+        council = MagicMock()
+        ctx = _make_ctx(council_memory=council)
+        result = await share_to_council(ctx, "something")
+        assert result == "Could not generate embedding — council insight not shared."
+        council.write_entry.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.memory.embeddings.embed")
+    @patch("pillywiggins.config.Settings")
+    async def test_writes_entry_with_parsed_tags(self, mock_settings_cls, mock_embed):
+        mock_settings_cls.return_value = MagicMock()
+        mock_embed.return_value = [0.1, 0.2, 0.3]
+        council = MagicMock()
+        council.write_entry = AsyncMock(return_value={"success": True, "error": None, "id": "abc-123"})
+        ctx = _make_ctx(council_memory=council, nats_bus=None)
+        result = await share_to_council(ctx, "important finding", tags="idea, learning", message_type="insight")
+        council.write_entry.assert_awaited_once_with(
+            content="important finding",
+            tags=["idea", "learning"],
+            embedding=[0.1, 0.2, 0.3],
+            message_type="insight",
+        )
+        assert result == "Shared to council: important finding"
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.memory.embeddings.embed")
+    @patch("pillywiggins.config.Settings")
+    async def test_writes_entry_with_empty_tags(self, mock_settings_cls, mock_embed):
+        mock_settings_cls.return_value = MagicMock()
+        mock_embed.return_value = [0.1, 0.2, 0.3]
+        council = MagicMock()
+        council.write_entry = AsyncMock(return_value={"success": True, "error": None, "id": "abc-123"})
+        ctx = _make_ctx(council_memory=council, nats_bus=None)
+        result = await share_to_council(ctx, "tagless insight")
+        council.write_entry.assert_awaited_once_with(
+            content="tagless insight",
+            tags=[],
+            embedding=[0.1, 0.2, 0.3],
+            message_type="insight",
+        )
+        assert result == "Shared to council: tagless insight"
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.memory.embeddings.embed")
+    @patch("pillywiggins.config.Settings")
+    async def test_publishes_via_nats_bus(self, mock_settings_cls, mock_embed):
+        mock_settings_cls.return_value = MagicMock()
+        mock_embed.return_value = [0.1, 0.2, 0.3]
+        council = MagicMock()
+        council.write_entry = AsyncMock(return_value={"success": True, "error": None, "id": "abc-123"})
+        nats = MagicMock()
+        nats.publish_broadcast = AsyncMock()
+        ctx = _make_ctx(council_memory=council, nats_bus=nats)
+        result = await share_to_council(ctx, "shared finding", tags="idea", message_type="insight")
+        nats.publish_broadcast.assert_awaited_once_with("insight", {"content": "shared finding", "tags": ["idea"]})
+        assert result == "Shared to council: shared finding"
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.memory.embeddings.embed")
+    @patch("pillywiggins.config.Settings")
+    async def test_returns_error_on_write_failure(self, mock_settings_cls, mock_embed):
+        mock_settings_cls.return_value = MagicMock()
+        mock_embed.return_value = [0.1, 0.2, 0.3]
+        council = MagicMock()
+        council.write_entry = AsyncMock(return_value={"success": False, "error": "Rate limit exceeded", "id": None})
+        ctx = _make_ctx(council_memory=council, nats_bus=None)
+        result = await share_to_council(ctx, "too many posts")
+        assert "Rate limit exceeded" in result
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.memory.embeddings.embed")
+    @patch("pillywiggins.config.Settings")
+    async def test_nats_publish_failure_does_not_crash(self, mock_settings_cls, mock_embed):
+        mock_settings_cls.return_value = MagicMock()
+        mock_embed.return_value = [0.1, 0.2, 0.3]
+        council = MagicMock()
+        council.write_entry = AsyncMock(return_value={"success": True, "error": None, "id": "abc-123"})
+        nats = MagicMock()
+        nats.publish_broadcast = AsyncMock(side_effect=ConnectionError("NATS down"))
+        ctx = _make_ctx(council_memory=council, nats_bus=nats)
+        result = await share_to_council(ctx, "still works")
+        assert result == "Shared to council: still works"

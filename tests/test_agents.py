@@ -545,3 +545,175 @@ def test_agent_compact_keep_messages_default(personality):
         )
     assert agent._compact_keep_messages == 6
     assert agent._compact_truncate_message_chars == 2000
+
+
+@pytest.mark.asyncio
+async def test_start_connects_council_memory(personality):
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()), \
+         patch("pillywiggins.agents.base.CouncilMemory") as mock_council_cls:
+        mock_council = AsyncMock()
+        mock_council_cls.return_value = mock_council
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+            database_url="postgresql://test:5432/db",
+        )
+        await agent.start()
+        mock_council_cls.assert_called_once_with("postgresql://test:5432/db", "puck")
+        mock_council.connect.assert_awaited_once()
+        assert agent._council_memory is mock_council
+
+
+@pytest.mark.asyncio
+async def test_start_connects_nats_bus(personality):
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()), \
+         patch("pillywiggins.agents.base.NatsBus") as mock_nats_cls:
+        mock_bus = AsyncMock()
+        mock_nats_cls.return_value = mock_bus
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+            nats_url="nats://localhost:4222",
+        )
+        await agent.start()
+        mock_nats_cls.assert_called_once_with("nats://localhost:4222", "puck")
+        mock_bus.connect.assert_awaited_once()
+        assert agent._nats_bus is mock_bus
+
+
+@pytest.mark.asyncio
+async def test_start_skips_council_memory_when_no_database_url(personality):
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        await agent.start()
+        assert agent._council_memory is None
+
+
+@pytest.mark.asyncio
+async def test_start_skips_nats_bus_when_no_nats_url(personality):
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        await agent.start()
+        assert agent._nats_bus is None
+
+
+@pytest.mark.asyncio
+async def test_start_handles_council_memory_failure_gracefully(personality):
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()), \
+         patch("pillywiggins.agents.base.CouncilMemory") as mock_council_cls:
+        mock_council = AsyncMock()
+        mock_council.connect = AsyncMock(side_effect=ConnectionError("db down"))
+        mock_council_cls.return_value = mock_council
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+            database_url="postgresql://test:5432/db",
+        )
+        await agent.start()
+        assert agent._council_memory is None
+
+
+@pytest.mark.asyncio
+async def test_start_handles_nats_bus_failure_gracefully(personality):
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()), \
+         patch("pillywiggins.agents.base.NatsBus") as mock_nats_cls:
+        mock_bus = AsyncMock()
+        mock_bus.connect = AsyncMock(side_effect=ConnectionError("nats down"))
+        mock_nats_cls.return_value = mock_bus
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+            nats_url="nats://localhost:4222",
+        )
+        await agent.start()
+        assert agent._nats_bus is None
+
+
+@pytest.mark.asyncio
+async def test_shutdown_closes_council_memory_and_nats_bus(personality):
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        mock_council = AsyncMock()
+        mock_nats = AsyncMock()
+        agent._council_memory = mock_council
+        agent._nats_bus = mock_nats
+        await agent.shutdown()
+        mock_council.close.assert_awaited_once()
+        mock_nats.close.assert_awaited_once()
+        assert agent._council_memory is None
+        assert agent._nats_bus is None
+
+
+@pytest.mark.asyncio
+async def test_shutdown_handles_close_errors(personality):
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        mock_council = AsyncMock()
+        mock_council.close = AsyncMock(side_effect=RuntimeError("close failed"))
+        mock_nats = AsyncMock()
+        mock_nats.close = AsyncMock(side_effect=RuntimeError("close failed"))
+        agent._council_memory = mock_council
+        agent._nats_bus = mock_nats
+        await agent.shutdown()
+        assert agent._council_memory is None
+        assert agent._nats_bus is None
+
+
+@pytest.mark.asyncio
+async def test_shutdown_noop_when_no_connections(personality):
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        await agent.shutdown()
+        assert agent._council_memory is None
+        assert agent._nats_bus is None

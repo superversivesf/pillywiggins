@@ -15,6 +15,8 @@ def test_optional_fields_default_to_none():
     f = {f.name: f for f in fields(AgentDeps)}
     assert f["private_memory"].default is None
     assert f["skill_registry"].default is None
+    assert f["council_memory"].default is None
+    assert f["nats_bus"].default is None
 
 
 def test_init_with_required_fields_only():
@@ -24,22 +26,30 @@ def test_init_with_required_fields_only():
     assert deps.channel == "telegram"
     assert deps.private_memory is None
     assert deps.skill_registry is None
+    assert deps.council_memory is None
+    assert deps.nats_bus is None
 
 
 def test_init_with_all_fields():
     mock_memory = object()
     mock_registry = object()
+    mock_council = object()
+    mock_nats = object()
     deps = AgentDeps(
         agent_id="puck",
         channel="discord",
         private_memory=mock_memory,
         skill_registry=mock_registry,
+        council_memory=mock_council,
+        nats_bus=mock_nats,
     )
 
     assert deps.agent_id == "puck"
     assert deps.channel == "discord"
     assert deps.private_memory is mock_memory
     assert deps.skill_registry is mock_registry
+    assert deps.council_memory is mock_council
+    assert deps.nats_bus is mock_nats
 
 
 def test_optional_fields_are_typed_as_any():
@@ -83,11 +93,15 @@ def test_fields_are_mutable():
     deps.channel = "discord"
     deps.private_memory = "memory"
     deps.skill_registry = "registry"
+    deps.council_memory = "council"
+    deps.nats_bus = "nats"
 
     assert deps.agent_id == "oberon"
     assert deps.channel == "discord"
     assert deps.private_memory == "memory"
     assert deps.skill_registry == "registry"
+    assert deps.council_memory == "council"
+    assert deps.nats_bus == "nats"
 
 
 def test_different_instances_are_independent():
