@@ -9,7 +9,7 @@ SKILL_META = {
         "url": {"type": "string", "description": "The URL to check"},
         "timeout": {"type": "number", "description": "Timeout in seconds", "default": 10},
     },
-    "returns": "dict with reachable, status_code, response_time_ms",
+    "returns": "dict with reachable, status_code, response_time_ms, body",
     "permissions": {
         "network": True,
         "subprocess": False,
@@ -28,10 +28,14 @@ async def run(url: str, timeout: float = 10) -> dict:
             start = time.monotonic()
             async with session.get(url) as resp:
                 elapsed = (time.monotonic() - start) * 1000
+                body = await resp.text()
+                if len(body) > 50000:
+                    body = body[:50000] + f"\n... [truncated, {len(body)} bytes total]"
                 return {
                     "reachable": True,
                     "status_code": resp.status,
                     "response_time_ms": round(elapsed, 1),
+                    "body": body,
                 }
     except Exception as e:
         return {"reachable": False, "status_code": None, "response_time_ms": None, "error": str(e)}
