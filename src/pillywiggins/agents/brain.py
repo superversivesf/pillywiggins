@@ -71,21 +71,16 @@ async def save_to_private_memory(ctx: RunContext[AgentDeps], content: str) -> st
 
 
 def _make_skill_tool(skill):
+    import inspect
     params = skill.meta.get("parameters", {})
     if params:
-        import inspect
-        sig_params = {}
-        annotations = {}
-        defaults = {}
+        sig_params = []
         for pname, pdef in params.items():
             ptype = {"string": str, "integer": int, "number": float, "boolean": bool}.get(pdef.get("type", "string"), str)
-            annotations[pname] = ptype
             if "default" in pdef:
-                defaults[pname] = pdef["default"]
+                sig_params.append(inspect.Parameter(pname, inspect.Parameter.POSITIONAL_OR_KEYWORD, default=pdef["default"], annotation=ptype))
             else:
-                sig_params[pname] = inspect.Parameter(pname, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=ptype)
-        for pname, default in defaults.items():
-            sig_params[pname] = inspect.Parameter(pname, inspect.Parameter.POSITIONAL_OR_KEYWORD, default=default, annotation=annotations[pname])
+                sig_params.append(inspect.Parameter(pname, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=ptype))
 
         async def skill_tool(ctx: RunContext[AgentDeps], **kwargs) -> str:
             import json
