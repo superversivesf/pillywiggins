@@ -6,6 +6,41 @@ from pydantic_ai import Agent, RunContext
 from pillywiggins.agents.deps import AgentDeps
 
 
+def _should_sandbox(skill_name: str) -> bool:
+    from pillywiggins.config import Settings
+    settings = Settings()
+    if settings.should_sandbox_all():
+        return True
+    return skill_name in settings.get_sandbox_skill_names()
+
+
+async def _run_sandboxed_skill(skill, kwargs: dict) -> str:
+    import json
+    from pillywiggins.skills.sandbox import run_sandboxed
+
+    if skill.file_path is None:
+        return f"Error: skill {skill.name} has no source file for sandbox execution"
+
+    try:
+        code = skill.file_path.read_text()
+    except Exception as e:
+        return f"Error reading skill source for {skill.name}: {e}"
+
+    sandbox_result = await run_sandboxed(
+        code=code,
+        args=kwargs,
+        permissions=skill.permissions,
+    )
+
+    if not sandbox_result.success:
+        return f"Sandbox error in {skill.name}: {sandbox_result.error}"
+
+    result = sandbox_result.result
+    if isinstance(result, str):
+        return result
+    return json.dumps(result)
+
+
 async def recall_private_memory(ctx: RunContext[AgentDeps], query: str) -> str:
     """Search your private memory for relevant past experiences or notes.
 
@@ -97,6 +132,8 @@ def _make_skill_tool(skill):
 
     async def skill_tool(ctx: RunContext[AgentDeps], **kwargs) -> str:
         import json
+        if _should_sandbox(skill.name):
+            return await _run_sandboxed_skill(skill, kwargs)
         try:
             result = await skill.execute(**kwargs)
         except TypeError as e:

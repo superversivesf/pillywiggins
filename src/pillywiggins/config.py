@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     compact_truncate_message_chars: int = 2000
     allowed_user_ids: str = ""
     skills_dir: str = "/app/skills"
+    sandbox_skills: str = ""
     searxng_url: str = "http://searxng:8080"
     searxng_categories: str = "general"
     searxng_max_results: int = 5
@@ -29,6 +30,17 @@ class Settings(BaseSettings):
         if not self.searxng_categories or self.searxng_categories.strip().lower() == "all":
             return []
         return [c.strip() for c in self.searxng_categories.split(",") if c.strip()]
+
+    def should_sandbox_all(self) -> bool:
+        val = self.sandbox_skills.strip().lower() if self.sandbox_skills else ""
+        return val in ("true", "1", "yes", "all")
+
+    def get_sandbox_skill_names(self) -> set[str]:
+        if not self.sandbox_skills or not self.sandbox_skills.strip():
+            return set()
+        if self.should_sandbox_all():
+            return set()
+        return {s.strip() for s in self.sandbox_skills.split(",") if s.strip()}
 
     def get_allowed_user_ids(self) -> set[int]:
         if not self.allowed_user_ids or self.allowed_user_ids.strip().lower() == "all":

@@ -12,12 +12,13 @@ VALID_PERMISSIONS = {"network", "subprocess", "file_write"}
 
 
 class Skill:
-    def __init__(self, name: str, description: str, run_func, meta: dict, permissions: dict):
+    def __init__(self, name: str, description: str, run_func, meta: dict, permissions: dict, file_path: Optional[Path] = None):
         self.name = name
         self.description = description
         self.run_func = run_func
         self.meta = meta
         self.permissions = permissions
+        self.file_path = file_path
 
     def __repr__(self):
         return f"Skill(name={self.name!r})"
@@ -71,7 +72,7 @@ class SkillRegistry:
         description = meta.get("description", "")
         permissions = self._parse_permissions(meta)
 
-        return Skill(name=name, description=description, run_func=run_func, meta=meta, permissions=permissions)
+        return Skill(name=name, description=description, run_func=run_func, meta=meta, permissions=permissions, file_path=path)
 
     def _parse_permissions(self, meta: dict) -> dict[str, bool]:
         legacy_network = meta.get("network_access", False)
