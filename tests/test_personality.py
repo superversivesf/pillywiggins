@@ -1,6 +1,17 @@
+from pathlib import Path
+
+import pytest
 import yaml
 
 from pillywiggins.agents.personality import Personality, load_personality
+
+PERSONALITIES_DIR = Path(__file__).resolve().parent.parent / "personalities"
+
+
+def _all_personality_yamls():
+    if not PERSONALITIES_DIR.exists():
+        return []
+    return sorted(p for p in PERSONALITIES_DIR.glob("*.yaml"))
 
 
 def test_personality_dataclass_fields():
@@ -135,3 +146,37 @@ def test_personality_traits_mutation_isolation():
     p.traits.append("playful")
     p2 = Personality(name="puck", channel="telegram", description="desc", system_prompt="sp")
     assert p2.traits == []
+
+
+@pytest.mark.parametrize("yaml_path", _all_personality_yamls(), ids=lambda p: p.stem)
+def test_personality_yaml_loadable(yaml_path):
+    p = load_personality(str(yaml_path))
+    assert isinstance(p, Personality)
+
+
+@pytest.mark.parametrize("yaml_path", _all_personality_yamls(), ids=lambda p: p.stem)
+def test_personality_yaml_has_name(yaml_path):
+    p = load_personality(str(yaml_path))
+    assert isinstance(p.name, str)
+    assert len(p.name) > 0
+
+
+@pytest.mark.parametrize("yaml_path", _all_personality_yamls(), ids=lambda p: p.stem)
+def test_personality_yaml_has_system_prompt(yaml_path):
+    p = load_personality(str(yaml_path))
+    assert isinstance(p.system_prompt, str)
+    assert len(p.system_prompt) > 0
+
+
+@pytest.mark.parametrize("yaml_path", _all_personality_yamls(), ids=lambda p: p.stem)
+def test_personality_yaml_has_channel(yaml_path):
+    p = load_personality(str(yaml_path))
+    assert isinstance(p.channel, str)
+    assert len(p.channel) > 0
+
+
+@pytest.mark.parametrize("yaml_path", _all_personality_yamls(), ids=lambda p: p.stem)
+def test_personality_yaml_has_description(yaml_path):
+    p = load_personality(str(yaml_path))
+    assert isinstance(p.description, str)
+    assert len(p.description) > 0

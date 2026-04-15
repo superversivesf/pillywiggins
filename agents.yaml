@@ -1,0 +1,14 @@
+agents:
+  - id: puck
+    personality: /config/puck.yaml
+    channel: telegram
+    allowed_user_ids: all
+    environment:
+      TELEGRAM_BOT_TOKEN: ${PUCK_TELEGRAM_TOKEN}
+
+  - id: bramblethorn
+    personality: /config/bramblethorn.yaml
+    channel: telegram
+    allowed_user_ids: all
+    environment:
+      TELEGRAM_BOT_TOKEN: ${BRAMBLETHORN_TELEGRAM_TOKEN}

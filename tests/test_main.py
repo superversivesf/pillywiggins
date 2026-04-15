@@ -140,6 +140,79 @@ def test_main_parses_args():
     mock_asyncio.run.assert_called_once()
 
 
+def test_main_with_agent_id_calls_get_agent_config():
+    mock_agent_cfg = MagicMock()
+    mock_agent_cfg.id = "bramblethorn"
+    mock_agent_cfg.personality = "/config/bramblethorn.yaml"
+    mock_agent_cfg.channel = "telegram"
+    mock_agent_cfg.allowed_user_ids = "all"
+    mock_agent_cfg.environment = {}
+
+    with patch("pillywiggins.__main__.Settings") as mock_settings_cls, \
+         patch("pillywiggins.__main__.get_agent_config") as mock_get_cfg, \
+         patch("pillywiggins.__main__.apply_agent_env") as mock_apply_env, \
+         patch("pillywiggins.__main__.load_personality") as mock_load, \
+         patch("pillywiggins.__main__.ConversationCache") as mock_cache_cls, \
+         patch("pillywiggins.__main__.PrivateMemory") as mock_pm_cls, \
+         patch("pillywiggins.__main__.PillywigginAgent") as mock_agent_cls, \
+         patch("pillywiggins.__main__.TelegramAdapter") as mock_adapter_cls, \
+         patch("pillywiggins.__main__.SkillRegistry") as mock_skill_cls, \
+         patch("pillywiggins.__main__.asyncio") as mock_asyncio, \
+         patch("sys.argv", ["pillywiggins", "--agent-id", "bramblethorn"]):
+
+        mock_settings = MagicMock()
+        mock_settings.agents_config_path = "agents.yaml"
+        mock_settings_cls.return_value = mock_settings
+        mock_get_cfg.return_value = mock_agent_cfg
+
+        from pillywiggins.__main__ import main
+        main()
+
+    mock_get_cfg.assert_called_once_with("bramblethorn", path="agents.yaml")
+    mock_apply_env.assert_called_once_with(mock_agent_cfg)
+
+
+def test_main_agent_id_or_channel_required():
+    with patch("sys.argv", ["pillywiggins"]):
+        from pillywiggins.__main__ import main
+        with pytest.raises(SystemExit):
+            main()
+
+
+def test_main_agent_id_sets_channel_from_config():
+    mock_agent_cfg = MagicMock()
+    mock_agent_cfg.id = "bramblethorn"
+    mock_agent_cfg.personality = "/config/bramblethorn.yaml"
+    mock_agent_cfg.channel = "telegram"
+    mock_agent_cfg.allowed_user_ids = "all"
+    mock_agent_cfg.environment = {}
+
+    with patch("pillywiggins.__main__.Settings") as mock_settings_cls, \
+         patch("pillywiggins.__main__.get_agent_config") as mock_get_cfg, \
+         patch("pillywiggins.__main__.apply_agent_env") as mock_apply_env, \
+         patch("pillywiggins.__main__.load_personality") as mock_load, \
+         patch("pillywiggins.__main__.ConversationCache") as mock_cache_cls, \
+         patch("pillywiggins.__main__.PrivateMemory") as mock_pm_cls, \
+         patch("pillywiggins.__main__.PillywigginAgent") as mock_agent_cls, \
+         patch("pillywiggins.__main__.TelegramAdapter") as mock_adapter_cls, \
+         patch("pillywiggins.__main__.SkillRegistry") as mock_skill_cls, \
+         patch("pillywiggins.__main__.asyncio") as mock_asyncio, \
+         patch("sys.argv", ["pillywiggins", "--agent-id", "bramblethorn"]):
+
+        mock_settings = MagicMock()
+        mock_settings.agents_config_path = "agents.yaml"
+        mock_settings_cls.return_value = mock_settings
+        mock_get_cfg.return_value = mock_agent_cfg
+
+        from pillywiggins.__main__ import main
+        main()
+
+    mock_agent_cls.assert_called_once()
+    call_kwargs = mock_agent_cls.call_args[1] if mock_agent_cls.call_args[1] else mock_agent_cls.call_args[0] and {}
+    if "agent_id" in (mock_agent_cls.call_args[1] or {}):
+        assert mock_agent_cls.call_args[1]["agent_id"] == "bramblethorn"
+
+
 def test_main_rejects_unimplemented_channel():
     with patch("pillywiggins.__main__.Settings") as mock_settings_cls, \
          patch("pillywiggins.__main__.load_personality") as mock_load, \

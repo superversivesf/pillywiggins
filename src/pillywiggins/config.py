@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     agent_id: str = "puck"
     channel: str = "telegram"
-    personality_file: str = "/config/telegram.yaml"
+    personality_file: str = "/config/puck.yaml"
     database_url: str = "postgresql://pillywiggins:changeme@postgres:5432/pillywiggins"
     pg_password: str = "changeme"
     redis_url: str = "redis://redis:6379/0"
@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     searxng_url: str = "http://searxng:8080"
     searxng_categories: str = "general"
     searxng_max_results: int = 5
+    agents_config_path: str = "agents.yaml"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

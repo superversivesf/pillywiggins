@@ -5,7 +5,7 @@ def test_settings_defaults():
     s = Settings()
     assert s.agent_id == "puck"
     assert s.channel == "telegram"
-    assert s.personality_file == "/config/telegram.yaml"
+    assert s.personality_file == "/config/puck.yaml"
     assert s.database_url == "postgresql://pillywiggins:changeme@postgres:5432/pillywiggins"
     assert s.pg_password == "changeme"
     assert s.redis_url == "redis://redis:6379/0"
@@ -148,3 +148,19 @@ def test_settings_override_compact_values():
     s = Settings(compact_keep_messages=10, compact_truncate_message_chars=500)
     assert s.compact_keep_messages == 10
     assert s.compact_truncate_message_chars == 500
+
+
+def test_settings_agents_config_path_default():
+    s = Settings()
+    assert s.agents_config_path == "agents.yaml"
+
+
+def test_settings_agents_config_path_override():
+    s = Settings(agents_config_path="/custom/agents.yaml")
+    assert s.agents_config_path == "/custom/agents.yaml"
+
+
+def test_settings_agents_config_path_from_env(monkeypatch):
+    monkeypatch.setenv("AGENTS_CONFIG_PATH", "/env/agents.yaml")
+    s = Settings()
+    assert s.agents_config_path == "/env/agents.yaml"
