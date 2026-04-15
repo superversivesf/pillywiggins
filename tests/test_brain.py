@@ -14,12 +14,14 @@ from pillywiggins.agents.brain import (
     build_skill,
     review_skill_code,
     deploy_skill_code,
+    schedule_task,
+    unschedule_task,
 )
 from pillywiggins.agents.deps import AgentDeps
 from pillywiggins.skills.registry import Skill, SkillRegistry
 
 
-def _make_ctx(agent_id="puck", channel="discord", private_memory=None, skill_registry=None, council_memory=None, nats_bus=None):
+def _make_ctx(agent_id="puck", channel="discord", private_memory=None, skill_registry=None, council_memory=None, nats_bus=None, scheduler=None):
     ctx = MagicMock(spec=RunContext)
     ctx.deps = AgentDeps(
         agent_id=agent_id,
@@ -28,6 +30,7 @@ def _make_ctx(agent_id="puck", channel="discord", private_memory=None, skill_reg
         skill_registry=skill_registry,
         council_memory=council_memory,
         nats_bus=nats_bus,
+        scheduler=scheduler,
     )
     return ctx
 
@@ -210,11 +213,13 @@ def test_create_brain_no_skill_registry_no_skill_tools(monkeypatch):
     assert "save_to_private_memory" in tool_names
     assert "query_council_memory" in tool_names
     assert "share_to_council" in tool_names
-    assert len(tool_names) == 8
+    assert len(tool_names) == 10
     assert "build_skill" in tool_names
     assert "test_skill_code" in tool_names
     assert "review_skill_code" in tool_names
     assert "deploy_skill_code" in tool_names
+    assert "schedule_task" in tool_names
+    assert "unschedule_task" in tool_names
 
 
 def test_create_brain_empty_skill_registry(monkeypatch):
@@ -230,7 +235,7 @@ def test_create_brain_empty_skill_registry(monkeypatch):
         skill_registry=registry,
     )
     tool_names = list(agent._function_toolset.tools.keys())
-    assert len(tool_names) == 8
+    assert len(tool_names) == 10
 
 
 def test_create_brain_multiple_skill_tools(monkeypatch):
@@ -252,7 +257,7 @@ def test_create_brain_multiple_skill_tools(monkeypatch):
     assert "weather" in tool_names
     assert "calculator" in tool_names
     assert "translator" in tool_names
-    assert len(tool_names) == 11
+    assert len(tool_names) == 13
 
 
 def test_create_brain_deps_type_is_agent_deps(monkeypatch):

@@ -14,6 +14,7 @@ from pillywiggins.memory.store import ConversationStore
 from pillywiggins.skills.registry import SkillRegistry
 from pillywiggins.messaging.nats_bus import NatsBus
 from pillywiggins.messaging.unified import UnifiedMessage
+from pillywiggins.scheduling.scheduler import AgentScheduler
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ class PillywigginAgent:
         self._nats_url = nats_url
         self._council_memory: Optional[CouncilMemory] = None
         self._nats_bus: Optional[NatsBus] = None
+        self._scheduler: Optional[AgentScheduler] = None
         self._lock = asyncio.Lock()
         self._brain: Agent = create_brain(
             personality.system_prompt, model_name, provider, base_url, api_key,
@@ -73,6 +75,9 @@ class PillywigginAgent:
                 logger.info("Loaded %d messages from PostgreSQL for %s/%s", len(stored), self.agent_id, conversation_key)
 
     async def start(self) -> None:
+        from pillywiggins.config import Settings
+
+        settings = Settings()
         if self._database_url is not None:
             try:
                 council = CouncilMemory(self._database_url, self.agent_id)
@@ -91,6 +96,21 @@ class PillywigginAgent:
             except Exception:
                 logger.warning("Failed to connect NATS bus for %s", self.agent_id, exc_info=True)
                 self._nats_bus = None
+        if settings.scheduler_enabled and settings.redis_url:
+            try:
+                schedules = {}
+                if self.personality.schedules:
+                    for s in self.personality.schedules:
+                        name = s.get("name", "unnamed")
+                        schedules[name] = s
+                scheduler = AgentScheduler(settings.redis_url, self.agent_id)
+                await scheduler.start(yaml_schedules=schedules)
+                self._scheduler = scheduler
+                self._register_scheduler_handlers()
+                logger.info("Scheduler started for %s", self.agent_id)
+            except Exception:
+                logger.warning("Failed to start scheduler for %s", self.agent_id, exc_info=True)
+                self._scheduler = None
 
     async def shutdown(self) -> None:
         if self._council_memory is not None:
@@ -105,6 +125,33 @@ class PillywigginAgent:
             except Exception:
                 logger.warning("Error closing NATS bus for %s", self.agent_id, exc_info=True)
             self._nats_bus = None
+        if self._scheduler is not None:
+            try:
+                await self._scheduler.stop()
+            except Exception:
+                logger.warning("Error stopping scheduler for %s", self.agent_id, exc_info=True)
+            self._scheduler = None
+
+    def _register_scheduler_handlers(self) -> None:
+        async def _heartbeat_handler(**kwargs):
+            if self._nats_bus is not None:
+                try:
+                    await self._nats_bus.publish_broadcast("heartbeat", {"agent_id": self.agent_id})
+                except Exception:
+                    logger.warning("Failed to broadcast heartbeat for %s", self.agent_id, exc_info=True)
+            else:
+                logger.info("heartbeat for %s (no NATS bus)", self.agent_id)
+
+        async def _memory_review_handler(**kwargs):
+            logger.info("memory review for %s", self.agent_id)
+
+        async def _skill_reload_handler(**kwargs):
+            logger.info("skill reload for %s", self.agent_id)
+
+        if self._scheduler is not None:
+            self._scheduler.register_handler("heartbeat", _heartbeat_handler)
+            self._scheduler.register_handler("memory_review", _memory_review_handler)
+            self._scheduler.register_handler("skill_reload", _skill_reload_handler)
 
     @property
     def model_name(self) -> str:
@@ -155,6 +202,7 @@ class PillywigginAgent:
             skill_registry=self._skill_registry,
             council_memory=self._council_memory,
             nats_bus=self._nats_bus,
+            scheduler=self._scheduler,
         )
         result = await self._brain.run(
             "",
@@ -200,6 +248,7 @@ class PillywigginAgent:
                 skill_registry=self._skill_registry,
                 council_memory=self._council_memory,
                 nats_bus=self._nats_bus,
+                scheduler=self._scheduler,
             )
             result = await self._brain.run(
                 message.content,

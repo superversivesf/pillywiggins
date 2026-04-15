@@ -14,3 +14,4 @@ class AgentDeps:
     skill_registry: Any = field(default=None)
     council_memory: Any = field(default=None)
     nats_bus: Any = field(default=None)
+    scheduler: Any = field(default=None)

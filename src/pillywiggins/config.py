@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     allowed_user_ids: str = ""
     skills_dir: str = "/app/skills"
     sandbox_skills: str = ""
+    scheduler_enabled: bool = True
     searxng_url: str = "http://searxng:8080"
     searxng_categories: str = "general"
     searxng_max_results: int = 5

@@ -336,6 +336,65 @@ async def deploy_skill_code(ctx: RunContext[AgentDeps], name: str, code: str, te
     )
 
 
+async def schedule_task(ctx: RunContext[AgentDeps], name: str, action: str, interval_seconds: int = 0, cron_expr: str = "", args_json: str = "") -> str:
+    """Add a scheduled task that runs periodically or on a cron schedule.
+
+    Args:
+        name: A unique name for this scheduled task.
+        action: The action to perform (e.g. "heartbeat", "memory_review", "skill_reload", "custom").
+        interval_seconds: Run every N seconds. Use 0 if using cron_expr instead.
+        cron_expr: A 5-field cron expression (e.g. "0 * * * *"). Use empty string if using interval_seconds.
+        args_json: Optional JSON object of arguments to pass to the action handler.
+
+    Returns:
+        Confirmation that the task was scheduled, or an error message.
+    """
+    import json
+
+    if ctx.deps.scheduler is None:
+        return "Scheduler not available"
+
+    args = None
+    if args_json:
+        try:
+            args = json.loads(args_json)
+        except json.JSONDecodeError as e:
+            return f"Invalid args_json: {e}"
+
+    interval = interval_seconds if interval_seconds > 0 else None
+    cron = cron_expr if cron_expr else None
+
+    result = await ctx.deps.scheduler.add_job(
+        name=name,
+        action=action,
+        interval_seconds=interval,
+        cron_expr=cron,
+        args=args,
+    )
+
+    if result.get("success"):
+        return f"Scheduled task '{name}' (action: {action})"
+    return f"Failed to schedule task '{name}': {result.get('error', 'unknown error')}"
+
+
+async def unschedule_task(ctx: RunContext[AgentDeps], name: str) -> str:
+    """Remove a previously scheduled task by name.
+
+    Args:
+        name: The name of the scheduled task to remove.
+
+    Returns:
+        Confirmation that the task was removed, or an error message.
+    """
+    if ctx.deps.scheduler is None:
+        return "Scheduler not available"
+
+    removed = await ctx.deps.scheduler.remove_job(name)
+    if removed:
+        return f"Unscheduled task '{name}'"
+    return f"Task '{name}' not found or could not be removed"
+
+
 def _make_skill_tool(skill):
     if skill.meta.get("parameters"):
         param_lines = []
@@ -411,6 +470,8 @@ def create_brain(
     agent.tool(test_skill_code)
     agent.tool(review_skill_code)
     agent.tool(deploy_skill_code)
+    agent.tool(schedule_task)
+    agent.tool(unschedule_task)
 
     if skill_registry is not None:
         for skill in skill_registry.list_skills():

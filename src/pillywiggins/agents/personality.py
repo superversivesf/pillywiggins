@@ -11,6 +11,7 @@ class Personality:
     system_prompt: str
     traits: list[str] = field(default_factory=list)
     scheduling: dict = field(default_factory=dict)
+    schedules: list[dict] = field(default_factory=list)
 
 
 def load_personality(path: str) -> Personality:
@@ -23,4 +24,5 @@ def load_personality(path: str) -> Personality:
         system_prompt=data["system_prompt"],
         traits=data.get("traits", []),
         scheduling=data.get("scheduling", {}),
+        schedules=data.get("schedules", []),
     )

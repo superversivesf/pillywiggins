@@ -17,6 +17,7 @@ def test_optional_fields_default_to_none():
     assert f["skill_registry"].default is None
     assert f["council_memory"].default is None
     assert f["nats_bus"].default is None
+    assert f["scheduler"].default is None
 
 
 def test_init_with_required_fields_only():
@@ -28,6 +29,7 @@ def test_init_with_required_fields_only():
     assert deps.skill_registry is None
     assert deps.council_memory is None
     assert deps.nats_bus is None
+    assert deps.scheduler is None
 
 
 def test_init_with_all_fields():
@@ -35,6 +37,7 @@ def test_init_with_all_fields():
     mock_registry = object()
     mock_council = object()
     mock_nats = object()
+    mock_scheduler = object()
     deps = AgentDeps(
         agent_id="puck",
         channel="discord",
@@ -42,6 +45,7 @@ def test_init_with_all_fields():
         skill_registry=mock_registry,
         council_memory=mock_council,
         nats_bus=mock_nats,
+        scheduler=mock_scheduler,
     )
 
     assert deps.agent_id == "puck"
@@ -50,6 +54,7 @@ def test_init_with_all_fields():
     assert deps.skill_registry is mock_registry
     assert deps.council_memory is mock_council
     assert deps.nats_bus is mock_nats
+    assert deps.scheduler is mock_scheduler
 
 
 def test_optional_fields_are_typed_as_any():
@@ -95,6 +100,7 @@ def test_fields_are_mutable():
     deps.skill_registry = "registry"
     deps.council_memory = "council"
     deps.nats_bus = "nats"
+    deps.scheduler = "scheduler"
 
     assert deps.agent_id == "oberon"
     assert deps.channel == "discord"
@@ -102,6 +108,7 @@ def test_fields_are_mutable():
     assert deps.skill_registry == "registry"
     assert deps.council_memory == "council"
     assert deps.nats_bus == "nats"
+    assert deps.scheduler == "scheduler"
 
 
 def test_different_instances_are_independent():
