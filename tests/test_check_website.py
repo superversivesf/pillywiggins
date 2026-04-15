@@ -41,6 +41,9 @@ class TestCheckWebsiteMeta:
     def test_meta_returns_includes_body(self, skill_module):
         assert "body" in skill_module.SKILL_META["returns"]
 
+    def test_meta_returns_mentions_private_blocking(self, skill_module):
+        assert "private" in skill_module.SKILL_META["returns"].lower() or "local" in skill_module.SKILL_META["returns"].lower()
+
     def test_meta_permissions_network(self, skill_module):
         assert skill_module.SKILL_META["permissions"]["network"] is True
 
@@ -171,3 +174,20 @@ class TestCheckWebsiteRun:
         assert result["reachable"] is True
         assert result["status_code"] == 404
         assert result["body"] == "<h1>Not Found</h1>"
+
+    @pytest.mark.asyncio
+    async def test_blocks_localhost(self, skill_module):
+        result = await skill_module.run("http://127.0.0.1:8080/")
+        assert result["reachable"] is False
+        assert "private" in result["error"].lower() or "local" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_blocks_192_168(self, skill_module):
+        result = await skill_module.run("http://192.168.1.1/")
+        assert result["reachable"] is False
+        assert "private" in result["error"].lower() or "local" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_blocks_10_network(self, skill_module):
+        result = await skill_module.run("http://10.0.0.1/")
+        assert result["reachable"] is False

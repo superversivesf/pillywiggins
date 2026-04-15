@@ -9,7 +9,7 @@ SKILL_META = {
         "url": {"type": "string", "description": "The URL to check"},
         "timeout": {"type": "number", "description": "Timeout in seconds", "default": 10},
     },
-    "returns": "dict with reachable, status_code, response_time_ms, body",
+    "returns": "dict with reachable, status_code, response_time_ms, body. Blocks private/local network addresses.",
     "permissions": {
         "network": True,
         "subprocess": False,
@@ -21,8 +21,12 @@ import time
 
 import aiohttp
 
+from pillywiggins.skills.url_filter import is_safe_url
+
 
 async def run(url: str, timeout: float = 10) -> dict:
+    if not is_safe_url(url):
+        return {"reachable": False, "status_code": None, "response_time_ms": None, "body": None, "error": "URL points to a private or local network address"}
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
             start = time.monotonic()
@@ -38,4 +42,4 @@ async def run(url: str, timeout: float = 10) -> dict:
                     "body": body,
                 }
     except Exception as e:
-        return {"reachable": False, "status_code": None, "response_time_ms": None, "error": str(e)}
+        return {"reachable": False, "status_code": None, "response_time_ms": None, "body": None, "error": str(e)}
