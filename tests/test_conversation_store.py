@@ -160,3 +160,108 @@ async def test_close_does_nothing_if_no_pool(store):
     assert store._pool is None
     await store.close()
     assert store._pool is None
+
+
+def test_store_init_attributes():
+    store = ConversationStore(
+        database_url="postgresql://u:p@h:5432/db",
+        agent_id="titania",
+        channel="discord",
+    )
+    assert store._database_url == "postgresql://u:p@h:5432/db"
+    assert store._agent_id == "titania"
+    assert store._channel == "discord"
+    assert store._pool is None
+
+
+@pytest.mark.asyncio
+async def test_double_close_is_safe(store):
+    mock_pool = MagicMock()
+    mock_pool.close = AsyncMock()
+    store._pool = mock_pool
+
+    await store.close()
+    await store.close()
+
+    mock_pool.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_save_serializes_messages_correctly(store):
+    from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart, TextPart
+
+    mock_conn = AsyncMock()
+    mock_conn.execute = AsyncMock()
+
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch("pillywiggins.memory.store.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await store.connect()
+        messages = [
+            ModelRequest(parts=[UserPromptPart(content="hello")]),
+            ModelResponse(parts=[TextPart(content="hi")]),
+        ]
+        await store.save("chat456", messages)
+
+    call_args = mock_conn.execute.call_args
+    assert call_args[0][1] == "puck"
+    assert call_args[0][2] == "telegram"
+    assert call_args[0][3] == "chat456"
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_load_deserialization_error_returns_none(store):
+    mock_conn = AsyncMock()
+    mock_conn.fetchrow = AsyncMock(return_value={"messages": "not valid json"})
+
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch("pillywiggins.memory.store.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await store.connect()
+        result = await store.load("chat123")
+
+    assert result is None
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_connect_sets_pool(store):
+    mock_pool = MagicMock()
+    mock_pool.close = AsyncMock()
+
+    with patch("pillywiggins.memory.store.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await store.connect()
+
+    assert store._pool is mock_pool
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_save_empty_messages_list(store):
+    mock_conn = AsyncMock()
+    mock_conn.execute = AsyncMock()
+
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch("pillywiggins.memory.store.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await store.connect()
+        await store.save("chat_empty", [])
+
+    mock_conn.execute.assert_called_once()
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_load_null_messages_column_returns_none(store):
+    mock_conn = AsyncMock()
+    mock_conn.fetchrow = AsyncMock(return_value={"messages": None})
+
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch("pillywiggins.memory.store.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await store.connect()
+        result = await store.load("chat_null")
+
+    assert result is None
+    await store.close()

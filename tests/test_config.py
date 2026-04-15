@@ -103,3 +103,48 @@ def test_get_allowed_user_ids_single_id():
     s = Settings(allowed_user_ids="42")
     result = s.get_allowed_user_ids()
     assert result == {42}
+
+
+def test_get_allowed_user_ids_whitespace_only_returns_empty():
+    s = Settings(allowed_user_ids="   ")
+    result = s.get_allowed_user_ids()
+    assert result == set()
+
+
+def test_get_allowed_user_ids_mixed_empty_entries():
+    s = Settings(allowed_user_ids="42,,100,")
+    result = s.get_allowed_user_ids()
+    assert result == {42, 100}
+
+
+def test_get_allowed_user_ids_all_mixed_case():
+    s = Settings(allowed_user_ids="All")
+    result = s.get_allowed_user_ids()
+    assert result == set()
+
+
+def test_settings_compact_keep_messages_default():
+    s = Settings()
+    assert s.compact_keep_messages == 6
+
+
+def test_settings_compact_truncate_message_chars_default():
+    s = Settings()
+    assert s.compact_truncate_message_chars == 2000
+
+
+def test_settings_skills_dir_default():
+    s = Settings()
+    assert s.skills_dir == "/app/skills"
+
+
+def test_settings_model_config_env_file():
+    s = Settings()
+    assert s.model_config["env_file"] == ".env"
+    assert s.model_config["env_file_encoding"] == "utf-8"
+
+
+def test_settings_override_compact_values():
+    s = Settings(compact_keep_messages=10, compact_truncate_message_chars=500)
+    assert s.compact_keep_messages == 10
+    assert s.compact_truncate_message_chars == 500

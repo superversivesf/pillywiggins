@@ -154,3 +154,134 @@ def test_main_rejects_unimplemented_channel():
         from pillywiggins.__main__ import main
         with pytest.raises(ValueError, match="not yet implemented"):
             main()
+
+
+@pytest.mark.asyncio
+async def test_run_private_memory_failure_sets_none():
+    mock_adapter = MagicMock()
+    mock_adapter.connect = AsyncMock()
+    mock_adapter.listen = AsyncMock(side_effect=SystemExit)
+    mock_agent = _make_mock_agent()
+    mock_agent._private_memory.connect = AsyncMock(side_effect=Exception("pg down"))
+    mock_settings = MagicMock()
+
+    with patch("pillywiggins.__main__.start_health_server") as mock_health:
+        mock_runner = MagicMock()
+        mock_runner.cleanup = AsyncMock()
+        mock_health.return_value = mock_runner
+
+        with pytest.raises(SystemExit):
+            await _run(mock_adapter, mock_agent, mock_settings)
+
+    assert mock_agent._private_memory is None
+
+
+@pytest.mark.asyncio
+async def test_run_store_failure_sets_none():
+    mock_adapter = MagicMock()
+    mock_adapter.connect = AsyncMock()
+    mock_adapter.listen = AsyncMock(side_effect=SystemExit)
+    mock_agent = _make_mock_agent()
+    mock_agent._store.connect = AsyncMock(side_effect=Exception("store down"))
+    mock_settings = MagicMock()
+
+    with patch("pillywiggins.__main__.start_health_server") as mock_health:
+        mock_runner = MagicMock()
+        mock_runner.cleanup = AsyncMock()
+        mock_health.return_value = mock_runner
+
+        with pytest.raises(SystemExit):
+            await _run(mock_adapter, mock_agent, mock_settings)
+
+    assert mock_agent._store is None
+
+
+@pytest.mark.asyncio
+async def test_run_skips_private_memory_close_when_none():
+    mock_adapter = MagicMock()
+    mock_adapter.connect = AsyncMock()
+    mock_adapter.listen = AsyncMock(side_effect=SystemExit)
+    mock_agent = _make_mock_agent()
+    mock_agent._private_memory = None
+    mock_settings = MagicMock()
+
+    with patch("pillywiggins.__main__.start_health_server") as mock_health:
+        mock_runner = MagicMock()
+        mock_runner.cleanup = AsyncMock()
+        mock_health.return_value = mock_runner
+
+        with pytest.raises(SystemExit):
+            await _run(mock_adapter, mock_agent, mock_settings)
+
+
+@pytest.mark.asyncio
+async def test_run_skips_store_close_when_none():
+    mock_adapter = MagicMock()
+    mock_adapter.connect = AsyncMock()
+    mock_adapter.listen = AsyncMock(side_effect=SystemExit)
+    mock_agent = _make_mock_agent()
+    mock_agent._store = None
+    mock_settings = MagicMock()
+
+    with patch("pillywiggins.__main__.start_health_server") as mock_health:
+        mock_runner = MagicMock()
+        mock_runner.cleanup = AsyncMock()
+        mock_health.return_value = mock_runner
+
+        with pytest.raises(SystemExit):
+            await _run(mock_adapter, mock_agent, mock_settings)
+
+
+@pytest.mark.asyncio
+async def test_run_cleans_up_adapter_disconnect():
+    mock_adapter = MagicMock()
+    mock_adapter.connect = AsyncMock()
+    mock_adapter.listen = AsyncMock(side_effect=RuntimeError("stopped"))
+    mock_agent = _make_mock_agent()
+    mock_settings = MagicMock()
+
+    with patch("pillywiggins.__main__.start_health_server") as mock_health:
+        mock_runner = MagicMock()
+        mock_runner.cleanup = AsyncMock()
+        mock_health.return_value = mock_runner
+
+        with pytest.raises(RuntimeError):
+            await _run(mock_adapter, mock_agent, mock_settings)
+
+    mock_agent._cache.close.assert_called_once()
+
+
+def test_main_rejects_invalid_channel():
+    with patch("sys.argv", ["pillywiggins", "--channel", "irc"]):
+        from pillywiggins.__main__ import main
+        with pytest.raises(SystemExit):
+            main()
+
+
+def test_main_requires_channel_arg():
+    with patch("sys.argv", ["pillywiggins"]):
+        from pillywiggins.__main__ import main
+        with pytest.raises(SystemExit):
+            main()
+
+
+@pytest.mark.asyncio
+async def test_run_both_memory_and_store_fail():
+    mock_adapter = MagicMock()
+    mock_adapter.connect = AsyncMock()
+    mock_adapter.listen = AsyncMock(side_effect=SystemExit)
+    mock_agent = _make_mock_agent()
+    mock_agent._private_memory.connect = AsyncMock(side_effect=Exception("pg down"))
+    mock_agent._store.connect = AsyncMock(side_effect=Exception("store down"))
+    mock_settings = MagicMock()
+
+    with patch("pillywiggins.__main__.start_health_server") as mock_health:
+        mock_runner = MagicMock()
+        mock_runner.cleanup = AsyncMock()
+        mock_health.return_value = mock_runner
+
+        with pytest.raises(SystemExit):
+            await _run(mock_adapter, mock_agent, mock_settings)
+
+    assert mock_agent._private_memory is None
+    assert mock_agent._store is None

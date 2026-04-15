@@ -335,3 +335,213 @@ async def test_compact_history_truncates_long_messages(personality):
     truncated_text = agent._message_history[-1].parts[0].content
     assert truncated_text.endswith("...[truncated]")
     assert len(truncated_text) == 10 + len("...[truncated]")
+
+
+@pytest.mark.asyncio
+async def test_load_history_from_store_when_cache_missing(personality):
+    mock_store = AsyncMock()
+    mock_messages = [MagicMock(), MagicMock()]
+    mock_store.load = AsyncMock(return_value=mock_messages)
+
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+            store=mock_store,
+        )
+
+    await agent.load_history(conversation_key="chat_123")
+
+    assert len(agent._message_history) == 2
+    mock_store.load.assert_called_once_with("chat_123")
+
+
+@pytest.mark.asyncio
+async def test_load_history_no_cache_with_none_store(personality):
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+
+    await agent.load_history(conversation_key="chat_123")
+
+    assert agent._message_history == []
+
+
+@pytest.mark.asyncio
+async def test_load_history_store_returns_none(personality):
+    mock_store = AsyncMock()
+    mock_store.load = AsyncMock(return_value=None)
+
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+            store=mock_store,
+        )
+
+    await agent.load_history(conversation_key="chat_123")
+
+    assert agent._message_history == []
+
+
+@pytest.mark.asyncio
+async def test_handle_message_saves_to_store(personality):
+    mock_result = MagicMock()
+    mock_result.output = "Stored response"
+    mock_result.all_messages = MagicMock(return_value=[MagicMock()])
+
+    mock_brain_instance = MagicMock()
+    mock_brain_instance.run = AsyncMock(return_value=mock_result)
+
+    mock_store = AsyncMock()
+
+    with patch("pillywiggins.agents.base.create_brain", return_value=mock_brain_instance):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+            store=mock_store,
+        )
+
+    from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
+
+    msg = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="123",
+        content="Hello!",
+        conversation_key="456",
+    )
+
+    await agent.handle_message(msg)
+
+    mock_store.save.assert_called_once()
+    assert mock_store.save.call_args[0][0] == "456"
+
+
+@pytest.mark.asyncio
+async def test_compact_history_no_summary_parts_fallback(personality):
+    mock_result = MagicMock()
+    mock_result.output = "Fallback summary text."
+    mock_result.all_messages = MagicMock(return_value=[
+        ModelRequest(parts=[UserPromptPart(content="Summarize this conversation so far in 2-3 concise sentences.")]),
+    ])
+
+    mock_brain_instance = MagicMock()
+    mock_brain_instance.run = AsyncMock(return_value=mock_result)
+
+    with patch("pillywiggins.agents.base.create_brain", return_value=mock_brain_instance):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+            compact_keep_messages=1,
+        )
+
+    old_msg = ModelRequest(parts=[UserPromptPart(content="old")])
+    old_response = ModelResponse(parts=[TextPart(content="old reply")])
+    kept_msg = ModelRequest(parts=[UserPromptPart(content="recent")])
+    agent._message_history = [old_msg, old_response, kept_msg]
+
+    result = await agent.compact_history()
+
+    assert "Compacted" in result
+    assert isinstance(agent._message_history[1], ModelResponse)
+    summary_content = agent._message_history[1].parts[0].content
+    assert "Fallback summary text." in summary_content
+
+
+@pytest.mark.asyncio
+async def test_compact_history_non_string_content_part(personality):
+    mock_result = MagicMock()
+    mock_result.output = "Summary."
+    mock_response = ModelResponse(parts=[TextPart(content="Summary.")])
+    mock_result.all_messages = MagicMock(return_value=[
+        ModelRequest(parts=[UserPromptPart(content="Summarize this conversation so far in 2-3 concise sentences.")]),
+        mock_response,
+    ])
+
+    mock_brain_instance = MagicMock()
+    mock_brain_instance.run = AsyncMock(return_value=mock_result)
+
+    with patch("pillywiggins.agents.base.create_brain", return_value=mock_brain_instance):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+            compact_keep_messages=1,
+        )
+
+    old_msg = ModelRequest(parts=[UserPromptPart(content="old")])
+    old_response = ModelResponse(parts=[TextPart(content="old reply")])
+
+    class NonStringPart:
+        content = 12345
+
+    kept_msg = ModelResponse(parts=[NonStringPart()])
+    agent._message_history = [old_msg, old_response, kept_msg]
+
+    result = await agent.compact_history()
+
+    assert "Compacted" in result
+
+
+@pytest.mark.asyncio
+async def test_compact_history_exact_keep_count(personality):
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+            compact_keep_messages=6,
+        )
+
+    agent._message_history = [MagicMock()] * 6
+    result = await agent.compact_history()
+
+    assert result == "Nothing to compact — only 6 messages."
+
+
+def test_get_status_empty_history(agent):
+    status = agent.get_status()
+    assert status["message_count"] == 0
+    assert status["estimated_tokens"] == 0
+
+
+def test_agent_compact_keep_messages_default(personality):
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+    assert agent._compact_keep_messages == 6
+    assert agent._compact_truncate_message_chars == 2000

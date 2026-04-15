@@ -71,49 +71,41 @@ async def save_to_private_memory(ctx: RunContext[AgentDeps], content: str) -> st
 
 
 def _make_skill_tool(skill):
-    import inspect
-    params = skill.meta.get("parameters", {})
-    if params:
-        sig_params = []
-        for pname, pdef in params.items():
-            ptype = {"string": str, "integer": int, "number": float, "boolean": bool}.get(pdef.get("type", "string"), str)
-            if "default" in pdef:
-                sig_params.append(inspect.Parameter(pname, inspect.Parameter.POSITIONAL_OR_KEYWORD, default=pdef["default"], annotation=ptype))
-            else:
-                sig_params.append(inspect.Parameter(pname, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=ptype))
-
-        async def skill_tool(ctx: RunContext[AgentDeps], **kwargs) -> str:
-            import json
-            try:
-                result = await skill.execute(**kwargs)
-            except TypeError as e:
-                return f"Error calling skill {skill.name}: {e}. Available parameters: {', '.join(params.keys())}"
-            if isinstance(result, str):
-                return result
-            return json.dumps(result)
-
-        skill_tool.__signature__ = inspect.Signature(parameters=sig_params)
+    if skill.meta.get("parameters"):
+        param_lines = []
+        for pname, pdef in skill.meta["parameters"].items():
+            ptype = pdef.get("type", "string")
+            pdesc = pdef.get("description", "")
+            pdefault = pdef.get("default")
+            line = f"    {pname} ({ptype})"
+            if pdesc:
+                line += f": {pdesc}"
+            if pdefault is not None:
+                line += f" (default: {pdefault})"
+            param_lines.append(line)
+        param_str = "\n" + "\n".join(param_lines)
     else:
-        async def skill_tool(ctx: RunContext[AgentDeps]) -> str:
-            import json
-            try:
-                result = await skill.execute()
-            except TypeError as e:
-                return f"Error calling skill {skill.name}: {e}"
-            if isinstance(result, str):
-                return result
-            return json.dumps(result)
+        param_str = ""
 
-    param_docs = "\n".join(
-        f"    {k}: {v.get('description', v.get('type', 'any'))}"
-        for k, v in params.items()
-    ) if params else ""
     perm_list = [k for k, v in skill.permissions.items() if v]
     perm_str = f" Permissions: {', '.join(perm_list)}." if perm_list else ""
+
     doc = skill.description
-    if param_docs:
-        doc += f"\n\nArgs:\n{param_docs}"
+    if param_str:
+        doc += f"\n\nArgs:{param_str}"
     doc += perm_str
+
+    async def skill_tool(ctx: RunContext[AgentDeps], **kwargs) -> str:
+        import json
+        try:
+            result = await skill.execute(**kwargs)
+        except TypeError as e:
+            available = ", ".join(skill.meta.get("parameters", {}).keys())
+            return f"Error calling skill {skill.name}: {e}. Available parameters: {available}"
+        if isinstance(result, str):
+            return result
+        return json.dumps(result)
+
     skill_tool.__name__ = skill.name
     skill_tool.__doc__ = doc
     return skill_tool

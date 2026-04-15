@@ -243,3 +243,115 @@ async def test_start_health_server_returns_runner(settings):
     assert runner is mock_runner
     mock_runner.setup.assert_called_once()
     mock_site.start.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_check_health_llm_non_200_status(settings):
+    mock_asyncpg = _make_mock_asyncpg()
+    mock_redis = _make_mock_redis()
+    mock_aiohttp = _make_mock_aiohttp_client(status=503)
+
+    saved = {}
+    for key in ("asyncpg", "redis", "redis.asyncio", "aioredis"):
+        if key in sys.modules:
+            saved[key] = sys.modules.pop(key)
+
+    try:
+        sys.modules["asyncpg"] = mock_asyncpg
+        redis_mod = ModuleType("redis")
+        sys.modules["redis"] = redis_mod
+        sys.modules["redis.asyncio"] = mock_redis
+        sys.modules["aioredis"] = mock_redis
+
+        real_aiohttp = sys.modules.get("aiohttp")
+        sys.modules["aiohttp"] = mock_aiohttp
+
+        from pillywiggins import health
+        importlib.reload(health)
+        result = await health.check_health(settings)
+    finally:
+        for key in ("asyncpg", "redis", "redis.asyncio", "aioredis", "aiohttp"):
+            if key in sys.modules:
+                del sys.modules[key]
+        for key, val in saved.items():
+            sys.modules[key] = val
+        if real_aiohttp:
+            sys.modules["aiohttp"] = real_aiohttp
+        from pillywiggins import health
+        importlib.reload(health)
+
+    assert result["status"] == "degraded"
+    assert result["checks"]["postgres"] == "ok"
+    assert result["checks"]["redis"] == "ok"
+    assert "error" in result["checks"]["llm"]
+    assert "503" in result["checks"]["llm"]
+
+
+@pytest.mark.asyncio
+async def test_check_health_postgres_connect_fails(settings):
+    mock_asyncpg = MagicMock()
+    mock_asyncpg.connect = AsyncMock(side_effect=Exception("postgres refused"))
+    mock_redis = _make_mock_redis()
+    mock_aiohttp = _make_mock_aiohttp_client(status=200)
+
+    saved = {}
+    for key in ("asyncpg", "redis", "redis.asyncio", "aioredis"):
+        if key in sys.modules:
+            saved[key] = sys.modules.pop(key)
+
+    try:
+        sys.modules["asyncpg"] = mock_asyncpg
+        redis_mod = ModuleType("redis")
+        sys.modules["redis"] = redis_mod
+        sys.modules["redis.asyncio"] = mock_redis
+        sys.modules["aioredis"] = mock_redis
+
+        real_aiohttp = sys.modules.get("aiohttp")
+        sys.modules["aiohttp"] = mock_aiohttp
+
+        from pillywiggins import health
+        importlib.reload(health)
+        result = await health.check_health(settings)
+    finally:
+        for key in ("asyncpg", "redis", "redis.asyncio", "aioredis", "aiohttp"):
+            if key in sys.modules:
+                del sys.modules[key]
+        for key, val in saved.items():
+            sys.modules[key] = val
+        if real_aiohttp:
+            sys.modules["aiohttp"] = real_aiohttp
+        from pillywiggins import health
+        importlib.reload(health)
+
+    assert result["status"] == "degraded"
+    assert "error" in result["checks"]["postgres"]
+    assert result["checks"]["redis"] == "ok"
+    assert result["checks"]["llm"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_healthz_handler_returns_checks_dict(aiohttp_client, settings):
+    with patch("pillywiggins.health.check_health", new_callable=AsyncMock) as mock_check:
+        mock_check.return_value = {
+            "status": "degraded",
+            "checks": {
+                "postgres": "error: timeout",
+                "redis": "ok",
+                "llm": "ok",
+            },
+        }
+        app = create_health_app(settings)
+        client = await aiohttp_client(app)
+        resp = await client.get("/healthz")
+
+        assert resp.status == 503
+        body = await resp.json()
+        assert "checks" in body
+        assert body["checks"]["postgres"] == "error: timeout"
+
+
+@pytest.mark.asyncio
+async def test_create_health_app_stores_settings(settings):
+    app = create_health_app(settings)
+    from pillywiggins.health import SETTINGS_KEY
+    assert app[SETTINGS_KEY] is settings

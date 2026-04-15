@@ -110,3 +110,97 @@ async def test_save_sets_ttl(cache):
     assert call_args[0][0] == "conversation:puck"
     assert call_args[1]["ex"] == 1800
     cache._redis = None
+
+
+@pytest.mark.asyncio
+async def test_save_creates_redis_connection_on_first_use():
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    messages = [ModelRequest(parts=[UserPromptPart(content="hi")])]
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock()
+    mock_redis.close = AsyncMock()
+
+    cache = ConversationCache(redis_url="redis://localhost:6379/0")
+    assert cache._redis is None
+
+    with patch("pillywiggins.memory.cache.aioredis.from_url", return_value=mock_redis):
+        await cache.save("puck", messages)
+
+    assert cache._redis is mock_redis
+    cache._redis = None
+
+
+@pytest.mark.asyncio
+async def test_load_creates_redis_connection_on_first_use():
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=None)
+    mock_redis.close = AsyncMock()
+
+    cache = ConversationCache(redis_url="redis://localhost:6379/0")
+    assert cache._redis is None
+
+    with patch("pillywiggins.memory.cache.aioredis.from_url", return_value=mock_redis):
+        result = await cache.load("puck")
+
+    assert result is None
+    assert cache._redis is mock_redis
+    cache._redis = None
+
+
+@pytest.mark.asyncio
+async def test_key_format_includes_prefix():
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    messages = [ModelRequest(parts=[UserPromptPart(content="hi")])]
+    mock_redis = AsyncMock()
+    mock_redis.set = AsyncMock()
+    mock_redis.close = AsyncMock()
+
+    cache = ConversationCache(redis_url="redis://localhost:6379/0")
+    with patch("pillywiggins.memory.cache.aioredis.from_url", return_value=mock_redis):
+        await cache.save("oberon", messages)
+
+    key = mock_redis.set.call_args[0][0]
+    assert key == "conversation:oberon"
+    cache._redis = None
+
+
+@pytest.mark.asyncio
+async def test_load_deserialization_error_returns_none():
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=b"not valid json msg data")
+    mock_redis.close = AsyncMock()
+
+    cache = ConversationCache(redis_url="redis://localhost:6379/0")
+
+    with patch("pillywiggins.memory.cache.aioredis.from_url", return_value=mock_redis):
+        result = await cache.load("puck")
+
+    assert result is None
+    cache._redis = None
+
+
+@pytest.mark.asyncio
+async def test_close_resets_redis_to_none():
+    mock_redis = AsyncMock()
+    mock_redis.close = AsyncMock()
+    cache = ConversationCache(redis_url="redis://localhost:6379/0")
+    cache._redis = mock_redis
+
+    await cache.close()
+
+    assert cache._redis is None
+
+
+@pytest.mark.asyncio
+async def test_double_close_is_safe():
+    mock_redis = AsyncMock()
+    mock_redis.close = AsyncMock()
+    cache = ConversationCache(redis_url="redis://localhost:6379/0")
+    cache._redis = mock_redis
+
+    await cache.close()
+    await cache.close()
+
+    mock_redis.close.assert_called_once()

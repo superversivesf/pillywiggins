@@ -74,3 +74,52 @@ def test_unified_message_explicit_timestamp():
         timestamp=ts,
     )
     assert msg.timestamp == ts
+
+
+def test_channel_type_from_string():
+    assert ChannelType("telegram") == ChannelType.TELEGRAM
+    assert ChannelType("discord") == ChannelType.DISCORD
+
+
+def test_channel_type_invalid_value():
+    import pytest
+    with pytest.raises(ValueError):
+        ChannelType("irc")
+
+
+def test_unified_message_metadata_mutation_isolation():
+    msg1 = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="u1",
+        content="Hi",
+        conversation_key="k1",
+    )
+    msg1.metadata["key"] = "value"
+    msg2 = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="u2",
+        content="Hi2",
+        conversation_key="k2",
+    )
+    assert msg2.metadata == {}
+
+
+def test_unified_message_all_channel_types():
+    for ct in ChannelType:
+        msg = UnifiedMessage(
+            channel=ct,
+            channel_user_id="u1",
+            content="test",
+            conversation_key="k1",
+        )
+        assert msg.channel == ct
+
+
+def test_unified_message_content_can_be_empty():
+    msg = UnifiedMessage(
+        channel=ChannelType.EMAIL,
+        channel_user_id="a@b.com",
+        content="",
+        conversation_key="email_a",
+    )
+    assert msg.content == ""

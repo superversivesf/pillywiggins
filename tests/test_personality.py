@@ -99,3 +99,39 @@ def test_load_personality_complex_scheduling(tmp_path):
     assert p.scheduling["interval"] == 30
     assert p.scheduling["enabled"] is True
     assert p.scheduling["timezone"] == "UTC"
+
+
+def test_load_personality_file_not_found():
+    import pytest
+    with pytest.raises(FileNotFoundError):
+        load_personality("/nonexistent/path/personality.yaml")
+
+
+def test_load_personality_missing_required_field(tmp_path):
+    data = {"name": "puck"}
+    path = tmp_path / "incomplete.yaml"
+    path.write_text(yaml.dump(data))
+    import pytest
+    with pytest.raises(KeyError):
+        load_personality(str(path))
+
+
+def test_load_personality_none_yaml(tmp_path):
+    path = tmp_path / "empty.yaml"
+    path.write_text("")
+    import pytest
+    with pytest.raises(TypeError):
+        load_personality(str(path))
+
+
+def test_personality_dataclass_equality():
+    p1 = Personality(name="puck", channel="telegram", description="A fairy", system_prompt="Hi")
+    p2 = Personality(name="puck", channel="telegram", description="A fairy", system_prompt="Hi")
+    assert p1 == p2
+
+
+def test_personality_traits_mutation_isolation():
+    p = Personality(name="puck", channel="telegram", description="desc", system_prompt="sp")
+    p.traits.append("playful")
+    p2 = Personality(name="puck", channel="telegram", description="desc", system_prompt="sp")
+    assert p2.traits == []
