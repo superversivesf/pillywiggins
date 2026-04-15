@@ -10,7 +10,11 @@ SKILL_META = {
         "sides": {"type": "integer", "description": "Number of sides on each die", "default": 6},
     },
     "returns": "dict with rolls list and total",
-    "network_access": False,
+    "permissions": {
+        "network": False,
+        "subprocess": False,
+        "file_write": False,
+    },
 }
 
 import random

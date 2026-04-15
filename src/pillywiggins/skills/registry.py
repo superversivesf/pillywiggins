@@ -8,13 +8,16 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"
 
+VALID_PERMISSIONS = {"network", "subprocess", "file_write"}
+
 
 class Skill:
-    def __init__(self, name: str, description: str, run_func, meta: dict):
+    def __init__(self, name: str, description: str, run_func, meta: dict, permissions: dict):
         self.name = name
         self.description = description
         self.run_func = run_func
         self.meta = meta
+        self.permissions = permissions
 
     def __repr__(self):
         return f"Skill(name={self.name!r})"
@@ -66,8 +69,17 @@ class SkillRegistry:
 
         name = meta.get("name", path.stem)
         description = meta.get("description", "")
+        permissions = self._parse_permissions(meta)
 
-        return Skill(name=name, description=description, run_func=run_func, meta=meta)
+        return Skill(name=name, description=description, run_func=run_func, meta=meta, permissions=permissions)
+
+    def _parse_permissions(self, meta: dict) -> dict[str, bool]:
+        legacy_network = meta.get("network_access", False)
+        declared = meta.get("permissions", {})
+        permissions = {p: declared.get(p, False) for p in VALID_PERMISSIONS}
+        if legacy_network and not permissions.get("network"):
+            permissions["network"] = True
+        return permissions
 
     def list_skills(self) -> list[Skill]:
         return list(self._skills.values())

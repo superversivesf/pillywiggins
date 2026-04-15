@@ -78,11 +78,18 @@ def _make_skill_tool(skill):
             return result
         return json.dumps(result)
 
-    skill_tool.__name__ = skill.name
-    skill_tool.__doc__ = skill.description + ("\n\nArgs:\n" + "\n".join(
+    param_docs = "\n".join(
         f"    {k}: {v.get('description', v.get('type', 'any'))}"
         for k, v in skill.meta.get("parameters", {}).items()
-    ) if skill.meta.get("parameters") else "")
+    ) if skill.meta.get("parameters") else ""
+    perm_list = [k for k, v in skill.permissions.items() if v]
+    perm_str = f" Permissions: {', '.join(perm_list)}." if perm_list else ""
+    doc = skill.description
+    if param_docs:
+        doc += f"\n\nArgs:\n{param_docs}"
+    doc += perm_str
+    skill_tool.__name__ = skill.name
+    skill_tool.__doc__ = doc
     return skill_tool
 
 

@@ -9,7 +9,11 @@ SKILL_META = {
         "text": {"type": "string", "description": "The text to analyze"},
     },
     "returns": "dict with word_count, char_count, and sentence_count",
-    "network_access": False,
+    "permissions": {
+        "network": False,
+        "subprocess": False,
+        "file_write": False,
+    },
 }
 
 

@@ -134,7 +134,9 @@ class TelegramAdapter(BaseAdapter):
         lines = ["*Loaded skills:*"]
         for skill in skills:
             desc = skill.description[:60] + "..." if len(skill.description) > 60 else skill.description
-            lines.append(f"• `{skill.name}` — {desc}")
+            perm_list = [k for k, v in skill.permissions.items() if v]
+            perm_str = f" [{', '.join(perm_list)}]" if perm_list else ""
+            lines.append(f"• `{skill.name}` — {desc}{perm_str}")
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
     async def _keep_typing(self, chat_id: str, done: asyncio.Event) -> None:

@@ -22,6 +22,14 @@ WORKDIR /app
 COPY --from=build /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=build /usr/local/bin /usr/local/bin
 
+# Pre-install common skill dependencies
+# These are available to all skills without additional installs.
+RUN pip install --no-cache-dir \
+    aiohttp \
+    beautifulsoup4 \
+    httpx \
+    lxml
+
 # Copy data directories (not Python packages)
 COPY personalities/ ./personalities/
 COPY skills/ ./skills/

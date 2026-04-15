@@ -445,7 +445,8 @@ async def test_cmd_skills_lists_skills():
     mock_skill = MagicMock()
     mock_skill.name = "roll_dice"
     mock_skill.description = "Roll one or more dice"
-    mock_skill.meta = {"name": "roll_dice", "description": "Roll one or more dice", "parameters": {}, "version": "1.0", "network_access": False}
+    mock_skill.permissions = {"network": False, "subprocess": False, "file_write": False}
+    mock_skill.meta = {"name": "roll_dice", "description": "Roll one or more dice", "parameters": {}, "version": "1.0", "permissions": {"network": False, "subprocess": False, "file_write": False}}
     adapter.agent._skill_registry = MagicMock()
     adapter.agent._skill_registry.list_skills = MagicMock(return_value=[mock_skill])
 
@@ -457,6 +458,26 @@ async def test_cmd_skills_lists_skills():
     reply = update.message.reply_text.call_args[0][0]
     assert "roll_dice" in reply
     assert "Roll one or more dice" in reply
+
+
+@pytest.mark.asyncio
+async def test_cmd_skills_shows_network_permission():
+    adapter = _make_adapter()
+    mock_skill = MagicMock()
+    mock_skill.name = "check_website"
+    mock_skill.description = "Check if a URL is reachable"
+    mock_skill.permissions = {"network": True, "subprocess": False, "file_write": False}
+    mock_skill.meta = {"name": "check_website", "description": "Check if a URL is reachable", "parameters": {}, "version": "1.0"}
+    adapter.agent._skill_registry = MagicMock()
+    adapter.agent._skill_registry.list_skills = MagicMock(return_value=[mock_skill])
+
+    update = _make_update()
+    context = MagicMock()
+
+    await adapter._cmd_skills(update, context)
+
+    reply = update.message.reply_text.call_args[0][0]
+    assert "network" in reply
 
 
 @pytest.mark.asyncio
