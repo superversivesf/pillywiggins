@@ -9,6 +9,9 @@ from pillywiggins.agents.brain import (
     recall_private_memory,
     save_to_private_memory,
     _make_skill_tool,
+    build_skill,
+    review_skill_code,
+    deploy_skill_code,
 )
 from pillywiggins.agents.deps import AgentDeps
 from pillywiggins.skills.registry import Skill, SkillRegistry
@@ -163,6 +166,10 @@ def test_create_brain_registers_builtin_tools(monkeypatch):
     tool_names = list(agent._function_toolset.tools.keys())
     assert "recall_private_memory" in tool_names
     assert "save_to_private_memory" in tool_names
+    assert "build_skill" in tool_names
+    assert "test_skill_code" in tool_names
+    assert "review_skill_code" in tool_names
+    assert "deploy_skill_code" in tool_names
 
 
 def test_create_brain_registers_skill_tools(monkeypatch):
@@ -195,7 +202,11 @@ def test_create_brain_no_skill_registry_no_skill_tools(monkeypatch):
     tool_names = list(agent._function_toolset.tools.keys())
     assert "recall_private_memory" in tool_names
     assert "save_to_private_memory" in tool_names
-    assert len(tool_names) == 2
+    assert len(tool_names) == 6
+    assert "build_skill" in tool_names
+    assert "test_skill_code" in tool_names
+    assert "review_skill_code" in tool_names
+    assert "deploy_skill_code" in tool_names
 
 
 def test_create_brain_empty_skill_registry(monkeypatch):
@@ -211,7 +222,7 @@ def test_create_brain_empty_skill_registry(monkeypatch):
         skill_registry=registry,
     )
     tool_names = list(agent._function_toolset.tools.keys())
-    assert len(tool_names) == 2
+    assert len(tool_names) == 6
 
 
 def test_create_brain_multiple_skill_tools(monkeypatch):
@@ -233,7 +244,7 @@ def test_create_brain_multiple_skill_tools(monkeypatch):
     assert "weather" in tool_names
     assert "calculator" in tool_names
     assert "translator" in tool_names
-    assert len(tool_names) == 5
+    assert len(tool_names) == 9
 
 
 def test_create_brain_deps_type_is_agent_deps(monkeypatch):

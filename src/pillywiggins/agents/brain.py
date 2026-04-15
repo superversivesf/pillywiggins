@@ -105,6 +105,158 @@ async def save_to_private_memory(ctx: RunContext[AgentDeps], content: str) -> st
     return f"Remembered: {content}"
 
 
+async def build_skill(ctx: RunContext[AgentDeps], name: str, code: str) -> str:
+    """Create a skill draft from code. Validates the code and returns draft info or validation errors.
+
+    Args:
+        name: The skill name (used for the filename and registry entry).
+        code: The Python source code for the skill. Must contain SKILL_META and a run() function.
+
+    Returns:
+        Draft info including name and meta, or a validation error message.
+    """
+    from pillywiggins.skills.builder import draft_skill
+
+    try:
+        draft = draft_skill(name, code)
+    except ValueError as e:
+        return f"Skill code validation failed: {e}"
+
+    lines = []
+    lines.append(f"Draft created: {draft.name}")
+    lines.append(f"Status: {draft.status.value}")
+    lines.append(f"Description: {draft.meta.get('description', '(none)')}")
+    permissions = draft.permissions
+    perms = [k for k, v in permissions.items() if v]
+    if perms:
+        lines.append(f"Permissions requested: {', '.join(perms)}")
+    else:
+        lines.append("Permissions: none")
+    lines.append("")
+    lines.append("Use test_skill_code to run tests, or review_skill_code to review.")
+    return "\n".join(lines)
+
+
+async def test_skill_code(ctx: RunContext[AgentDeps], name: str, code: str, test_cases_json: str) -> str:
+    """Run test cases against a skill draft. Creates a draft, then executes each test case in the sandbox.
+
+    Args:
+        name: The skill name.
+        code: The Python source code for the skill.
+        test_cases_json: A JSON array of test cases. Each test case is an object with "args" (dict of kwargs for run()) and "expected" (the expected return value, or omit to only check for no errors).
+
+    Returns:
+        Pass/fail results for each test case.
+    """
+    import json
+    from pillywiggins.skills.builder import draft_skill, test_skill
+
+    try:
+        test_cases = json.loads(test_cases_json)
+    except json.JSONDecodeError as e:
+        return f"Invalid test_cases_json: {e}"
+
+    if not isinstance(test_cases, list):
+        return "test_cases_json must be a JSON array of test case objects."
+
+    try:
+        draft = draft_skill(name, code)
+    except ValueError as e:
+        return f"Skill code validation failed: {e}"
+
+    draft = await test_skill(draft, test_cases)
+
+    passed_count = sum(1 for r in draft.test_results if r["passed"])
+    total_count = len(draft.test_results)
+    lines = []
+    lines.append(f"Test results for '{name}': {passed_count}/{total_count} passed")
+    lines.append("")
+
+    for i, result in enumerate(draft.test_results, 1):
+        status = "PASS" if result["passed"] else "FAIL"
+        lines.append(f"  Test {i}: [{status}]")
+        lines.append(f"    Args: {result['args']}")
+        if result.get("expected") is not None:
+            lines.append(f"    Expected: {result['expected']}")
+        lines.append(f"    Actual: {result.get('actual')}")
+        if result.get("error"):
+            lines.append(f"    Error: {result['error']}")
+        lines.append(f"    Time: {result.get('execution_time_ms', 0):.1f}ms")
+
+    return "\n".join(lines)
+
+
+async def review_skill_code(ctx: RunContext[AgentDeps], name: str, code: str, test_cases_json: str) -> str:
+    """Format skill code for user review. Creates a draft, runs tests, then produces a review summary.
+
+    Args:
+        name: The skill name.
+        code: The Python source code for the skill.
+        test_cases_json: A JSON array of test cases (same format as test_skill_code).
+
+    Returns:
+        Formatted review output with code, test results, and an approval request.
+    """
+    import json
+    from pillywiggins.skills.builder import draft_skill, test_skill, review_skill
+
+    try:
+        test_cases = json.loads(test_cases_json)
+    except json.JSONDecodeError as e:
+        return f"Invalid test_cases_json: {e}"
+
+    if not isinstance(test_cases, list):
+        return "test_cases_json must be a JSON array of test case objects."
+
+    try:
+        draft = draft_skill(name, code)
+    except ValueError as e:
+        return f"Skill code validation failed: {e}"
+
+    draft = await test_skill(draft, test_cases)
+    return review_skill(draft)
+
+
+async def deploy_skill_code(ctx: RunContext[AgentDeps], name: str, code: str, test_cases_json: str, approved: bool) -> str:
+    """Deploy an approved skill. The user must explicitly set approved=True to confirm deployment.
+
+    Args:
+        name: The skill name.
+        code: The Python source code for the skill.
+        test_cases_json: A JSON array of test cases (same format as test_skill_code).
+        approved: Must be True for the skill to be deployed. Set to True only after user review.
+
+    Returns:
+        Deployment confirmation or an error/rejection message.
+    """
+    import json
+    from pillywiggins.skills.builder import draft_skill, test_skill, deploy_skill
+    from pillywiggins.config import Settings
+
+    try:
+        test_cases = json.loads(test_cases_json)
+    except json.JSONDecodeError as e:
+        return f"Invalid test_cases_json: {e}"
+
+    if not isinstance(test_cases, list):
+        return "test_cases_json must be a JSON array of test case objects."
+
+    try:
+        draft = draft_skill(name, code)
+    except ValueError as e:
+        return f"Skill code validation failed: {e}"
+
+    draft = await test_skill(draft, test_cases)
+
+    settings = Settings()
+    return deploy_skill(
+        draft,
+        approved=approved,
+        skills_dir=settings.skills_dir,
+        registry=ctx.deps.skill_registry,
+    )
+
+
 def _make_skill_tool(skill):
     if skill.meta.get("parameters"):
         param_lines = []
@@ -174,6 +326,10 @@ def create_brain(
     )
     agent.tool(recall_private_memory)
     agent.tool(save_to_private_memory)
+    agent.tool(build_skill)
+    agent.tool(test_skill_code)
+    agent.tool(review_skill_code)
+    agent.tool(deploy_skill_code)
 
     if skill_registry is not None:
         for skill in skill_registry.list_skills():
