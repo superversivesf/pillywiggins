@@ -71,17 +71,48 @@ async def save_to_private_memory(ctx: RunContext[AgentDeps], content: str) -> st
 
 
 def _make_skill_tool(skill):
-    async def skill_tool(ctx: RunContext[AgentDeps], **kwargs) -> str:
-        import json
-        result = await skill.execute(**kwargs)
-        if isinstance(result, str):
-            return result
-        return json.dumps(result)
+    params = skill.meta.get("parameters", {})
+    if params:
+        import inspect
+        sig_params = {}
+        annotations = {}
+        defaults = {}
+        for pname, pdef in params.items():
+            ptype = {"string": str, "integer": int, "number": float, "boolean": bool}.get(pdef.get("type", "string"), str)
+            annotations[pname] = ptype
+            if "default" in pdef:
+                defaults[pname] = pdef["default"]
+            else:
+                sig_params[pname] = inspect.Parameter(pname, inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=ptype)
+        for pname, default in defaults.items():
+            sig_params[pname] = inspect.Parameter(pname, inspect.Parameter.POSITIONAL_OR_KEYWORD, default=default, annotation=annotations[pname])
+
+        async def skill_tool(ctx: RunContext[AgentDeps], **kwargs) -> str:
+            import json
+            try:
+                result = await skill.execute(**kwargs)
+            except TypeError as e:
+                return f"Error calling skill {skill.name}: {e}. Available parameters: {', '.join(params.keys())}"
+            if isinstance(result, str):
+                return result
+            return json.dumps(result)
+
+        skill_tool.__signature__ = inspect.Signature(parameters=sig_params)
+    else:
+        async def skill_tool(ctx: RunContext[AgentDeps]) -> str:
+            import json
+            try:
+                result = await skill.execute()
+            except TypeError as e:
+                return f"Error calling skill {skill.name}: {e}"
+            if isinstance(result, str):
+                return result
+            return json.dumps(result)
 
     param_docs = "\n".join(
         f"    {k}: {v.get('description', v.get('type', 'any'))}"
-        for k, v in skill.meta.get("parameters", {}).items()
-    ) if skill.meta.get("parameters") else ""
+        for k, v in params.items()
+    ) if params else ""
     perm_list = [k for k, v in skill.permissions.items() if v]
     perm_str = f" Permissions: {', '.join(perm_list)}." if perm_list else ""
     doc = skill.description
