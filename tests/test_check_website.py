@@ -29,7 +29,8 @@ class TestCheckWebsiteMeta:
         assert skill_module.SKILL_META["name"] == "check_website"
 
     def test_meta_has_description(self, skill_module):
-        assert "reachable" in skill_module.SKILL_META["description"].lower()
+        desc = skill_module.SKILL_META["description"].lower()
+        assert "url" in desc and ("fetch" in desc or "body" in desc)
 
     def test_meta_parameters_url(self, skill_module):
         assert "url" in skill_module.SKILL_META["parameters"]

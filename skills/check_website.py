@@ -2,7 +2,7 @@
 
 SKILL_META = {
     "name": "check_website",
-    "description": "Check if a URL is reachable and return the status code and response time in milliseconds.",
+    "description": "Fetch a URL and return its status code, response time, and page body content.",
     "author": "system",
     "version": "1.0",
     "parameters": {
