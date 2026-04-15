@@ -55,7 +55,7 @@ async def test_connect_sets_agent_id(memory):
     assert init_callback is not None
     mock_conn = AsyncMock()
     await init_callback(mock_conn)
-    mock_conn.execute.assert_called_once_with("SET app.agent_id = $1", "puck")
+    mock_conn.execute.assert_called_once_with("SET app.agent_id = 'puck'")
     await memory.close()
 
 

@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import logging
+from pathlib import Path
 
 from pillywiggins.adapters.telegram_adapter import TelegramAdapter
 from pillywiggins.agents.base import PillywigginAgent
@@ -34,7 +35,7 @@ def main():
     cache = ConversationCache(redis_url=settings.redis_url)
     store = ConversationStore(database_url=settings.database_url, agent_id=settings.agent_id, channel=settings.channel)
     private_memory = PrivateMemory(database_url=settings.database_url, agent_id=settings.agent_id)
-    skill_registry = SkillRegistry()
+    skill_registry = SkillRegistry(skills_dir=Path(settings.skills_dir))
     skill_registry.load_all()
     agent = PillywigginAgent(
         agent_id=settings.agent_id,
@@ -63,15 +64,25 @@ def main():
 
 async def _run(adapter, agent, settings):
     health_runner = await start_health_server(settings)
-    await agent._private_memory.connect()
-    await agent._store.connect()
+    try:
+        await agent._private_memory.connect()
+    except Exception:
+        logger.exception("Failed to connect private memory, continuing without it")
+        agent._private_memory = None
+    try:
+        await agent._store.connect()
+    except Exception:
+        logger.exception("Failed to connect conversation store, continuing without it")
+        agent._store = None
     await agent.load_history()
     try:
         await adapter.connect()
         await adapter.listen()
     finally:
-        await agent._private_memory.close()
-        await agent._store.close()
+        if agent._private_memory is not None:
+            await agent._private_memory.close()
+        if agent._store is not None:
+            await agent._store.close()
         await agent._cache.close()
         await health_runner.cleanup()
 

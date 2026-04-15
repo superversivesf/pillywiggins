@@ -14,7 +14,7 @@ class PrivateMemory:
 
     async def connect(self) -> None:
         async def _init_connection(conn):
-            await conn.execute("SET app.agent_id = $1", self._agent_id)
+            await conn.execute(f"SET app.agent_id = '{self._agent_id}'")
 
         self._pool = await asyncpg.create_pool(
             self._database_url,

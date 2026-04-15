@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     compact_keep_messages: int = 6
     compact_truncate_message_chars: int = 2000
     allowed_user_ids: str = ""
+    skills_dir: str = "/app/skills"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
