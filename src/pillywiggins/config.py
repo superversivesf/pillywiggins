@@ -19,8 +19,16 @@ class Settings(BaseSettings):
     compact_truncate_message_chars: int = 2000
     allowed_user_ids: str = ""
     skills_dir: str = "/app/skills"
+    searxng_url: str = "http://searxng:8080"
+    searxng_categories: str = "general"
+    searxng_max_results: int = 5
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+    def get_searxng_categories(self) -> list[str]:
+        if not self.searxng_categories or self.searxng_categories.strip().lower() == "all":
+            return []
+        return [c.strip() for c in self.searxng_categories.split(",") if c.strip()]
 
     def get_allowed_user_ids(self) -> set[int]:
         if not self.allowed_user_ids or self.allowed_user_ids.strip().lower() == "all":

@@ -31,6 +31,23 @@ services:
       - "4222:4222"
       - "8222:8222"
 
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080/
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-}
+    volumes:
+      - searxng_data:/etc/searxng:rw
+      - ./searxng_settings.yml:/etc/searxng/settings.yml:ro
+    ports:
+      - "8888:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   agent:
     build: .
     command: python -m pillywiggins --channel telegram
@@ -49,8 +66,11 @@ services:
         condition: service_started
       nats:
         condition: service_started
+      searxng:
+        condition: service_healthy
 
 volumes:
   pgdata:
   redisdata:
+  searxng_data:
   skills:

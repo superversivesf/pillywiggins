@@ -1,0 +1,35 @@
+use_default_settings: true
+
+general:
+  instance_name: "Pillywiggins Search"
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: ""
+  formats:
+    - html
+    - json
+
+server:
+  secret_key: "${SEARXNG_SECRET:-changeme}"
+  limiter: false
+  image_proxy: false
+
+engines:
+  - name: google
+    engine: google
+    shortcut: g
+    disabled: false
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    disabled: false
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp
+    disabled: false
+  - name: stackoverflow
+    engine: stackoverflow
+    shortcut: so
+    disabled: false
