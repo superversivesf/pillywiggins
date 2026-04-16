@@ -55,7 +55,6 @@ def test_switch_model_creates_new_brain(agent):
     assert agent._model_name == "llama3:8b"
     assert agent.model_name == "llama3:8b"
     mock_brain.assert_called_once_with(
-        agent.personality.system_prompt,
         "llama3:8b",
         "ollama",
         "http://localhost:11434",

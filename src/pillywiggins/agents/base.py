@@ -56,7 +56,7 @@ class PillywigginAgent:
         self._scheduler: Optional[AgentScheduler] = None
         self._lock = asyncio.Lock()
         self._brain: Agent = create_brain(
-            personality.system_prompt, model_name, provider, base_url, api_key,
+            model_name, provider, base_url, api_key,
             skill_registry=skill_registry,
         )
         self._message_history: list[ModelMessage] = []
@@ -161,7 +161,7 @@ class PillywigginAgent:
     def switch_model(self, new_model: str) -> None:
         self._model_name = new_model
         self._brain = create_brain(
-            self.personality.system_prompt, new_model, self._provider, self._base_url, self._api_key,
+            new_model, self._provider, self._base_url, self._api_key,
         )
         logger.info("Switched model to %s", new_model)
 
@@ -215,6 +215,7 @@ class PillywigginAgent:
         deps = AgentDeps(
             agent_id=self.agent_id,
             channel="system",
+            personality=self.personality,
             private_memory=self._private_memory,
             skill_registry=self._skill_registry,
             council_memory=self._council_memory,
@@ -264,6 +265,7 @@ class PillywigginAgent:
             deps = AgentDeps(
                 agent_id=self.agent_id,
                 channel=message.channel.value,
+                personality=self.personality,
                 private_memory=self._private_memory,
                 skill_registry=self._skill_registry,
                 council_memory=self._council_memory,

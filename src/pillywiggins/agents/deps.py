@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 class AgentDeps:
     agent_id: str
     channel: str
+    personality: Any = field(default=None)
     private_memory: Any = field(default=None)
     skill_registry: Any = field(default=None)
     council_memory: Any = field(default=None)

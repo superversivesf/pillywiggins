@@ -18,6 +18,7 @@ from pillywiggins.agents.brain import (
     unschedule_task,
 )
 from pillywiggins.agents.deps import AgentDeps
+from pillywiggins.agents.personality import Personality
 from pillywiggins.skills.registry import Skill, SkillRegistry
 
 
@@ -26,6 +27,7 @@ def _make_ctx(agent_id="puck", channel="discord", private_memory=None, skill_reg
     ctx.deps = AgentDeps(
         agent_id=agent_id,
         channel=channel,
+        personality=None,
         private_memory=private_memory,
         skill_registry=skill_registry,
         council_memory=council_memory,
@@ -49,7 +51,6 @@ def test_create_brain_ollama_sets_base_url(monkeypatch):
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
     monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
     agent = create_brain(
-        personality_prompt="You are Puck.",
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="http://ollama-host:11434",
@@ -63,7 +64,6 @@ def test_create_brain_ollama_default_base_url(monkeypatch):
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
     monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
     agent = create_brain(
-        personality_prompt="You are Puck.",
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="",
@@ -75,7 +75,6 @@ def test_create_brain_ollama_default_base_url(monkeypatch):
 def test_create_brain_ollama_sets_api_key(monkeypatch):
     monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
     create_brain(
-        personality_prompt="Hello",
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="http://localhost:11434",
@@ -87,7 +86,6 @@ def test_create_brain_ollama_sets_api_key(monkeypatch):
 def test_create_brain_ollama_no_api_key_when_empty(monkeypatch):
     monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
     create_brain(
-        personality_prompt="Hello",
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="http://localhost:11434",
@@ -100,7 +98,6 @@ def test_create_brain_openai_sets_api_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     agent = create_brain(
-        personality_prompt="You are Puck.",
         model_name="gpt-4o",
         provider="openai",
         base_url="",
@@ -114,7 +111,6 @@ def test_create_brain_openai_sets_base_url(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     create_brain(
-        personality_prompt="Hello",
         model_name="gpt-4o",
         provider="openai",
         base_url="https://api.custom-openai.com/v1",
@@ -126,7 +122,6 @@ def test_create_brain_openai_sets_base_url(monkeypatch):
 def test_create_brain_openai_no_base_url_when_empty(monkeypatch):
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     create_brain(
-        personality_prompt="Hello",
         model_name="gpt-4o",
         provider="openai",
         base_url="",
@@ -135,23 +130,39 @@ def test_create_brain_openai_no_base_url_when_empty(monkeypatch):
     assert "OPENAI_BASE_URL" not in os.environ
 
 
-def test_create_brain_system_prompt(monkeypatch):
+def test_create_brain_dynamic_system_prompt(monkeypatch):
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
     agent = create_brain(
-        personality_prompt="You are a mischievous fairy named Puck.",
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="http://localhost:11434",
         api_key="",
     )
-    assert agent._system_prompts == ("You are a mischievous fairy named Puck.",)
+    personality = Personality(
+        name="TestBot",
+        channel="telegram",
+        description="A test agent",
+        system_prompt="You are a helpful assistant.",
+        traits=["helpful", "curious"],
+    )
+    ctx = MagicMock(spec=RunContext)
+    ctx.deps = AgentDeps(
+        agent_id="test",
+        channel="telegram",
+        personality=personality,
+    )
+    prompt_fn = agent._system_prompt_functions[0].function
+    result = prompt_fn(ctx)
+    assert "TestBot" in result
+    assert "A test agent" in result
+    assert "You are a helpful assistant." in result
+    assert "curious" in result
 
 
 def test_create_brain_env_vars_cleanup(monkeypatch):
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
     monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
     create_brain(
-        personality_prompt="Hello",
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="http://my-ollama:11434",
@@ -164,7 +175,6 @@ def test_create_brain_env_vars_cleanup(monkeypatch):
 def test_create_brain_registers_builtin_tools(monkeypatch):
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
     agent = create_brain(
-        personality_prompt="Hello",
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="http://localhost:11434",
@@ -187,7 +197,6 @@ def test_create_brain_registers_skill_tools(monkeypatch):
     skill = _make_skill(name="weather_check", description="Checks weather")
     registry.list_skills.return_value = [skill]
     agent = create_brain(
-        personality_prompt="Hello",
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="http://localhost:11434",
@@ -201,7 +210,6 @@ def test_create_brain_registers_skill_tools(monkeypatch):
 def test_create_brain_no_skill_registry_no_skill_tools(monkeypatch):
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
     agent = create_brain(
-        personality_prompt="Hello",
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="http://localhost:11434",
@@ -227,7 +235,6 @@ def test_create_brain_empty_skill_registry(monkeypatch):
     registry = MagicMock(spec=SkillRegistry)
     registry.list_skills.return_value = []
     agent = create_brain(
-        personality_prompt="Hello",
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="http://localhost:11434",
@@ -246,7 +253,6 @@ def test_create_brain_multiple_skill_tools(monkeypatch):
     skill3 = _make_skill(name="translator", description="Translate skill")
     registry.list_skills.return_value = [skill1, skill2, skill3]
     agent = create_brain(
-        personality_prompt="Hello",
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="http://localhost:11434",
@@ -263,7 +269,6 @@ def test_create_brain_multiple_skill_tools(monkeypatch):
 def test_create_brain_deps_type_is_agent_deps(monkeypatch):
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
     agent = create_brain(
-        personality_prompt="Hello",
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="http://localhost:11434",

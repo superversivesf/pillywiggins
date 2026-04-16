@@ -439,7 +439,6 @@ def _make_skill_tool(skill):
 
 
 def create_brain(
-    personality_prompt: str,
     model_name: str,
     provider: str,
     base_url: str,
@@ -459,9 +458,23 @@ def create_brain(
 
     agent = Agent(
         model=model,
-        system_prompt=personality_prompt,
         deps_type=AgentDeps,
     )
+
+    @agent.system_prompt
+    def personality_prompt(ctx: RunContext[AgentDeps]) -> str:
+        personality = ctx.deps.personality
+        if personality is None:
+            return "You are a helpful AI assistant."
+        from pillywiggins.agents.personality import Personality
+        personality: Personality = personality
+        parts = []
+        parts.append(f"You are {personality.name}. {personality.description}")
+        if personality.traits:
+            traits_str = ", ".join(personality.traits)
+            parts.append(f"Your personality traits: {traits_str}")
+        parts.append(personality.system_prompt)
+        return "\n\n".join(parts)
     agent.tool(recall_private_memory)
     agent.tool(save_to_private_memory)
     agent.tool(query_council_memory)

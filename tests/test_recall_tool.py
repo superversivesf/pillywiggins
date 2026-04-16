@@ -19,7 +19,6 @@ def test_create_brain_registers_recall_tool(monkeypatch):
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
     monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
     agent = create_brain(
-        personality_prompt="You are Puck.",
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="http://localhost:11434",
@@ -33,7 +32,6 @@ def test_create_brain_registers_save_tool(monkeypatch):
     monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
     monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
     agent = create_brain(
-        personality_prompt="You are Puck.",
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="http://localhost:11434",
