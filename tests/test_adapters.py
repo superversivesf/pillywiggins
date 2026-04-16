@@ -79,7 +79,7 @@ def test_normalize_converts_update_to_unified_message():
     assert result.channel_user_id == "123"
     assert result.content == "hi there"
     assert result.conversation_key == "456"
-    assert result.metadata == {"username": "alice"}
+    assert result.metadata["username"] == "alice"
 
 
 def test_normalize_handles_none_text():
@@ -599,7 +599,7 @@ def test_normalize_handles_missing_username():
 
     result = adapter.normalize(update)
 
-    assert result.metadata == {"username": None}
+    assert result.metadata["username"] is None
 
 
 @pytest.mark.asyncio

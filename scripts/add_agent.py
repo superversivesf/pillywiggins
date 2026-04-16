@@ -115,19 +115,43 @@ add_agent_to_config(agent_id, personality, channel, allowed_user_ids, token_env)
 add_agent_to_compose(agent_id, personality, token_env)
 add_token_to_env_example(token_env)
 
-if not args.personality:
-    yaml_path = f"personalities/{agent_id}.yaml"
-    import os
-    if not os.path.exists(yaml_path):
-        print(f"\nNo personality file at {yaml_path}.")
-        print(f"Create one with: cp personalities/puck.yaml {yaml_path}")
-        print(f"Then edit the name, system_prompt, and traits to match {agent_id}.")
-    else:
-        print(f"\nPersonality file exists: {yaml_path}")
+yaml_path = f"personalities/{agent_id}.yaml"
+import os
+if not os.path.exists(yaml_path):
+    display_name = agent_id.capitalize()
+    personality_content = f"""name: {display_name}
+channel: telegram
+description: "A Pillywiggins agent named {display_name}."
+system_prompt: |
+  You are {display_name}, a helpful and engaging AI assistant with your own unique personality. Be friendly, concise, and helpful in your interactions. You have access to tools for memory, web search, and skill building — use them when appropriate.
+traits:
+  - helpful
+  - friendly
+  - concise
+scheduling: {{}}
+schedules:
+  - name: heartbeat
+    action: heartbeat
+    interval_seconds: 1800
+  - name: memory_review
+    action: memory_review
+    interval_seconds: 3600
+  - name: skill_reload
+    action: skill_reload
+    cron_expr: "0 */6 * * *"
+bot_chat_limit: 3
+"""
+    with open(yaml_path, "w") as f:
+        f.write(personality_content)
+    print(f"Created personality file: {yaml_path}")
+    print(f"Edit it to customize {display_name}'s personality, traits, and system prompt.")
+else:
+    print(f"Personality file exists: {yaml_path}")
 
 print(f"""
 Next steps:
 1. Create a Telegram bot via @BotFather and get the token
 2. Add the token to .env: {token_env}=your_actual_token_here
-3. Start: docker compose up -d {agent_id}
+3. Customize the personality: edit {yaml_path}
+4. Start: docker compose up -d {agent_id}
 """)

@@ -32,11 +32,29 @@ class TelegramAdapter(BaseAdapter):
         self._allowed_user_ids = settings.get_allowed_user_ids()
         self._allow_all = settings.allowed_user_ids.strip().lower() == "all"
         self._app: Application | None = None
+        self._bot_chat_counts: dict[str, int] = {}
 
     def _is_authorized(self, user_id: int) -> bool:
         if self._allow_all:
             return True
         return user_id in self._allowed_user_ids
+
+    def _should_respond_to_bot(self, chat_id: str, is_bot: bool) -> bool:
+        if not is_bot:
+            self._bot_chat_counts[chat_id] = 0
+            return True
+        limit = getattr(self.agent.personality, "bot_chat_limit", 3)
+        if not isinstance(limit, int):
+            limit = 3
+        if limit < 0:
+            return True
+        if limit == 0:
+            return False
+        count = self._bot_chat_counts.get(chat_id, 0)
+        if count >= limit:
+            logger.info("Bot chat limit reached (%d) in chat %s, staying quiet", limit, chat_id)
+            return False
+        return True
 
     async def connect(self) -> None:
         self._app = Application.builder().token(self.token).build()
@@ -73,7 +91,7 @@ class TelegramAdapter(BaseAdapter):
         chat_id = str(message.chat_id)
         is_group = message.chat.type in ("group", "supergroup")
         conversation_key = str(message.from_user.id) if is_group else chat_id
-        metadata = {"username": message.from_user.username}
+        metadata = {"username": message.from_user.username, "is_bot": message.from_user.is_bot}
         if is_group:
             metadata["chat_id"] = chat_id
         return UnifiedMessage(
@@ -166,8 +184,13 @@ class TelegramAdapter(BaseAdapter):
             await update.message.reply_text("You are not authorized to use this bot.")
             return
         unified = self.normalize(update)
-        logger.info("Message from %s: %s", unified.metadata.get("username", "?"), unified.content[:80])
+        is_bot = unified.metadata.get("is_bot", False)
         chat_id = unified.metadata.get("chat_id", unified.conversation_key)
+        if not self._should_respond_to_bot(chat_id, is_bot):
+            return
+        if is_bot:
+            self._bot_chat_counts[chat_id] = self._bot_chat_counts.get(chat_id, 0) + 1
+        logger.info("Message from %s: %s", unified.metadata.get("username", "?"), unified.content[:80])
         try:
             done = asyncio.Event()
             typing_task = asyncio.create_task(self._keep_typing(chat_id, done))
