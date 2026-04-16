@@ -474,6 +474,11 @@ def create_brain(
             traits_str = ", ".join(personality.traits)
             parts.append(f"Your personality traits: {traits_str}")
         parts.append(personality.system_prompt)
+        parts.append(
+            "You have private memory that persists across all conversations. "
+            "When you learn important facts about the user or the world, save them to private memory so you can recall them later. "
+            "If you're unsure whether you know something, try recalling from private memory first."
+        )
         return "\n\n".join(parts)
     agent.tool(recall_private_memory)
     agent.tool(save_to_private_memory)

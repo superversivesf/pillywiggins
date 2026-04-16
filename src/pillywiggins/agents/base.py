@@ -64,10 +64,14 @@ class PillywigginAgent:
 
     async def load_history(self, conversation_key: Optional[str] = None) -> None:
         if self._cache is not None:
-            cached = await self._cache.load(self.agent_id)
+            cache_key = conversation_key or ""
+            cached = await self._cache.load(self.agent_id, conversation_key=cache_key)
             if cached is not None:
-                self._message_history = cached
-                logger.info("Loaded %d messages from Redis for %s", len(cached), self.agent_id)
+                if conversation_key:
+                    self._conversation_histories[conversation_key] = cached
+                else:
+                    self._message_history = cached
+                logger.info("Loaded %d messages from Redis for %s/%s", len(cached), self.agent_id, conversation_key or "default")
                 return
         if self._store is not None and conversation_key is not None:
             stored = await self._store.load(conversation_key)
@@ -280,7 +284,7 @@ class PillywigginAgent:
             new_history = result.all_messages()
             self._set_history(new_history, conversation_key)
             if self._cache is not None:
-                await self._cache.save(self.agent_id, new_history)
+                await self._cache.save(self.agent_id, new_history, conversation_key=conversation_key)
             if self._store is not None:
                 await self._store.save(conversation_key, new_history)
             return result.output

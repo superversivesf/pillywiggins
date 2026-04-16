@@ -171,7 +171,7 @@ async def test_load_history_from_cache(personality):
     await agent.load_history()
 
     assert len(agent._message_history) == 2
-    mock_cache.load.assert_called_once_with("puck")
+    mock_cache.load.assert_called_once_with("puck", conversation_key="")
 
 
 @pytest.mark.asyncio

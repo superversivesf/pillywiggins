@@ -20,25 +20,25 @@ class ConversationCache:
             self._redis = aioredis.from_url(self._redis_url, decode_responses=False)
         return self._redis
 
-    async def save(self, agent_id: str, messages: list[ModelMessage]) -> None:
+    async def save(self, agent_id: str, messages: list[ModelMessage], conversation_key: str = "") -> None:
         try:
             r = await self._get_redis()
             data = ModelMessagesTypeAdapter.dump_json(messages)
-            key = f"{_KEY_PREFIX}{agent_id}"
+            key = f"{_KEY_PREFIX}{agent_id}:{conversation_key}" if conversation_key else f"{_KEY_PREFIX}{agent_id}"
             await r.set(key, data, ex=_TTL_SECONDS)
         except Exception:
-            logger.exception("Failed to save conversation cache for %s", agent_id)
+            logger.exception("Failed to save conversation cache for %s/%s", agent_id, conversation_key)
 
-    async def load(self, agent_id: str) -> Optional[list[ModelMessage]]:
+    async def load(self, agent_id: str, conversation_key: str = "") -> Optional[list[ModelMessage]]:
         try:
             r = await self._get_redis()
-            key = f"{_KEY_PREFIX}{agent_id}"
+            key = f"{_KEY_PREFIX}{agent_id}:{conversation_key}" if conversation_key else f"{_KEY_PREFIX}{agent_id}"
             data = await r.get(key)
             if data is None:
                 return None
             return ModelMessagesTypeAdapter.validate_json(data)
         except Exception:
-            logger.exception("Failed to load conversation cache for %s", agent_id)
+            logger.exception("Failed to load conversation cache for %s/%s", agent_id, conversation_key)
             return None
 
     async def close(self) -> None:
