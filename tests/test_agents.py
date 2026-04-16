@@ -112,7 +112,7 @@ async def test_handle_message_uses_brain(personality):
 
     assert result == "Hello from Puck!"
     mock_brain_instance.run.assert_called_once()
-    assert len(agent._message_history) == 1
+    assert len(agent._conversation_histories["456"]) == 1
 
 
 @pytest.mark.asyncio

@@ -60,6 +60,7 @@ class PillywigginAgent:
             skill_registry=skill_registry,
         )
         self._message_history: list[ModelMessage] = []
+        self._conversation_histories: dict[str, list[ModelMessage]] = {}
 
     async def load_history(self, conversation_key: Optional[str] = None) -> None:
         if self._cache is not None:
@@ -164,9 +165,24 @@ class PillywigginAgent:
         )
         logger.info("Switched model to %s", new_model)
 
-    def clear_history(self) -> None:
-        self._message_history = []
-        logger.info("Cleared conversation history")
+    def _get_history(self, conversation_key: str | None = None) -> list:
+        if conversation_key and conversation_key in self._conversation_histories:
+            return self._conversation_histories[conversation_key]
+        return self._message_history
+
+    def _set_history(self, history: list, conversation_key: str | None = None) -> None:
+        if conversation_key:
+            self._conversation_histories[conversation_key] = history
+        else:
+            self._message_history = history
+
+    def clear_history(self, conversation_key: str | None = None) -> None:
+        if conversation_key and conversation_key in self._conversation_histories:
+            del self._conversation_histories[conversation_key]
+            logger.info("Cleared conversation history for key %s", conversation_key)
+        else:
+            self._message_history = []
+            logger.info("Cleared conversation history")
 
     def get_status(self) -> dict:
         total_chars = sum(
@@ -182,15 +198,16 @@ class PillywigginAgent:
             "channel": self.personality.channel,
         }
 
-    async def compact_history(self) -> str:
+    async def compact_history(self, conversation_key: str | None = None) -> str:
+        history = self._get_history(conversation_key)
         keep_count = self._compact_keep_messages
-        total = len(self._message_history)
+        total = len(history)
 
         if total <= keep_count:
             return f"Nothing to compact — only {total} messages."
 
-        old_messages = self._message_history[:-keep_count]
-        kept_messages = self._message_history[-keep_count:]
+        old_messages = history[:-keep_count]
+        kept_messages = history[-keep_count:]
 
         summary_prompt = ModelRequest(
             parts=[UserPromptPart(content="Summarize this conversation so far in 2-3 concise sentences.")]
@@ -236,11 +253,14 @@ class PillywigginAgent:
             else:
                 truncated_kept.append(ModelResponse(parts=new_parts))
 
-        self._message_history = [summary_prompt, summary_response, *truncated_kept]
+        new_history = [summary_prompt, summary_response, *truncated_kept]
+        self._set_history(new_history, conversation_key)
         return f"Compacted {len(old_messages)} messages into summary. Keeping {keep_count} recent."
 
     async def handle_message(self, message: UnifiedMessage) -> str:
         async with self._lock:
+            conversation_key = message.conversation_key
+            history = self._get_history(conversation_key)
             deps = AgentDeps(
                 agent_id=self.agent_id,
                 channel=message.channel.value,
@@ -253,11 +273,12 @@ class PillywigginAgent:
             result = await self._brain.run(
                 message.content,
                 deps=deps,
-                message_history=self._message_history,
+                message_history=history,
             )
-            self._message_history = result.all_messages()
+            new_history = result.all_messages()
+            self._set_history(new_history, conversation_key)
             if self._cache is not None:
-                await self._cache.save(self.agent_id, self._message_history)
+                await self._cache.save(self.agent_id, new_history)
             if self._store is not None:
-                await self._store.save(message.conversation_key, self._message_history)
+                await self._store.save(conversation_key, new_history)
             return result.output

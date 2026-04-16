@@ -65,18 +65,24 @@ class TelegramAdapter(BaseAdapter):
         await self.shutdown()
 
     async def send(self, conversation_key: str, text: str, **kwargs) -> None:
-        chat_id = int(conversation_key)
-        await self._app.bot.send_message(chat_id=chat_id, text=text)
+        chat_id = kwargs.get("chat_id", conversation_key)
+        await self._app.bot.send_message(chat_id=int(chat_id), text=text)
 
     def normalize(self, raw_update: Update) -> UnifiedMessage:
         message = raw_update.message
+        chat_id = str(message.chat_id)
+        is_group = message.chat.type in ("group", "supergroup")
+        conversation_key = str(message.from_user.id) if is_group else chat_id
+        metadata = {"username": message.from_user.username}
+        if is_group:
+            metadata["chat_id"] = chat_id
         return UnifiedMessage(
             channel=ChannelType.TELEGRAM,
             channel_user_id=str(message.from_user.id),
             content=message.text or "",
-            conversation_key=str(message.chat_id),
+            conversation_key=conversation_key,
             timestamp=datetime.now(timezone.utc),
-            metadata={"username": message.from_user.username},
+            metadata=metadata,
         )
 
     async def _cmd_help(self, update: Update, context) -> None:
@@ -119,11 +125,17 @@ class TelegramAdapter(BaseAdapter):
         await update.message.reply_text(f"Switched to `{new_model}`", parse_mode="Markdown")
 
     async def _cmd_reset(self, update: Update, context) -> None:
-        self.agent.clear_history()
+        chat_id = update.message.chat_id
+        is_group = update.message.chat.type in ("group", "supergroup")
+        conversation_key = str(update.message.from_user.id) if is_group else str(chat_id)
+        self.agent.clear_history(conversation_key=conversation_key)
         await update.message.reply_text("Conversation history cleared.")
 
     async def _cmd_compact(self, update: Update, context) -> None:
-        result = await self.agent.compact_history()
+        chat_id = update.message.chat_id
+        is_group = update.message.chat.type in ("group", "supergroup")
+        conversation_key = str(update.message.from_user.id) if is_group else str(chat_id)
+        result = await self.agent.compact_history(conversation_key=conversation_key)
         await update.message.reply_text(result)
 
     async def _cmd_skills(self, update: Update, context) -> None:
@@ -155,15 +167,19 @@ class TelegramAdapter(BaseAdapter):
             return
         unified = self.normalize(update)
         logger.info("Message from %s: %s", unified.metadata.get("username", "?"), unified.content[:80])
+        chat_id = unified.metadata.get("chat_id", unified.conversation_key)
         try:
             done = asyncio.Event()
-            typing_task = asyncio.create_task(self._keep_typing(unified.conversation_key, done))
+            typing_task = asyncio.create_task(self._keep_typing(chat_id, done))
             try:
                 response = await self.agent.handle_message(unified)
             finally:
                 done.set()
                 typing_task.cancel()
-            await self.send(unified.conversation_key, response)
+            send_kwargs = {}
+            if "chat_id" in unified.metadata:
+                send_kwargs["chat_id"] = unified.metadata["chat_id"]
+            await self.send(unified.conversation_key, response, **send_kwargs)
         except Exception:
             logger.exception("Error handling Telegram message")
 
