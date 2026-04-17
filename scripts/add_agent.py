@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Add a new Pillywiggins agent to agents.yaml and docker-compose.yaml."""
+"""Add a new Pillywiggins agent to agents.yaml, docker-compose.yaml, and env.example."""
 
 import argparse
-import sys
+import os
+import re
 import yaml
 
 
@@ -74,17 +75,74 @@ def add_agent_to_compose(agent_id, personality_path, token_env, compose_path="do
     return True
 
 
-def add_token_to_env_example(token_env, env_path="env.example"):
+def add_token_to_env_file(token_env, agent_id, env_path=".env"):
+    token_line = f"{token_env}=your_{agent_id}_telegram_bot_token_here"
+
+    if not os.path.exists(env_path):
+        print(f"No {env_path} found. Create it from env.example first: cp env.example .env")
+        return False
+
     with open(env_path) as f:
         content = f.read()
 
-    token_line = f"{token_env}=your_{agent_id}_telegram_bot_token_here"
     if token_env in content:
         print(f"{token_env} already in {env_path}")
         return False
 
-    with open(env_path, "a") as f:
-        f.write(f"\n{token_line}\n")
+    lines = content.split("\n")
+    new_lines = []
+    inserted = False
+
+    for i, line in enumerate(lines):
+        new_lines.append(line)
+        if not inserted and line.strip().startswith("#") and "Telegram Bot Token" in line:
+            new_lines.append(token_line)
+            inserted = True
+
+    if not inserted:
+        for i, line in enumerate(lines):
+            new_lines.append(line)
+            if not inserted and re.match(r"^[A-Z_]+_TELEGRAM_TOKEN=", line):
+                new_lines.append(token_line)
+                inserted = True
+
+    if not inserted:
+        new_lines.append("")
+        new_lines.append("# --- Telegram Bot Tokens ---")
+        new_lines.append(token_line)
+
+    with open(env_path, "w") as f:
+        f.write("\n".join(new_lines))
+    print(f"Added {token_env} to {env_path}")
+    return True
+
+
+def add_token_to_env_example(token_env, agent_id, env_path="env.example"):
+    token_line = f"{token_env}=your_{agent_id}_telegram_bot_token_here"
+
+    with open(env_path) as f:
+        content = f.read()
+
+    if token_env in content:
+        print(f"{token_env} already in {env_path}")
+        return False
+
+    lines = content.split("\n")
+    new_lines = []
+    inserted = False
+
+    for line in lines:
+        if not inserted and re.match(r"^[A-Z_]+_TELEGRAM_TOKEN=", line):
+            new_lines.append(line)
+        elif not inserted and line.strip() == "# Add more agents with: python scripts/add_agent.py <agent_id>":
+            new_lines.append(f"# {token_line}")
+            new_lines.append(line)
+            inserted = True
+        else:
+            new_lines.append(line)
+
+    with open(env_path, "w") as f:
+        f.write("\n".join(new_lines))
     print(f"Added {token_env} to {env_path}")
     return True
 
@@ -95,6 +153,7 @@ parser.add_argument("--personality", default=None, help="Personality YAML path (
 parser.add_argument("--channel", default="telegram", help="Channel adapter (default: telegram)")
 parser.add_argument("--allowed-user-ids", default="all", help="Comma-separated user IDs or 'all' (default: all)")
 parser.add_argument("--token-env", default=None, help="Env var name for bot token (default: {AGENT_ID.upper()}_TELEGRAM_TOKEN)")
+parser.add_argument("--bot-chat-limit", type=int, default=3, help="Max consecutive bot-to-bot replies (default: 3, 0=never, -1=unlimited)")
 
 args = parser.parse_args()
 
@@ -109,14 +168,15 @@ print(f"  Personality: {personality}")
 print(f"  Channel: {channel}")
 print(f"  Allowed users: {allowed_user_ids}")
 print(f"  Token env var: {token_env}")
+print(f"  Bot chat limit: {args.bot_chat_limit}")
 print()
 
 add_agent_to_config(agent_id, personality, channel, allowed_user_ids, token_env)
 add_agent_to_compose(agent_id, personality, token_env)
-add_token_to_env_example(token_env)
+add_token_to_env_example(token_env, agent_id)
+add_token_to_env_file(token_env, agent_id)
 
 yaml_path = f"personalities/{agent_id}.yaml"
-import os
 if not os.path.exists(yaml_path):
     display_name = agent_id.capitalize()
     personality_content = f"""name: {display_name}
@@ -139,7 +199,7 @@ schedules:
   - name: skill_reload
     action: skill_reload
     cron_expr: "0 */6 * * *"
-bot_chat_limit: 3
+bot_chat_limit: {args.bot_chat_limit}
 """
     with open(yaml_path, "w") as f:
         f.write(personality_content)

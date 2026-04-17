@@ -9,7 +9,7 @@ SKILL_META = {
         "query": {"type": "string", "description": "Search query"},
         "categories": {"type": "string", "description": "Comma-separated categories: general, news, images, videos, it, science (default: uses SEARXNG_CATEGORIES env var or 'general')", "default": ""},
         "max_results": {"type": "integer", "description": "Maximum number of results to return (default: uses SEARXNG_MAX_RESULTS env var or 5)", "default": 0},
-        "engines": {"type": "string", "description": "Comma-separated search engines to use: google, duckduckgo, wikipedia, stackoverflow, etc. (default: all enabled engines)", "default": ""},
+        "engines": {"type": "string", "description": "Comma-separated engines to use. General: google, bing, duckduckgo, wikipedia. Academic: arxiv, google scholar, pubmed. Social: reddit. Images: bing images, google images. Video: youtube. Math/facts: wolframalpha. (default: all enabled engines)", "default": ""},
     },
     "returns": "dict with results list (title, url, snippet, engine) and query",
     "permissions": {
