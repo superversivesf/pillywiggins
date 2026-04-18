@@ -6,31 +6,30 @@ services:
       POSTGRES_USER: pillywiggins
       POSTGRES_PASSWORD: ${PG_PASSWORD:-changeme}
     volumes:
-      - pgdata:/var/lib/postgresql/data
-      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    - pgdata:/var/lib/postgresql/data
+    - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pillywiggins"]
+      test:
+      - CMD-SHELL
+      - pg_isready -U pillywiggins
       interval: 5s
       timeout: 5s
       retries: 5
     ports:
-      - "5432:5432"
-
+    - 5432:5432
   redis:
     image: redis:7-alpine
     command: redis-server --appendonly yes
     volumes:
-      - redisdata:/data
+    - redisdata:/data
     ports:
-      - "6379:6379"
-
+    - 6379:6379
   nats:
     image: nats:2-alpine
     command: nats-server -js
     ports:
-      - "4222:4222"
-      - "8222:8222"
-
+    - 4222:4222
+    - 8222:8222
   searxng:
     image: searxng/searxng:latest
     restart: unless-stopped
@@ -38,16 +37,20 @@ services:
       SEARXNG_BASE_URL: http://searxng:8080/
       SEARXNG_SECRET: ${SEARXNG_SECRET:-}
     volumes:
-      - searxng_data:/etc/searxng:rw
-      - ./searxng_settings.yml:/etc/searxng/settings.yml:ro
+    - searxng_data:/etc/searxng:rw
+    - ./searxng_settings.yml:/etc/searxng/settings.yml:ro
     ports:
-      - "8888:8080"
+    - 8888:8080
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/healthz"]
+      test:
+      - CMD
+      - wget
+      - --spider
+      - -q
+      - http://localhost:8080/healthz
       interval: 10s
       timeout: 5s
       retries: 10
-
   puck:
     build: .
     command: python -m pillywiggins --agent-id puck
@@ -57,8 +60,9 @@ services:
       TELEGRAM_BOT_TOKEN: ${PUCK_TELEGRAM_TOKEN}
       PERSONALITY_FILE: /config/puck.yaml
     volumes:
-      - ./personalities:/config:ro
-      - skills:/app/skills
+    - ./personalities:/config:ro
+    - ./agents.yaml:/app/agents.yaml:ro
+    - skills:/app/skills
     depends_on:
       postgres:
         condition: service_healthy
@@ -68,7 +72,6 @@ services:
         condition: service_started
       searxng:
         condition: service_healthy
-
   bramblethorn:
     build: .
     command: python -m pillywiggins --agent-id bramblethorn
@@ -78,8 +81,9 @@ services:
       TELEGRAM_BOT_TOKEN: ${BRAMBLETHORN_TELEGRAM_TOKEN}
       PERSONALITY_FILE: /config/bramblethorn.yaml
     volumes:
-      - ./personalities:/config:ro
-      - skills:/app/skills
+    - ./personalities:/config:ro
+    - ./agents.yaml:/app/agents.yaml:ro
+    - skills:/app/skills
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,9 +93,50 @@ services:
         condition: service_started
       searxng:
         condition: service_healthy
-
+  ember:
+    build: .
+    command: python -m pillywiggins --agent-id ember
+    env_file: .env
+    environment:
+      AGENT_ID: ember
+      TELEGRAM_BOT_TOKEN: ${EMBER_TELEGRAM_TOKEN}
+      PERSONALITY_FILE: /config/ember.yaml
+    volumes:
+    - ./personalities:/config:ro
+    - ./agents.yaml:/app/agents.yaml:ro
+    - skills:/app/skills
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      nats:
+        condition: service_started
+      searxng:
+        condition: service_healthy
+  wormwood:
+    build: .
+    command: python -m pillywiggins --agent-id wormwood
+    env_file: .env
+    environment:
+      AGENT_ID: wormwood
+      TELEGRAM_BOT_TOKEN: ${WORMWOOD_TELEGRAM_TOKEN}
+      PERSONALITY_FILE: /config/wormwood.yaml
+    volumes:
+    - ./personalities:/config:ro
+    - ./agents.yaml:/app/agents.yaml:ro
+    - skills:/app/skills
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      nats:
+        condition: service_started
+      searxng:
+        condition: service_healthy
 volumes:
-  pgdata:
-  redisdata:
-  searxng_data:
-  skills:
+  pgdata: null
+  redisdata: null
+  searxng_data: null
+  skills: null

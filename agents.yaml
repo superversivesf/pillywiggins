@@ -1,14 +1,25 @@
 agents:
-  - id: puck
-    personality: /config/puck.yaml
-    channel: telegram
-    allowed_user_ids: all
-    environment:
-      TELEGRAM_BOT_TOKEN: ${PUCK_TELEGRAM_TOKEN}
-
-  - id: bramblethorn
-    personality: /config/bramblethorn.yaml
-    channel: telegram
-    allowed_user_ids: all
-    environment:
-      TELEGRAM_BOT_TOKEN: ${BRAMBLETHORN_TELEGRAM_TOKEN}
+- id: puck
+  personality: /config/puck.yaml
+  channel: telegram
+  allowed_user_ids: all
+  environment:
+    TELEGRAM_BOT_TOKEN: ${PUCK_TELEGRAM_TOKEN}
+- id: bramblethorn
+  personality: /config/bramblethorn.yaml
+  channel: telegram
+  allowed_user_ids: all
+  environment:
+    TELEGRAM_BOT_TOKEN: ${BRAMBLETHORN_TELEGRAM_TOKEN}
+- id: ember
+  personality: /config/ember.yaml
+  channel: telegram
+  allowed_user_ids: '8013776398'
+  environment:
+    EMBER_TELEGRAM_BOT_TOKEN: ${EMBER_TELEGRAM_TOKEN}
+- id: wormwood
+  personality: /config/wormwood.yaml
+  channel: telegram
+  allowed_user_ids: '8013776398'
+  environment:
+    TELEGRAM_BOT_TOKEN: ${WORMWOOD_TELEGRAM_TOKEN}

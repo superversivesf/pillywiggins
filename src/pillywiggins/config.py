@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     searxng_max_results: int = 5
     agents_config_path: str = "agents.yaml"
 
-    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
     def get_searxng_categories(self) -> list[str]:
         if not self.searxng_categories or self.searxng_categories.strip().lower() == "all":

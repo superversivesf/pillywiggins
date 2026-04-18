@@ -33,7 +33,7 @@ def add_agent_to_config(agent_id, personality, channel, allowed_user_ids, token_
         "channel": channel,
         "allowed_user_ids": allowed_user_ids,
         "environment": {
-            token_env.split("_")[0] + "_TELEGRAM_BOT_TOKEN": f"${{{token_env}}}"
+            "TELEGRAM_BOT_TOKEN": f"${{{token_env}}}"
         },
     })
     save_yaml(config_path, config)
@@ -56,11 +56,12 @@ def add_agent_to_compose(agent_id, personality_path, token_env, compose_path="do
         "env_file": ".env",
         "environment": {
             "AGENT_ID": agent_id,
-            f"{token_env.split('_')[0]}_TELEGRAM_BOT_TOKEN": f"${{{token_env}}}",
+            "TELEGRAM_BOT_TOKEN": f"${{{token_env}}}",
             "PERSONALITY_FILE": personality_path,
         },
         "volumes": [
             "./personalities:/config:ro",
+            "./agents.yaml:/app/agents.yaml:ro",
             "skills:/app/skills",
         ],
         "depends_on": {
