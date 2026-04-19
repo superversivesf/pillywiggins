@@ -15,6 +15,7 @@ dependencies = [
     "pydantic",
     "aiohttp",
     "watchfiles",
+    "questionary>=2.0",
 ]
 
 [project.scripts]

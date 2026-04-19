@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 
 def main():
     parser = argparse.ArgumentParser(description="Pillywiggins Agent")
+    subparsers = parser.add_subparsers(dest="command")
+
+    subparsers.add_parser("onboard", help="Interactive onboarding wizard")
+
     parser.add_argument(
         "--channel",
         required=False,
@@ -30,6 +34,11 @@ def main():
         default=None,
     )
     args = parser.parse_args()
+
+    if args.command == "onboard":
+        from pillywiggins.onboard import onboard
+        asyncio.run(onboard())
+        return
 
     logging.basicConfig(
         level=logging.INFO,

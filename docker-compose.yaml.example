@@ -72,69 +72,6 @@ services:
         condition: service_started
       searxng:
         condition: service_healthy
-  bramblethorn:
-    build: .
-    command: python -m pillywiggins --agent-id bramblethorn
-    env_file: .env
-    environment:
-      AGENT_ID: bramblethorn
-      TELEGRAM_BOT_TOKEN: ${BRAMBLETHORN_TELEGRAM_TOKEN}
-      PERSONALITY_FILE: /config/bramblethorn.yaml
-    volumes:
-    - ./personalities:/config:ro
-    - ./agents.yaml:/app/agents.yaml:ro
-    - skills:/app/skills
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-      nats:
-        condition: service_started
-      searxng:
-        condition: service_healthy
-  ember:
-    build: .
-    command: python -m pillywiggins --agent-id ember
-    env_file: .env
-    environment:
-      AGENT_ID: ember
-      TELEGRAM_BOT_TOKEN: ${EMBER_TELEGRAM_TOKEN}
-      PERSONALITY_FILE: /config/ember.yaml
-    volumes:
-    - ./personalities:/config:ro
-    - ./agents.yaml:/app/agents.yaml:ro
-    - skills:/app/skills
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-      nats:
-        condition: service_started
-      searxng:
-        condition: service_healthy
-  wormwood:
-    build: .
-    command: python -m pillywiggins --agent-id wormwood
-    env_file: .env
-    environment:
-      AGENT_ID: wormwood
-      TELEGRAM_BOT_TOKEN: ${WORMWOOD_TELEGRAM_TOKEN}
-      PERSONALITY_FILE: /config/wormwood.yaml
-    volumes:
-    - ./personalities:/config:ro
-    - ./agents.yaml:/app/agents.yaml:ro
-    - skills:/app/skills
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-      nats:
-        condition: service_started
-      searxng:
-        condition: service_healthy
 volumes:
   pgdata: null
   redisdata: null

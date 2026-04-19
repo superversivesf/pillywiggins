@@ -1,8 +1,26 @@
 # Pillywiggins — Agent Instructions
 
+## Quickstart
+
+```bash
+# 1. Clone
+git clone <repo-url> && cd pillywiggins
+
+# 2. Install (requires pipx — apt install pipx or brew install pipx)
+pipx install -e .
+
+# 3. Configure agents (interactive wizard)
+pillywiggins onboard
+
+# 4. Deploy
+docker compose up -d --build
+```
+
+Config files (`agents.yaml`, `docker-compose.yaml`, `.env`) are copied from `.example` templates on first run of `pillywiggins onboard`. They are gitignored — your local config is never committed.
+
 ## Project State
 
-**Pre-implementation.** This repo contains design documents only — no source code, tests, configs, or CI yet. Every file is in `docs/`.
+**Post-implementation.** The onboard wizard (`pillywiggins onboard`) is the entry point for adding agents. Install via `pipx install -e .`. Config files (`agents.yaml`, `docker-compose.yaml`, `.env`) are generated from `.example` templates on first run and are gitignored.
 
 ## Which Architecture Is Canonical
 
@@ -26,6 +44,7 @@ These are non-obvious and took research to arrive at:
 - **Model: Qwen 3.5 8B on RTX 5060 Ti (16GB VRAM)** — This is the binding hardware constraint. `OLLAMA_NUM_PARALLEL=2`. The 32B model requires aggressive quantization or a second GPU. See overview-v2 §13.
 - **Deployment: `docker compose up`** — All services (PostgreSQL, Redis, NATS, Ollama, agents) defined in a single `docker-compose.yaml`. No k3s, Helm, or ConfigMaps.
 - **Secrets: `.env` file (not committed to Git)** — Channel tokens, DB credentials, etc. in `.env`. Not SOPS, not K8s Secrets.
+- **Config files are gitignored, generated from `.example` templates** — `agents.yaml`, `docker-compose.yaml`, and `.env` are created from their `.example` counterparts by the onboard wizard on first run. Edit the `.example` files for defaults; edit the real files for deployment.
 
 ## Technology Stack
 
@@ -50,7 +69,7 @@ These are non-obvious and took research to arrive at:
 
 Defined in overview-v2 §11. Source lives under `src/pillywiggins/`. Key entrypoints:
 
-- `src/pillywiggins/__main__.py` — CLI entrypoint: `python -m pillywiggins --channel discord`
+- `src/pillywiggins/__main__.py` — CLI entrypoint: `pillywiggins --channel discord` (also works as `python -m pillywiggins`)
 - `src/pillywiggins/agents/base.py` — `PillywigginAgent` base class with asyncio.Lock
 - `src/pillywiggins/agents/brain.py` — PydanticAI agent definition + built-in tools
 - `src/pillywiggins/agents/deps.py` — `AgentDeps` dataclass injected into every tool call
@@ -63,9 +82,13 @@ Defined in overview-v2 §11. Source lives under `src/pillywiggins/`. Key entrypo
 - `src/pillywiggins/skills/sandbox.py` — Sandboxed subprocess execution
 - `src/pillywiggins/messaging/nats_bus.py` — NATS pub/sub wrapper
 - `src/pillywiggins/scheduling/scheduler.py` — APScheduler + Redis per-agent
-- `personalities/` — Personality YAML files (discord.yaml, slack.yaml, etc.)
+- `src/pillywiggins/onboard.py` — Interactive onboarding wizard (`pillywiggins onboard`)
+- `src/pillywiggins/adapters/models.py` — Model list polling via OpenAI/Ollama APIs
+- `personalities/` — Personality YAML files (31 available)
 - `skills/` — Shared skill Python files + registry.json
-- `docker-compose.yaml` — All services: infra + agents
+- `agents.yaml.example` — Template for agent config (gitignored when copied to `agents.yaml`)
+- `docker-compose.yaml.example` — Template for Docker Compose (gitignored when copied)
+- `env.example` — Template for environment variables
 
 ## Docs Guide
 
@@ -90,9 +113,10 @@ These recommend Dapr/K8s — the architecture we chose not to build. Kept for re
 ## Gotchas
 
 - **Design-v2 uses k3s+Helm; overview-v2 uses Docker Compose.** Don't mix the two. We're building overview-v2.
-- **Entry point is `__main__.py`** with `python -m pillywiggins --channel discord`. Both docs agree on this.
+- **Entry point is `__main__.py`** — run as `pillywiggins onboard` or `pillywiggins --channel discord`. The `python -m pillywiggins` form also works.
 - **vLLM vs Ollama** — Design-v2 mentions vLLM for production. We start with Ollama; vLLM is a future upgrade path if throughput becomes a bottleneck.
 - **Personality changes require `docker compose restart`** — YAML files are mounted read-only. Edit the YAML, then restart the agent service. No ConfigMap hot-reload.
 - **Docker Compose healthchecks are not K8s probes** — `depends_on: { condition: service_healthy }` uses the Compose healthcheck. Don't rely on K8s-style liveness probes.
 - **`.env` must never be committed** — `.gitignore` must include `.env`. Use `env.example` as the template.
+- **`agents.yaml` and `docker-compose.yaml` are gitignored** — They're generated from `.example` templates by `pillywiggins onboard`. Edit `.example` files for defaults; edit real files for deployment.
 - **Skill sandbox has limits** — Restricted subprocess with timeouts is not as strong as gVisor. Don't run untrusted code without user approval. See overview-v2 §9.

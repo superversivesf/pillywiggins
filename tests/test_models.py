@@ -28,8 +28,8 @@ def openai_response():
 @pytest.mark.asyncio
 async def test_list_models_ollama_url():
     response_data = {
-        "data": [
-            {"id": "qwen3.5:8b", "owned_by": "ollama"},
+        "models": [
+            {"name": "qwen3.5:8b"},
         ]
     }
     mock_resp = AsyncMock()
@@ -51,7 +51,7 @@ async def test_list_models_ollama_url():
     assert result[0] == ModelInfo(id="qwen3.5:8b", owned_by="ollama")
     mock_session.get.assert_called_once()
     call_args = mock_session.get.call_args
-    assert "/v1/models" in call_args[0][0]
+    assert "/api/tags" in call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -117,7 +117,7 @@ async def test_list_models_exception_returns_empty():
 
 @pytest.mark.asyncio
 async def test_list_models_empty_data():
-    response_data = {"data": []}
+    response_data = {"models": []}
     mock_resp = AsyncMock()
     mock_resp.status = 200
     mock_resp.json = AsyncMock(return_value=response_data)
@@ -138,7 +138,7 @@ async def test_list_models_empty_data():
 
 @pytest.mark.asyncio
 async def test_list_models_strips_trailing_slash():
-    response_data = {"data": [{"id": "test-model", "owned_by": "ollama"}]}
+    response_data = {"models": [{"name": "test-model"}]}
     mock_resp = AsyncMock()
     mock_resp.status = 200
     mock_resp.json = AsyncMock(return_value=response_data)
@@ -155,8 +155,8 @@ async def test_list_models_strips_trailing_slash():
         await list_models("http://localhost:11434/", "", "ollama")
 
     call_url = mock_session.get.call_args[0][0]
-    assert "11434/v1/models" in call_url
-    assert "11434//v1" not in call_url
+    assert "11434/api/tags" in call_url
+    assert "11434//api" not in call_url
 
 
 @pytest.mark.asyncio
@@ -195,7 +195,7 @@ def test_model_info_with_owner():
 
 @pytest.mark.asyncio
 async def test_list_models_ollama_no_api_key_no_auth_header():
-    response_data = {"data": []}
+    response_data = {"models": []}
     mock_resp = AsyncMock()
     mock_resp.status = 200
     mock_resp.json = AsyncMock(return_value=response_data)
@@ -212,7 +212,9 @@ async def test_list_models_ollama_no_api_key_no_auth_header():
         await list_models("http://localhost:11434", "", "ollama")
 
     call_kwargs = mock_session.get.call_args
-    headers = call_kwargs[1].get("headers") if len(call_kwargs) > 1 else call_kwargs.kwargs.get("headers")
+    headers = (
+        call_kwargs[1].get("headers") if len(call_kwargs) > 1 else call_kwargs.kwargs.get("headers")
+    )
     assert headers == {}
 
 
@@ -274,7 +276,7 @@ async def test_list_models_missing_id_defaults_empty():
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
     with patch("pillywiggins.adapters.models.aiohttp.ClientSession", return_value=mock_session):
-        result = await list_models("http://localhost:11434", "", "ollama")
+        result = await list_models("https://api.openai.com", "sk-test", "openai")
 
     assert len(result) == 1
     assert result[0].id == ""
@@ -312,3 +314,57 @@ async def test_list_models_session_exception_returns_empty():
         result = await list_models("http://localhost:11434", "", "ollama")
 
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_list_models_ollama_filters_empty_names():
+    """Ollama entries with empty/missing 'name' field are filtered out."""
+    response_data = {"models": [{"name": "qwen3.5:8b"}, {"name": ""}, {}]}
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value=response_data)
+    mock_resp.text = AsyncMock(return_value=json.dumps(response_data))
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = AsyncMock()
+    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("pillywiggins.adapters.models.aiohttp.ClientSession", return_value=mock_session):
+        result = await list_models("http://localhost:11434", "", "ollama")
+
+    assert len(result) == 1
+    assert result[0].id == "qwen3.5:8b"
+    assert result[0].owned_by == "ollama"
+
+
+@pytest.mark.asyncio
+async def test_list_models_ollama_multiple_models():
+    """Ollama /api/tags returns multiple models with 'name' field."""
+    response_data = {
+        "models": [
+            {"name": "llama3:8b"},
+            {"name": "qwen3.5:8b"},
+        ]
+    }
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value=response_data)
+    mock_resp.text = AsyncMock(return_value=json.dumps(response_data))
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+    mock_session = AsyncMock()
+    mock_session.get = MagicMock(return_value=mock_resp)
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("pillywiggins.adapters.models.aiohttp.ClientSession", return_value=mock_session):
+        result = await list_models("http://localhost:11434", "", "ollama")
+
+    assert len(result) == 2
+    ids = {m.id for m in result}
+    assert ids == {"llama3:8b", "qwen3.5:8b"}
+    assert all(m.owned_by == "ollama" for m in result)
