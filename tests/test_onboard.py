@@ -29,6 +29,7 @@ from pillywiggins.onboard import (
     save_yaml,
     validate_telegram_token,
     write_text,
+    _host_url,
 )
 
 
@@ -95,6 +96,17 @@ class TestWriteText:
         p.write_text("old")
         write_text(p, "new")
         assert p.read_text() == "new"
+
+
+class TestHostUrl:
+    def test_translates_docker_host_to_localhost(self):
+        assert _host_url("http://host.docker.internal:11434") == "http://localhost:11434"
+
+    def test_leaves_localhost_unchanged(self):
+        assert _host_url("http://localhost:11434") == "http://localhost:11434"
+
+    def test_leaves_remote_urls_unchanged(self):
+        assert _host_url("https://ollama.com/v1") == "https://ollama.com/v1"
 
 
 class TestEnsureConfigFiles:

@@ -30,6 +30,19 @@ COMPOSE_VOLUMES = [
 
 LLM_ENV_KEYS = ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "MODEL_NAME")
 
+B = "\033[1m"
+DIM = "\033[2m"
+CYAN = "\033[36m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+MAGENTA = "\033[35m"
+RED = "\033[31m"
+RESET = "\033[0m"
+
+
+def _host_url(url: str) -> str:
+    return url.replace("host.docker.internal", "localhost")
+
 
 def ensure_config_files() -> None:
     if not AGENTS_YAML.exists() and AGENTS_YAML_EXAMPLE.exists():
@@ -567,7 +580,7 @@ async def _add_agent_flow() -> None:
         if llm_api_key is None:
             return
 
-    model_infos = await list_models(llm_base_url, llm_api_key, llm_provider)
+    model_infos = await list_models(_host_url(llm_base_url), llm_api_key, llm_provider)
     models = sorted(m.id for m in model_infos if m.id)
     if models:
         default_model = defaults.get("MODEL_NAME", "")
@@ -745,7 +758,7 @@ async def _reconfigure_agent_flow() -> None:
         if llm_api_key is None:
             return
 
-    model_infos = await list_models(new_base_url, llm_api_key or None, new_provider)
+    model_infos = await list_models(_host_url(new_base_url), llm_api_key or None, new_provider)
     models = sorted(m.id for m in model_infos if m.id)
     if models:
         default_model = current_model if current_model in models else models[0]
@@ -900,30 +913,30 @@ async def _start_restart_flow() -> None:
 async def onboard() -> None:
     ensure_config_files()
 
-    print("Pillywiggins Onboard Wizard")
-    print("=" * 40)
+    print(f"\n{B}{MAGENTA}🧚 Pillywiggins Onboard Wizard{RESET}")
+    print(f"{DIM}{'─' * 40}{RESET}\n")
 
     while True:
         action = await questionary.select(
             "What would you like to do?",
             choices=[
-                "Add agent",
-                "Reconfigure agent",
-                "Remove agent",
-                "Start/restart agents",
-                "Exit",
+                "✨ Add agent",
+                "🔧 Reconfigure agent",
+                "🗑️  Remove agent",
+                "🚀 Start/restart agents",
+                "👋 Exit",
             ],
         ).ask_async()
 
-        if action is None or action == "Exit":
-            print("Goodbye!")
+        if action is None or action == "👋 Exit":
+            print(f"\n{DIM}Goodbye!{RESET}")
             return
 
-        if action == "Add agent":
+        if action == "✨ Add agent":
             await _add_agent_flow()
-        elif action == "Reconfigure agent":
+        elif action == "🔧 Reconfigure agent":
             await _reconfigure_agent_flow()
-        elif action == "Remove agent":
+        elif action == "🗑️  Remove agent":
             await _remove_agent_flow()
-        elif action == "Start/restart agents":
+        elif action == "🚀 Start/restart agents":
             await _start_restart_flow()
