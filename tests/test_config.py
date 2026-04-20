@@ -11,7 +11,7 @@ def test_settings_defaults():
     assert s.redis_url == "redis://redis:6379/0"
     assert s.nats_url == "nats://nats:4222"
     assert s.llm_provider == "ollama"
-    assert s.llm_base_url == "http://localhost:11434"
+    assert s.llm_base_url == "http://host.docker.internal:11434"
     assert s.llm_api_key == ""
     assert s.model_name == "qwen3.5:8b"
     assert s.embedding_model == "nomic-embed-text"

@@ -494,7 +494,7 @@ class TestGetDefaultLlmConfig:
         env_file = tmp_path / ".env"
         env_file.write_text(
             "LLM_PROVIDER=ollama\n"
-            "LLM_BASE_URL=http://localhost:11434\n"
+            "LLM_BASE_URL=http://host.docker.internal:11434\n"
             "LLM_API_KEY=\n"
             "MODEL_NAME=qwen3.5:8b\n"
             "SOME_OTHER_VAR=ignore\n"
@@ -506,7 +506,7 @@ class TestGetDefaultLlmConfig:
             mock_path_cls.return_value = mock_env
             result = get_default_llm_config()
         assert result["LLM_PROVIDER"] == "ollama"
-        assert result["LLM_BASE_URL"] == "http://localhost:11434"
+        assert result["LLM_BASE_URL"] == "http://host.docker.internal:11434"
         assert result["MODEL_NAME"] == "qwen3.5:8b"
         assert result["LLM_API_KEY"] == ""  # empty value preserved as empty
         assert "SOME_OTHER_VAR" not in result

@@ -22,7 +22,15 @@ from pillywiggins.agents.personality import Personality
 from pillywiggins.skills.registry import Skill, SkillRegistry
 
 
-def _make_ctx(agent_id="puck", channel="discord", private_memory=None, skill_registry=None, council_memory=None, nats_bus=None, scheduler=None):
+def _make_ctx(
+    agent_id="puck",
+    channel="discord",
+    private_memory=None,
+    skill_registry=None,
+    council_memory=None,
+    nats_bus=None,
+    scheduler=None,
+):
     ctx = MagicMock(spec=RunContext)
     ctx.deps = AgentDeps(
         agent_id=agent_id,
@@ -37,14 +45,18 @@ def _make_ctx(agent_id="puck", channel="discord", private_memory=None, skill_reg
     return ctx
 
 
-def _make_skill(name="test_skill", description="A test skill", run_func=None, meta=None, permissions=None):
+def _make_skill(
+    name="test_skill", description="A test skill", run_func=None, meta=None, permissions=None
+):
     if run_func is None:
         run_func = AsyncMock(return_value="ok")
     if meta is None:
         meta = {"name": name, "description": description}
     if permissions is None:
         permissions = {"network": False, "subprocess": False, "file_write": False}
-    return Skill(name=name, description=description, run_func=run_func, meta=meta, permissions=permissions)
+    return Skill(
+        name=name, description=description, run_func=run_func, meta=meta, permissions=permissions
+    )
 
 
 def test_create_brain_ollama_sets_base_url(monkeypatch):
@@ -69,7 +81,7 @@ def test_create_brain_ollama_default_base_url(monkeypatch):
         base_url="",
         api_key="",
     )
-    assert os.environ["OLLAMA_BASE_URL"] == "http://localhost:11434"
+    assert os.environ["OLLAMA_BASE_URL"] == "http://host.docker.internal:11434"
 
 
 def test_create_brain_ollama_sets_api_key(monkeypatch):
@@ -315,10 +327,12 @@ class TestRecallPrivateMemoryEdgeCases:
         mock_settings_cls.return_value = MagicMock()
         mock_embed.return_value = [0.1, 0.2, 0.3]
         memory = MagicMock()
-        memory.search = AsyncMock(return_value=[
-            {"content": "I like tea", "similarity": 0.95},
-            {"content": "I live in London", "similarity": 0.80},
-        ])
+        memory.search = AsyncMock(
+            return_value=[
+                {"content": "I like tea", "similarity": 0.95},
+                {"content": "I live in London", "similarity": 0.80},
+            ]
+        )
         ctx = _make_ctx(private_memory=memory)
         result = await recall_private_memory(ctx, "preferences")
         assert "I like tea" in result
@@ -422,10 +436,16 @@ class TestQueryCouncilMemory:
         mock_settings_cls.return_value = MagicMock()
         mock_embed.return_value = [0.1, 0.2, 0.3]
         council = MagicMock()
-        council.search = AsyncMock(return_value=[
-            {"content": "sky is blue", "contributing_agent": "puck", "message_type": "insight"},
-            {"content": "water is wet", "contributing_agent": "oberon", "message_type": "observation"},
-        ])
+        council.search = AsyncMock(
+            return_value=[
+                {"content": "sky is blue", "contributing_agent": "puck", "message_type": "insight"},
+                {
+                    "content": "water is wet",
+                    "contributing_agent": "oberon",
+                    "message_type": "observation",
+                },
+            ]
+        )
         ctx = _make_ctx(council_memory=council)
         result = await query_council_memory(ctx, "nature facts")
         assert "[insight]" in result
@@ -474,9 +494,13 @@ class TestShareToCouncil:
         mock_settings_cls.return_value = MagicMock()
         mock_embed.return_value = [0.1, 0.2, 0.3]
         council = MagicMock()
-        council.write_entry = AsyncMock(return_value={"success": True, "error": None, "id": "abc-123"})
+        council.write_entry = AsyncMock(
+            return_value={"success": True, "error": None, "id": "abc-123"}
+        )
         ctx = _make_ctx(council_memory=council, nats_bus=None)
-        result = await share_to_council(ctx, "important finding", tags="idea, learning", message_type="insight")
+        result = await share_to_council(
+            ctx, "important finding", tags="idea, learning", message_type="insight"
+        )
         council.write_entry.assert_awaited_once_with(
             content="important finding",
             tags=["idea", "learning"],
@@ -492,7 +516,9 @@ class TestShareToCouncil:
         mock_settings_cls.return_value = MagicMock()
         mock_embed.return_value = [0.1, 0.2, 0.3]
         council = MagicMock()
-        council.write_entry = AsyncMock(return_value={"success": True, "error": None, "id": "abc-123"})
+        council.write_entry = AsyncMock(
+            return_value={"success": True, "error": None, "id": "abc-123"}
+        )
         ctx = _make_ctx(council_memory=council, nats_bus=None)
         result = await share_to_council(ctx, "tagless insight")
         council.write_entry.assert_awaited_once_with(
@@ -510,12 +536,16 @@ class TestShareToCouncil:
         mock_settings_cls.return_value = MagicMock()
         mock_embed.return_value = [0.1, 0.2, 0.3]
         council = MagicMock()
-        council.write_entry = AsyncMock(return_value={"success": True, "error": None, "id": "abc-123"})
+        council.write_entry = AsyncMock(
+            return_value={"success": True, "error": None, "id": "abc-123"}
+        )
         nats = MagicMock()
         nats.publish_broadcast = AsyncMock()
         ctx = _make_ctx(council_memory=council, nats_bus=nats)
         result = await share_to_council(ctx, "shared finding", tags="idea", message_type="insight")
-        nats.publish_broadcast.assert_awaited_once_with("insight", {"content": "shared finding", "tags": ["idea"]})
+        nats.publish_broadcast.assert_awaited_once_with(
+            "insight", {"content": "shared finding", "tags": ["idea"]}
+        )
         assert result == "Shared to council: shared finding"
 
     @pytest.mark.asyncio
@@ -525,7 +555,9 @@ class TestShareToCouncil:
         mock_settings_cls.return_value = MagicMock()
         mock_embed.return_value = [0.1, 0.2, 0.3]
         council = MagicMock()
-        council.write_entry = AsyncMock(return_value={"success": False, "error": "Rate limit exceeded", "id": None})
+        council.write_entry = AsyncMock(
+            return_value={"success": False, "error": "Rate limit exceeded", "id": None}
+        )
         ctx = _make_ctx(council_memory=council, nats_bus=None)
         result = await share_to_council(ctx, "too many posts")
         assert "Rate limit exceeded" in result
@@ -537,7 +569,9 @@ class TestShareToCouncil:
         mock_settings_cls.return_value = MagicMock()
         mock_embed.return_value = [0.1, 0.2, 0.3]
         council = MagicMock()
-        council.write_entry = AsyncMock(return_value={"success": True, "error": None, "id": "abc-123"})
+        council.write_entry = AsyncMock(
+            return_value={"success": True, "error": None, "id": "abc-123"}
+        )
         nats = MagicMock()
         nats.publish_broadcast = AsyncMock(side_effect=ConnectionError("NATS down"))
         ctx = _make_ctx(council_memory=council, nats_bus=nats)

@@ -8,6 +8,7 @@ from pillywiggins.agents.deps import AgentDeps
 
 def _should_sandbox(skill_name: str) -> bool:
     from pillywiggins.config import Settings
+
     settings = Settings()
     if settings.should_sandbox_all():
         return True
@@ -77,7 +78,9 @@ async def query_council_memory(ctx: RunContext[AgentDeps], query: str) -> str:
     return "\n".join(lines)
 
 
-async def share_to_council(ctx: RunContext[AgentDeps], content: str, tags: str = "", message_type: str = "insight") -> str:
+async def share_to_council(
+    ctx: RunContext[AgentDeps], content: str, tags: str = "", message_type: str = "insight"
+) -> str:
     """Share an insight to the shared council memory for all agents to see.
 
     Args:
@@ -114,7 +117,9 @@ async def share_to_council(ctx: RunContext[AgentDeps], content: str, tags: str =
         return f"Could not share to council: {result.get('error', 'unknown error')}"
     if ctx.deps.nats_bus is not None:
         try:
-            await ctx.deps.nats_bus.publish_broadcast("insight", {"content": content, "tags": parsed_tags})
+            await ctx.deps.nats_bus.publish_broadcast(
+                "insight", {"content": content, "tags": parsed_tags}
+            )
         except Exception:
             pass
     return f"Shared to council: {content}"
@@ -216,7 +221,9 @@ async def build_skill(ctx: RunContext[AgentDeps], name: str, code: str) -> str:
     return "\n".join(lines)
 
 
-async def test_skill_code(ctx: RunContext[AgentDeps], name: str, code: str, test_cases_json: str) -> str:
+async def test_skill_code(
+    ctx: RunContext[AgentDeps], name: str, code: str, test_cases_json: str
+) -> str:
     """Run test cases against a skill draft. Creates a draft, then executes each test case in the sandbox.
 
     Args:
@@ -265,7 +272,9 @@ async def test_skill_code(ctx: RunContext[AgentDeps], name: str, code: str, test
     return "\n".join(lines)
 
 
-async def review_skill_code(ctx: RunContext[AgentDeps], name: str, code: str, test_cases_json: str) -> str:
+async def review_skill_code(
+    ctx: RunContext[AgentDeps], name: str, code: str, test_cases_json: str
+) -> str:
     """Format skill code for user review. Creates a draft, runs tests, then produces a review summary.
 
     Args:
@@ -296,7 +305,9 @@ async def review_skill_code(ctx: RunContext[AgentDeps], name: str, code: str, te
     return review_skill(draft)
 
 
-async def deploy_skill_code(ctx: RunContext[AgentDeps], name: str, code: str, test_cases_json: str, approved: bool) -> str:
+async def deploy_skill_code(
+    ctx: RunContext[AgentDeps], name: str, code: str, test_cases_json: str, approved: bool
+) -> str:
     """Deploy an approved skill. The user must explicitly set approved=True to confirm deployment.
 
     Args:
@@ -336,7 +347,14 @@ async def deploy_skill_code(ctx: RunContext[AgentDeps], name: str, code: str, te
     )
 
 
-async def schedule_task(ctx: RunContext[AgentDeps], name: str, action: str, interval_seconds: int = 0, cron_expr: str = "", args_json: str = "") -> str:
+async def schedule_task(
+    ctx: RunContext[AgentDeps],
+    name: str,
+    action: str,
+    interval_seconds: int = 0,
+    cron_expr: str = "",
+    args_json: str = "",
+) -> str:
     """Add a scheduled task that runs periodically or on a cron schedule.
 
     Args:
@@ -422,6 +440,7 @@ def _make_skill_tool(skill):
 
     async def skill_tool(ctx: RunContext[AgentDeps], **kwargs) -> str:
         import json
+
         if _should_sandbox(skill.name):
             return await _run_sandboxed_skill(skill, kwargs)
         try:
@@ -446,7 +465,7 @@ def create_brain(
     skill_registry: Optional[object] = None,
 ) -> Agent:
     if provider == "ollama":
-        os.environ["OLLAMA_BASE_URL"] = base_url or "http://localhost:11434"
+        os.environ["OLLAMA_BASE_URL"] = base_url or "http://host.docker.internal:11434"
         if api_key:
             os.environ["OLLAMA_API_KEY"] = api_key
         model = f"ollama:{model_name}"
@@ -467,6 +486,7 @@ def create_brain(
         if personality is None:
             return "You are a helpful AI assistant."
         from pillywiggins.agents.personality import Personality
+
         personality: Personality = personality
         parts = []
         parts.append(f"You are {personality.name}. {personality.description}")
@@ -480,6 +500,7 @@ def create_brain(
             "If you're unsure whether you know something, try recalling from private memory first."
         )
         return "\n\n".join(parts)
+
     agent.tool(recall_private_memory)
     agent.tool(save_to_private_memory)
     agent.tool(query_council_memory)
