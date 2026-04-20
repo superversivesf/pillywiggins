@@ -4,7 +4,12 @@ from unittest.mock import patch
 import pytest
 import yaml
 
-from pillywiggins.agents_config import AgentConfig, apply_agent_env, get_agent_config, load_agents_config
+from pillywiggins.agents_config import (
+    AgentConfig,
+    apply_agent_env,
+    get_agent_config,
+    load_agents_config,
+)
 
 
 def _write_agents_yaml(tmp_path, data):
@@ -143,6 +148,45 @@ def test_apply_agent_env_empty_environment():
     assert os.environ == old_env
 
 
+def test_apply_agent_env_sets_allowed_user_ids(monkeypatch):
+    monkeypatch.delenv("ALLOWED_USER_IDS", raising=False)
+    cfg = AgentConfig(
+        id="puck",
+        personality="/config/puck.yaml",
+        channel="telegram",
+        allowed_user_ids="12345,67890",
+        environment={},
+    )
+    apply_agent_env(cfg)
+    assert os.environ["ALLOWED_USER_IDS"] == "12345,67890"
+
+
+def test_apply_agent_env_sets_allowed_user_ids_all(monkeypatch):
+    monkeypatch.delenv("ALLOWED_USER_IDS", raising=False)
+    cfg = AgentConfig(
+        id="puck",
+        personality="/config/puck.yaml",
+        channel="telegram",
+        allowed_user_ids="all",
+        environment={},
+    )
+    apply_agent_env(cfg)
+    assert os.environ["ALLOWED_USER_IDS"] == "all"
+
+
+def test_apply_agent_env_skips_allowed_user_ids_when_empty():
+    cfg = AgentConfig(
+        id="puck",
+        personality="/config/puck.yaml",
+        channel="telegram",
+        allowed_user_ids="",
+        environment={},
+    )
+    old_env = dict(os.environ)
+    apply_agent_env(cfg)
+    assert os.environ.get("ALLOWED_USER_IDS") not in ("", "all") or os.environ == old_env
+
+
 def test_apply_agent_env_multiple_vars(monkeypatch):
     monkeypatch.setenv("TOKEN_A", "aaa")
     monkeypatch.setenv("TOKEN_B", "bbb")
@@ -178,6 +222,7 @@ def test_apply_agent_env_resets_settings(monkeypatch):
     )
     apply_agent_env(cfg)
     from pillywiggins.config import Settings
+
     s = Settings()
     assert s.telegram_bot_token == "tok_123"
     os.environ.pop("TELEGRAM_BOT_TOKEN", None)
@@ -310,7 +355,11 @@ def test_load_agents_config_three_agents(tmp_path):
     data = {
         "agents": [
             {"id": "puck", "personality": "/config/puck.yaml", "channel": "telegram"},
-            {"id": "bramblethorn", "personality": "/config/bramblethorn.yaml", "channel": "discord"},
+            {
+                "id": "bramblethorn",
+                "personality": "/config/bramblethorn.yaml",
+                "channel": "discord",
+            },
             {"id": "foxglove", "personality": "/config/foxglove.yaml", "channel": "slack"},
         ]
     }
