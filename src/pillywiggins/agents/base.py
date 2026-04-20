@@ -54,9 +54,13 @@ class PillywigginAgent:
         self._council_memory: Optional[CouncilMemory] = None
         self._nats_bus: Optional[NatsBus] = None
         self._scheduler: Optional[AgentScheduler] = None
+        self._adapter: Any = None
         self._lock = asyncio.Lock()
         self._brain: Agent = create_brain(
-            model_name, provider, base_url, api_key,
+            model_name,
+            provider,
+            base_url,
+            api_key,
             skill_registry=skill_registry,
         )
         self._message_history: list[ModelMessage] = []
@@ -71,13 +75,23 @@ class PillywigginAgent:
                     self._conversation_histories[conversation_key] = cached
                 else:
                     self._message_history = cached
-                logger.info("Loaded %d messages from Redis for %s/%s", len(cached), self.agent_id, conversation_key or "default")
+                logger.info(
+                    "Loaded %d messages from Redis for %s/%s",
+                    len(cached),
+                    self.agent_id,
+                    conversation_key or "default",
+                )
                 return
         if self._store is not None and conversation_key is not None:
             stored = await self._store.load(conversation_key)
             if stored is not None:
                 self._message_history = stored
-                logger.info("Loaded %d messages from PostgreSQL for %s/%s", len(stored), self.agent_id, conversation_key)
+                logger.info(
+                    "Loaded %d messages from PostgreSQL for %s/%s",
+                    len(stored),
+                    self.agent_id,
+                    conversation_key,
+                )
 
     async def start(self) -> None:
         from pillywiggins.config import Settings
@@ -90,7 +104,9 @@ class PillywigginAgent:
                 self._council_memory = council
                 logger.info("Council memory connected for %s", self.agent_id)
             except Exception:
-                logger.warning("Failed to connect council memory for %s", self.agent_id, exc_info=True)
+                logger.warning(
+                    "Failed to connect council memory for %s", self.agent_id, exc_info=True
+                )
                 self._council_memory = None
         if self._nats_url is not None:
             try:
@@ -137,13 +153,18 @@ class PillywigginAgent:
                 logger.warning("Error stopping scheduler for %s", self.agent_id, exc_info=True)
             self._scheduler = None
 
+    def set_adapter(self, adapter: Any) -> None:
+        self._adapter = adapter
+
     def _register_scheduler_handlers(self) -> None:
         async def _heartbeat_handler(**kwargs):
             if self._nats_bus is not None:
                 try:
                     await self._nats_bus.publish_broadcast("heartbeat", {"agent_id": self.agent_id})
                 except Exception:
-                    logger.warning("Failed to broadcast heartbeat for %s", self.agent_id, exc_info=True)
+                    logger.warning(
+                        "Failed to broadcast heartbeat for %s", self.agent_id, exc_info=True
+                    )
             else:
                 logger.info("heartbeat for %s (no NATS bus)", self.agent_id)
 
@@ -153,10 +174,45 @@ class PillywigginAgent:
         async def _skill_reload_handler(**kwargs):
             logger.info("skill reload for %s", self.agent_id)
 
+        async def _send_message_handler(**kwargs):
+            args = kwargs.get("args", {})
+            conversation_key = args.get("conversation_key", "")
+            chat_id = args.get("chat_id", conversation_key)
+            prompt = args.get("prompt", "Send a brief friendly check-in message.")
+
+            if not conversation_key:
+                logger.warning("send_message action missing conversation_key for %s", self.agent_id)
+                return
+
+            if self._adapter is None:
+                logger.warning("send_message action but no adapter for %s", self.agent_id)
+                return
+
+            try:
+                result = await self._brain.run(
+                    user_prompt=prompt,
+                    deps=AgentDeps(
+                        agent_id=self.agent_id,
+                        channel="telegram",
+                        personality=self.personality,
+                        private_memory=self._private_memory,
+                        skill_registry=self._skill_registry,
+                        council_memory=self._council_memory,
+                        nats_bus=self._nats_bus,
+                        scheduler=self._scheduler,
+                    ),
+                )
+                message_text = result.output
+                await self._adapter.send(conversation_key, message_text, chat_id=chat_id)
+                logger.info("send_message for %s to %s", self.agent_id, conversation_key)
+            except Exception:
+                logger.exception("send_message failed for %s", self.agent_id)
+
         if self._scheduler is not None:
             self._scheduler.register_handler("heartbeat", _heartbeat_handler)
             self._scheduler.register_handler("memory_review", _memory_review_handler)
             self._scheduler.register_handler("skill_reload", _skill_reload_handler)
+            self._scheduler.register_handler("send_message", _send_message_handler)
 
     @property
     def model_name(self) -> str:
@@ -165,7 +221,10 @@ class PillywigginAgent:
     def switch_model(self, new_model: str) -> None:
         self._model_name = new_model
         self._brain = create_brain(
-            new_model, self._provider, self._base_url, self._api_key,
+            new_model,
+            self._provider,
+            self._base_url,
+            self._api_key,
         )
         logger.info("Switched model to %s", new_model)
 
@@ -214,7 +273,11 @@ class PillywigginAgent:
         kept_messages = history[-keep_count:]
 
         summary_prompt = ModelRequest(
-            parts=[UserPromptPart(content="Summarize this conversation so far in 2-3 concise sentences.")]
+            parts=[
+                UserPromptPart(
+                    content="Summarize this conversation so far in 2-3 concise sentences."
+                )
+            ]
         )
         deps = AgentDeps(
             agent_id=self.agent_id,
@@ -244,10 +307,12 @@ class PillywigginAgent:
         truncated_kept = []
         for msg in kept_messages:
             new_parts = []
-            for part in (msg.parts if hasattr(msg, "parts") else []):
+            for part in msg.parts if hasattr(msg, "parts") else []:
                 if hasattr(part, "content") and isinstance(part.content, str):
                     if len(part.content) > self._compact_truncate_message_chars:
-                        truncated = part.content[:self._compact_truncate_message_chars] + "...[truncated]"
+                        truncated = (
+                            part.content[: self._compact_truncate_message_chars] + "...[truncated]"
+                        )
                         new_parts.append(TextPart(content=truncated))
                     else:
                         new_parts.append(part)
@@ -284,7 +349,9 @@ class PillywigginAgent:
             new_history = result.all_messages()
             self._set_history(new_history, conversation_key)
             if self._cache is not None:
-                await self._cache.save(self.agent_id, new_history, conversation_key=conversation_key)
+                await self._cache.save(
+                    self.agent_id, new_history, conversation_key=conversation_key
+                )
             if self._store is not None:
                 await self._store.save(conversation_key, new_history)
             return result.output

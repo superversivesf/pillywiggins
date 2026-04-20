@@ -359,7 +359,13 @@ async def schedule_task(
 
     Args:
         name: A unique name for this scheduled task.
-        action: The action to perform (e.g. "heartbeat", "memory_review", "skill_reload", "custom").
+        action: The action to perform. Available actions:
+            - "send_message": Send a proactive message to a user/chat. Requires args_json with
+              {"conversation_key": "<chat_id>", "chat_id": "<chat_id>", "prompt": "<instruction for LLM>"}
+            - "heartbeat": Broadcast heartbeat via NATS.
+            - "memory_review": Log a memory review.
+            - "skill_reload": Log a skill reload.
+            - "custom": Run a custom action with arbitrary args.
         interval_seconds: Run every N seconds. Use 0 if using cron_expr instead.
         cron_expr: A 5-field cron expression (e.g. "0 * * * *"). Use empty string if using interval_seconds.
         args_json: Optional JSON object of arguments to pass to the action handler.

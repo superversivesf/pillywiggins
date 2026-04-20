@@ -92,6 +92,8 @@ def main():
     else:
         raise ValueError(f"Channel {channel} not yet implemented")
 
+    agent.set_adapter(adapter)
+
     logger.info("Starting %s on %s", personality.name, channel)
 
     asyncio.run(_run(adapter, agent, settings))
