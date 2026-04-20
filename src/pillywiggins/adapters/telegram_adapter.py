@@ -91,7 +91,12 @@ class TelegramAdapter(BaseAdapter):
         chat_id = str(message.chat_id)
         is_group = message.chat.type in ("group", "supergroup")
         conversation_key = str(message.from_user.id) if is_group else chat_id
-        metadata = {"username": message.from_user.username, "is_bot": message.from_user.is_bot}
+        metadata = {
+            "username": message.from_user.username
+            or message.from_user.first_name
+            or str(message.from_user.id),
+            "is_bot": message.from_user.is_bot,
+        }
         if is_group:
             metadata["chat_id"] = chat_id
         return UnifiedMessage(
@@ -136,7 +141,9 @@ class TelegramAdapter(BaseAdapter):
 
     async def _cmd_model(self, update: Update, context) -> None:
         if not context.args:
-            await update.message.reply_text(f"Current model: `{self.agent.model_name}`", parse_mode="Markdown")
+            await update.message.reply_text(
+                f"Current model: `{self.agent.model_name}`", parse_mode="Markdown"
+            )
             return
         new_model = " ".join(context.args)
         self.agent.switch_model(new_model)
@@ -163,7 +170,9 @@ class TelegramAdapter(BaseAdapter):
             return
         lines = ["*Loaded skills:*"]
         for skill in skills:
-            desc = skill.description[:60] + "..." if len(skill.description) > 60 else skill.description
+            desc = (
+                skill.description[:60] + "..." if len(skill.description) > 60 else skill.description
+            )
             perm_list = [k for k, v in skill.permissions.items() if v]
             perm_str = f" [{', '.join(perm_list)}]" if perm_list else ""
             lines.append(f"• `{skill.name}` — {desc}{perm_str}")
@@ -190,7 +199,9 @@ class TelegramAdapter(BaseAdapter):
             return
         if is_bot:
             self._bot_chat_counts[chat_id] = self._bot_chat_counts.get(chat_id, 0) + 1
-        logger.info("Message from %s: %s", unified.metadata.get("username", "?"), unified.content[:80])
+        logger.info(
+            "Message from %s: %s", unified.metadata.get("username", "?"), unified.content[:80]
+        )
         try:
             done = asyncio.Event()
             typing_task = asyncio.create_task(self._keep_typing(chat_id, done))

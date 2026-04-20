@@ -8,14 +8,18 @@ from pillywiggins.adapters.telegram_adapter import HELP_TEXT, TelegramAdapter
 from pillywiggins.messaging.unified import ChannelType
 
 
-def _make_update(user_id=42, username="testuser", text="hello", chat_id=99):
+def _make_update(user_id=42, username="testuser", first_name="Test", text="hello", chat_id=99):
     update = MagicMock()
     update.message = MagicMock()
     update.message.from_user = MagicMock()
     update.message.from_user.id = user_id
     update.message.from_user.username = username
+    update.message.from_user.first_name = first_name
+    update.message.from_user.is_bot = False
     update.message.text = text
     update.message.chat_id = chat_id
+    update.message.chat = MagicMock()
+    update.message.chat.type = "private"
     update.message.reply_text = AsyncMock()
     return update
 
@@ -26,13 +30,15 @@ def _make_adapter():
     agent.handle_message = AsyncMock(return_value="response")
     agent.switch_model = MagicMock()
     agent.clear_history = MagicMock()
-    agent.get_status = MagicMock(return_value={
-        "agent_id": "puck",
-        "channel": "telegram",
-        "model_name": "qwen3.5:8b",
-        "message_count": 7,
-        "estimated_tokens": 1500,
-    })
+    agent.get_status = MagicMock(
+        return_value={
+            "agent_id": "puck",
+            "channel": "telegram",
+            "model_name": "qwen3.5:8b",
+            "message_count": 7,
+            "estimated_tokens": 1500,
+        }
+    )
     agent.compact_history = AsyncMock(return_value="Compacted: 7 messages → 1 summary")
     settings = MagicMock()
     settings.llm_base_url = "http://localhost:11434"
@@ -143,7 +149,11 @@ async def test_cmd_models_replies_with_model_list():
     mock_model = MagicMock()
     mock_model.id = "qwen3.5:8b"
     mock_model.owned_by = "ollama"
-    with patch("pillywiggins.adapters.telegram_adapter.list_models", new_callable=AsyncMock, return_value=[mock_model]):
+    with patch(
+        "pillywiggins.adapters.telegram_adapter.list_models",
+        new_callable=AsyncMock,
+        return_value=[mock_model],
+    ):
         await adapter._cmd_models(update, context)
 
     reply = update.message.reply_text.call_args[0][0]
@@ -157,7 +167,11 @@ async def test_cmd_models_handles_empty_list():
     update = _make_update()
     context = MagicMock()
 
-    with patch("pillywiggins.adapters.telegram_adapter.list_models", new_callable=AsyncMock, return_value=[]):
+    with patch(
+        "pillywiggins.adapters.telegram_adapter.list_models",
+        new_callable=AsyncMock,
+        return_value=[],
+    ):
         await adapter._cmd_models(update, context)
 
     update.message.reply_text.assert_called_once_with("Could not fetch model list.")
@@ -367,7 +381,11 @@ async def test_cmd_models_sorted_alphabetically():
     model_m.id = "mistral:7b"
     model_m.owned_by = "ollama"
 
-    with patch("pillywiggins.adapters.telegram_adapter.list_models", new_callable=AsyncMock, return_value=[model_z, model_a, model_m]):
+    with patch(
+        "pillywiggins.adapters.telegram_adapter.list_models",
+        new_callable=AsyncMock,
+        return_value=[model_z, model_a, model_m],
+    ):
         await adapter._cmd_models(update, context)
 
     reply = update.message.reply_text.call_args[0][0]
@@ -446,7 +464,13 @@ async def test_cmd_skills_lists_skills():
     mock_skill.name = "roll_dice"
     mock_skill.description = "Roll one or more dice"
     mock_skill.permissions = {"network": False, "subprocess": False, "file_write": False}
-    mock_skill.meta = {"name": "roll_dice", "description": "Roll one or more dice", "parameters": {}, "version": "1.0", "permissions": {"network": False, "subprocess": False, "file_write": False}}
+    mock_skill.meta = {
+        "name": "roll_dice",
+        "description": "Roll one or more dice",
+        "parameters": {},
+        "version": "1.0",
+        "permissions": {"network": False, "subprocess": False, "file_write": False},
+    }
     adapter.agent._skill_registry = MagicMock()
     adapter.agent._skill_registry.list_skills = MagicMock(return_value=[mock_skill])
 
@@ -467,7 +491,12 @@ async def test_cmd_skills_shows_network_permission():
     mock_skill.name = "check_website"
     mock_skill.description = "Check if a URL is reachable"
     mock_skill.permissions = {"network": True, "subprocess": False, "file_write": False}
-    mock_skill.meta = {"name": "check_website", "description": "Check if a URL is reachable", "parameters": {}, "version": "1.0"}
+    mock_skill.meta = {
+        "name": "check_website",
+        "description": "Check if a URL is reachable",
+        "parameters": {},
+        "version": "1.0",
+    }
     adapter.agent._skill_registry = MagicMock()
     adapter.agent._skill_registry.list_skills = MagicMock(return_value=[mock_skill])
 
@@ -537,7 +566,13 @@ async def test_cmd_skills_description_truncation():
     mock_skill.name = "long_desc_skill"
     mock_skill.description = "A" * 100
     mock_skill.permissions = {"network": False, "subprocess": False, "file_write": False}
-    mock_skill.meta = {"name": "long_desc_skill", "description": "A" * 100, "parameters": {}, "version": "1.0", "permissions": {"network": False, "subprocess": False, "file_write": False}}
+    mock_skill.meta = {
+        "name": "long_desc_skill",
+        "description": "A" * 100,
+        "parameters": {},
+        "version": "1.0",
+        "permissions": {"network": False, "subprocess": False, "file_write": False},
+    }
     adapter.agent._skill_registry = MagicMock()
     adapter.agent._skill_registry.list_skills = MagicMock(return_value=[mock_skill])
 
@@ -557,7 +592,13 @@ async def test_cmd_skills_subprocess_permission():
     mock_skill.name = "shell_runner"
     mock_skill.description = "Runs shell commands"
     mock_skill.permissions = {"network": False, "subprocess": True, "file_write": False}
-    mock_skill.meta = {"name": "shell_runner", "description": "Runs shell commands", "parameters": {}, "version": "1.0", "permissions": {"network": False, "subprocess": True, "file_write": False}}
+    mock_skill.meta = {
+        "name": "shell_runner",
+        "description": "Runs shell commands",
+        "parameters": {},
+        "version": "1.0",
+        "permissions": {"network": False, "subprocess": True, "file_write": False},
+    }
     adapter.agent._skill_registry = MagicMock()
     adapter.agent._skill_registry.list_skills = MagicMock(return_value=[mock_skill])
 
@@ -599,7 +640,7 @@ def test_normalize_handles_missing_username():
 
     result = adapter.normalize(update)
 
-    assert result.metadata["username"] is None
+    assert result.metadata["username"] == "Test"
 
 
 @pytest.mark.asyncio

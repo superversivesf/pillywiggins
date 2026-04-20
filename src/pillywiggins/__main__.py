@@ -37,6 +37,7 @@ def main():
 
     if args.command == "onboard":
         from pillywiggins.onboard import onboard
+
         asyncio.run(onboard())
         return
 
@@ -44,6 +45,7 @@ def main():
         level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
 
     settings = Settings()
 
@@ -64,7 +66,9 @@ def main():
         allowed_user_ids = settings.allowed_user_ids
 
     cache = ConversationCache(redis_url=settings.redis_url)
-    store = ConversationStore(database_url=settings.database_url, agent_id=agent_id, channel=channel)
+    store = ConversationStore(
+        database_url=settings.database_url, agent_id=agent_id, channel=channel
+    )
     private_memory = PrivateMemory(database_url=settings.database_url, agent_id=agent_id)
     skill_registry = SkillRegistry(skills_dir=Path(settings.skills_dir))
     skill_registry.load_all()
