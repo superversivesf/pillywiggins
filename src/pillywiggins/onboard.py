@@ -336,82 +336,6 @@ def add_token_to_env(agent_id: str, token_value: str, env_path: Path = ENV_FILE)
     print(f"Added {token_env} to {env_path}")
 
 
-def add_token_to_env_example(agent_id: str, env_path: Path = ENV_EXAMPLE) -> None:
-    token_env = _token_env_for_agent(agent_id)
-    token_line = f"{token_env}=your_{agent_id}_telegram_bot_token_here"
-
-    if not env_path.exists():
-        return
-
-    content = read_text(env_path)
-
-    if token_env in content:
-        return
-
-    lines = content.split("\n")
-    new_lines = []
-    inserted = False
-
-    for line in lines:
-        if not inserted and "Add more agents with:" in line:
-            new_lines.append(f"# {token_line}")
-            new_lines.append(line)
-            inserted = True
-        else:
-            new_lines.append(line)
-
-    if not inserted:
-        for line in lines:
-            new_lines.append(line)
-            if not inserted and re.match(r"^[A-Z_]+_TELEGRAM_TOKEN=", line):
-                new_lines.append(f"# {token_line}")
-                inserted = True
-
-    write_text(env_path, "\n".join(new_lines))
-    print(f"Added {token_env} to {env_path}")
-
-
-def add_llm_api_key_to_env_example(agent_id: str, env_path: Path = ENV_EXAMPLE) -> None:
-    key_env = f"{agent_id.upper()}_LLM_API_KEY"
-    key_line = f"# {key_env}=your_{agent_id}_llm_api_key_here"
-
-    if not env_path.exists():
-        return
-
-    content = read_text(env_path)
-
-    if key_env in content:
-        return
-
-    lines = content.split("\n")
-    new_lines = []
-    inserted = False
-
-    for line in lines:
-        if not inserted and "LLM API Key" in line:
-            new_lines.append(key_line)
-            new_lines.append(line)
-            inserted = True
-        else:
-            new_lines.append(line)
-
-    if not inserted:
-        for line in lines:
-            new_lines.append(line)
-            if not inserted and re.match(r"^#?[A-Z_]+_LLM_API_KEY=", line):
-                new_lines.append("")
-                new_lines.append(key_line)
-                inserted = True
-
-    if not inserted:
-        new_lines.append("")
-        new_lines.append("# --- Per-Agent LLM API Keys ---")
-        new_lines.append(key_line)
-
-    write_text(env_path, "\n".join(new_lines))
-    print(f"Added {key_env} to {env_path}")
-
-
 def add_llm_api_key_to_env(agent_id: str, api_key: str, env_path: Path = ENV_FILE) -> None:
     key_env = f"{agent_id.upper()}_LLM_API_KEY"
     key_line = f"{key_env}={api_key}"
@@ -480,10 +404,8 @@ def add_agent_to_configs(
     add_agent_to_docker_compose(agent_id, personality_filename, token_env, llm_config=llm_config)
     if token_value:
         add_token_to_env(agent_id, token_value)
-    add_token_to_env_example(agent_id)
     if llm_config and llm_config.get("LLM_API_KEY"):
         add_llm_api_key_to_env(agent_id, llm_config["LLM_API_KEY"])
-        add_llm_api_key_to_env_example(agent_id)
 
 
 def remove_agent_from_agents_yaml(agent_id: str) -> None:

@@ -13,9 +13,7 @@ from pillywiggins.onboard import (
     add_agent_to_configs,
     add_agent_to_docker_compose,
     add_llm_api_key_to_env,
-    add_llm_api_key_to_env_example,
     add_token_to_env,
-    add_token_to_env_example,
     agent_ids_in_use,
     comment_token_in_env,
     discover_personalities,
@@ -936,40 +934,6 @@ class TestAddTokenToEnv:
 
 
 # ---------------------------------------------------------------------------
-# add_token_to_env_example
-# ---------------------------------------------------------------------------
-
-
-class TestAddTokenToEnvExample:
-    def test_skips_if_file_missing(self, tmp_path):
-        env_path = tmp_path / "env.example"
-        # File doesn't exist — should not raise
-        add_token_to_env_example("puck", env_path)
-
-    def test_adds_commented_token(self, tmp_path):
-        env_path = tmp_path / "env.example"
-        env_path.write_text("# Add more agents with:\n")
-        add_token_to_env_example("puck", env_path)
-        content = env_path.read_text()
-        assert "# PUCK_TELEGRAM_TOKEN=your_puck_telegram_bot_token_here" in content
-
-    def test_skips_if_token_already_present(self, tmp_path):
-        env_path = tmp_path / "env.example"
-        env_path.write_text("PUCK_TELEGRAM_TOKEN=existing\n")
-        add_token_to_env_example("puck", env_path)
-        content = env_path.read_text()
-        # Should not add a second commented version
-        assert content.count("PUCK_TELEGRAM_TOKEN") == 1
-
-    def test_inserts_after_existing_telegram_token_pattern(self, tmp_path):
-        env_path = tmp_path / "env.example"
-        env_path.write_text("OTHER_TELEGRAM_TOKEN=placeholder\n")
-        add_token_to_env_example("puck", env_path)
-        content = env_path.read_text()
-        assert "# PUCK_TELEGRAM_TOKEN=" in content
-
-
-# ---------------------------------------------------------------------------
 # add_llm_api_key_to_env
 # ---------------------------------------------------------------------------
 
@@ -1008,46 +972,6 @@ class TestAddLlmApiKeyToEnv:
         add_llm_api_key_to_env("sage", "sk-test", env_path)
         content = env_path.read_text()
         assert "SAGE_LLM_API_KEY=sk-test" in content
-        assert "# --- Per-Agent LLM API Keys ---" in content
-
-
-# ---------------------------------------------------------------------------
-# add_llm_api_key_to_env_example
-# ---------------------------------------------------------------------------
-
-
-class TestAddLlmApiKeyToEnvExample:
-    def test_skips_if_file_missing(self, tmp_path):
-        env_path = tmp_path / "env.example"
-        add_llm_api_key_to_env_example("sage", env_path)
-
-    def test_skips_if_already_present(self, tmp_path):
-        env_path = tmp_path / "env.example"
-        env_path.write_text("SAGE_LLM_API_KEY=placeholder\n")
-        add_llm_api_key_to_env_example("sage", env_path)
-        content = env_path.read_text()
-        assert content.count("SAGE_LLM_API_KEY") == 1
-
-    def test_inserts_after_llm_api_key_section(self, tmp_path):
-        env_path = tmp_path / "env.example"
-        env_path.write_text("# --- LLM API Key ---\nLLM_API_KEY=your_key_here\n")
-        add_llm_api_key_to_env_example("sage", env_path)
-        content = env_path.read_text()
-        assert "# SAGE_LLM_API_KEY=" in content
-
-    def test_inserts_after_existing_llm_api_key_pattern(self, tmp_path):
-        env_path = tmp_path / "env.example"
-        env_path.write_text("OTHER_LLM_API_KEY=placeholder\n")
-        add_llm_api_key_to_env_example("sage", env_path)
-        content = env_path.read_text()
-        assert "# SAGE_LLM_API_KEY=" in content
-
-    def test_appends_with_section_header(self, tmp_path):
-        env_path = tmp_path / "env.example"
-        env_path.write_text("UNRELATED_VAR=1\n")
-        add_llm_api_key_to_env_example("sage", env_path)
-        content = env_path.read_text()
-        assert "# SAGE_LLM_API_KEY=" in content
         assert "# --- Per-Agent LLM API Keys ---" in content
 
 
@@ -1210,9 +1134,7 @@ class TestAddAgentToConfigs:
             patch("pillywiggins.onboard.add_agent_to_agents_yaml") as mock_yaml,
             patch("pillywiggins.onboard.add_agent_to_docker_compose") as mock_compose,
             patch("pillywiggins.onboard.add_token_to_env") as mock_env,
-            patch("pillywiggins.onboard.add_token_to_env_example") as mock_env_example,
             patch("pillywiggins.onboard.add_llm_api_key_to_env") as mock_llm_env,
-            patch("pillywiggins.onboard.add_llm_api_key_to_env_example") as mock_llm_example,
         ):
             add_agent_to_configs(
                 agent_id="puck",
@@ -1227,18 +1149,14 @@ class TestAddAgentToConfigs:
             mock_yaml.assert_called_once()
             mock_compose.assert_called_once()
             mock_env.assert_called_once_with("puck", "12345:abcd")
-            mock_env_example.assert_called_once_with("puck")
             mock_llm_env.assert_called_once_with("puck", "sk-test")
-            mock_llm_example.assert_called_once_with("puck")
 
     def test_skips_token_when_empty(self):
         with (
             patch("pillywiggins.onboard.add_agent_to_agents_yaml"),
             patch("pillywiggins.onboard.add_agent_to_docker_compose"),
             patch("pillywiggins.onboard.add_token_to_env") as mock_env,
-            patch("pillywiggins.onboard.add_token_to_env_example"),
             patch("pillywiggins.onboard.add_llm_api_key_to_env"),
-            patch("pillywiggins.onboard.add_llm_api_key_to_env_example"),
         ):
             add_agent_to_configs(
                 agent_id="puck",
@@ -1248,7 +1166,7 @@ class TestAddAgentToConfigs:
                 allowed_user_ids="all",
                 bot_chat_limit=3,
                 llm_config=None,
-                token_value="",  # empty
+                token_value="",
             )
             mock_env.assert_not_called()
 
@@ -1258,9 +1176,7 @@ class TestAddAgentToConfigs:
             patch("pillywiggins.onboard.add_agent_to_agents_yaml"),
             patch("pillywiggins.onboard.add_agent_to_docker_compose"),
             patch("pillywiggins.onboard.add_token_to_env"),
-            patch("pillywiggins.onboard.add_token_to_env_example"),
             patch("pillywiggins.onboard.add_llm_api_key_to_env") as mock_llm_env,
-            patch("pillywiggins.onboard.add_llm_api_key_to_env_example") as mock_llm_example,
         ):
             add_agent_to_configs(
                 agent_id="puck",
@@ -1273,4 +1189,3 @@ class TestAddAgentToConfigs:
                 token_value="12345:abcd",
             )
             mock_llm_env.assert_not_called()
-            mock_llm_example.assert_not_called()
