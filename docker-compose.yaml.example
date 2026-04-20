@@ -55,6 +55,8 @@ services:
     build: .
     command: python -m pillywiggins --agent-id puck
     env_file: .env
+    extra_hosts:
+    - "host.docker.internal:host-gateway"
     environment:
       AGENT_ID: puck
       TELEGRAM_BOT_TOKEN: ${PUCK_TELEGRAM_TOKEN}

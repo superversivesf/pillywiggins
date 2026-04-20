@@ -274,6 +274,7 @@ def add_agent_to_docker_compose(
         "build": ".",
         "command": f"python -m pillywiggins --agent-id {agent_id}",
         "env_file": ".env",
+        "extra_hosts": ["host.docker.internal:host-gateway"],
         "environment": service_env,
         "volumes": list(COMPOSE_VOLUMES),
         "depends_on": dict(COMPOSE_DEPENDS_ON),
