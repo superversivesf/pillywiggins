@@ -560,7 +560,7 @@ async def _add_agent_flow() -> None:
         return
 
     if llm_provider == "ollama":
-        default_base = defaults.get("LLM_BASE_URL") or "http://host.docker.internal:11434"
+        default_base = defaults.get("LLM_BASE_URL") or "http://host.docker.internal:11434/v1"
     else:
         default_base = defaults.get("LLM_BASE_URL") or "https://api.openai.com/v1"
 
@@ -729,7 +729,7 @@ async def _reconfigure_agent_flow() -> None:
     defaults = get_default_llm_config()
     current_provider = env.get("LLM_PROVIDER", defaults.get("LLM_PROVIDER", "ollama"))
     current_base_url = env.get(
-        "LLM_BASE_URL", defaults.get("LLM_BASE_URL", "http://host.docker.internal:11434")
+        "LLM_BASE_URL", defaults.get("LLM_BASE_URL", "http://host.docker.internal:11434/v1")
     )
     current_model = env.get("MODEL_NAME", defaults.get("MODEL_NAME", "qwen3.5:8b"))
 

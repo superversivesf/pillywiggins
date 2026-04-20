@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     nats_url: str = "nats://nats:4222"
     llm_provider: str = "ollama"
-    llm_base_url: str = "http://host.docker.internal:11434"
+    llm_base_url: str = "http://host.docker.internal:11434/v1"
     llm_api_key: str = ""
     model_name: str = "qwen3.5:8b"
     embedding_model: str = "nomic-embed-text"

@@ -465,15 +465,18 @@ def create_brain(
     skill_registry: Optional[object] = None,
 ) -> Agent:
     if provider == "ollama":
-        os.environ["OLLAMA_BASE_URL"] = base_url or "http://host.docker.internal:11434"
-        if api_key:
-            os.environ["OLLAMA_API_KEY"] = api_key
-        model = f"ollama:{model_name}"
+        url = base_url or "http://host.docker.internal:11434/v1"
+        url = url.rstrip("/")
+        if not url.endswith("/v1"):
+            url = f"{url}/v1"
+        os.environ["OPENAI_BASE_URL"] = url
+        os.environ["OPENAI_API_KEY"] = api_key or "ollama"
     else:
-        model = f"openai:{model_name}"
         os.environ["OPENAI_API_KEY"] = api_key
         if base_url:
             os.environ["OPENAI_BASE_URL"] = base_url
+
+    model = f"openai:{model_name}"
 
     agent = Agent(
         model=model,

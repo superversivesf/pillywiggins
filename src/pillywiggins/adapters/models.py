@@ -13,8 +13,10 @@ class ModelInfo:
 
 
 async def list_models(base_url: str, api_key: str, provider: str) -> list[ModelInfo]:
+    base = base_url.rstrip("/")
     if provider == "ollama":
-        url = f"{base_url.rstrip('/')}/api/tags"
+        base = base.removesuffix("/v1")
+        url = f"{base}/api/tags"
     else:
         url = f"{base_url.rstrip('/')}/models"
     headers = {}
