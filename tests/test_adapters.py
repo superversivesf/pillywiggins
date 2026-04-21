@@ -29,7 +29,7 @@ def _make_adapter():
     agent.model_name = "qwen3.5:8b"
     agent.handle_message = AsyncMock(return_value="response")
     agent.switch_model = MagicMock()
-    agent.clear_history = MagicMock()
+    agent.clear_history = AsyncMock()
     agent.get_status = MagicMock(
         return_value={
             "agent_id": "puck",

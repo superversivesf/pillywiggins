@@ -1201,3 +1201,1047 @@ class TestAddAgentToConfigs:
                 token_value="12345:abcd",
             )
             mock_llm_env.assert_not_called()
+
+
+class TestGetDefaultLlmConfigEdgeCases:
+    def test_read_text_exception(self):
+        mock_env = MagicMock()
+        mock_env.is_file.return_value = True
+        mock_env.read_text.side_effect = PermissionError("no access")
+        with patch("pillywiggins.onboard.Path", return_value=mock_env):
+            result = get_default_llm_config()
+        for key in ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "MODEL_NAME"):
+            assert result[key] == ""
+
+    def test_line_without_equals_sign(self):
+        env_file = MagicMock()
+        env_file.is_file.return_value = True
+        env_file.read_text.return_value = "LLM_PROVIDER=ollama\nNO_EQUALS_HERE\nMODEL_NAME=qwen\n"
+        with patch("pillywiggins.onboard.Path", return_value=env_file):
+            result = get_default_llm_config()
+        assert result["LLM_PROVIDER"] == "ollama"
+        assert result["MODEL_NAME"] == "qwen"
+
+
+class TestAddAgentFlow:
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.add_agent_to_configs")
+    @patch("pillywiggins.onboard.validate_telegram_token", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_full_add_flow(self, mock_q, mock_list_models, mock_validate, mock_add_configs):
+        mock_validate.return_value = (True, "testbot")
+        mock_list_models.return_value = []
+
+        select_responses = iter(
+            [
+                "Puck — mischievous",
+                "telegram",
+                "ollama",
+            ]
+        )
+        text_responses = iter(
+            [
+                "puck",
+                "123456:ABC-DEF1234",
+                "http://host.docker.internal:11434/v1",
+                "qwen3.5:8b",
+                "all",
+                "3",
+            ]
+        )
+        confirm_responses = iter(
+            [
+                True,
+                False,
+            ]
+        )
+
+        def make_select(*args, **kwargs):
+            m = MagicMock()
+            m.ask_async = AsyncMock(return_value=next(select_responses))
+            return m
+
+        def make_text(*args, **kwargs):
+            m = MagicMock()
+            m.ask_async = AsyncMock(return_value=next(text_responses))
+            return m
+
+        def make_confirm(*args, **kwargs):
+            m = MagicMock()
+            m.ask_async = AsyncMock(return_value=next(confirm_responses))
+            return m
+
+        mock_q.select = MagicMock(side_effect=make_select)
+        mock_q.text = MagicMock(side_effect=make_text)
+        mock_q.confirm = MagicMock(side_effect=make_confirm)
+        mock_q.Choice = MagicMock
+
+        with (
+            patch("pillywiggins.onboard.discover_personalities") as mock_disc,
+            patch("pillywiggins.onboard.agent_ids_in_use", return_value=set()),
+            patch("pillywiggins.onboard.get_first_agent_llm_config", return_value=None),
+            patch(
+                "pillywiggins.onboard.get_default_llm_config",
+                return_value={
+                    k: "" for k in ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "MODEL_NAME")
+                },
+            ),
+            patch("pillywiggins.onboard.load_existing_agents", return_value=[]),
+        ):
+            mock_disc.return_value = [
+                {
+                    "name": "Puck",
+                    "description": "mischievous",
+                    "filename": "puck.yaml",
+                    "stem": "puck",
+                    "channel": "telegram",
+                    "bot_chat_limit": 3,
+                },
+            ]
+            from pillywiggins.onboard import _add_agent_flow
+
+            await _add_agent_flow()
+
+        mock_add_configs.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_personalities(self):
+        with patch("pillywiggins.onboard.discover_personalities", return_value=[]):
+            from pillywiggins.onboard import _add_agent_flow
+
+            await _add_agent_flow()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.validate_telegram_token", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_cancel_at_personality(self, mock_q, mock_list_models, mock_validate):
+        mock_q.select.return_value.ask_async = AsyncMock(return_value=None)
+        with patch("pillywiggins.onboard.discover_personalities") as mock_disc:
+            mock_disc.return_value = [
+                {
+                    "name": "Puck",
+                    "description": "mischievous",
+                    "filename": "puck.yaml",
+                    "stem": "puck",
+                    "channel": "telegram",
+                    "bot_chat_limit": 3,
+                },
+            ]
+            from pillywiggins.onboard import _add_agent_flow
+
+            await _add_agent_flow()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.validate_telegram_token", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_cancel_at_channel(self, mock_q, mock_list_models, mock_validate):
+        responses = iter(["Puck — mischievous", None])
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(responses))
+            )
+        )
+        mock_q.text = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(ask_async=AsyncMock(return_value="x"))
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(ask_async=AsyncMock(return_value=True))
+        )
+        mock_q.Choice = MagicMock
+        with patch("pillywiggins.onboard.discover_personalities") as mock_disc:
+            mock_disc.return_value = [
+                {
+                    "name": "Puck",
+                    "description": "mischievous",
+                    "filename": "puck.yaml",
+                    "stem": "puck",
+                    "channel": "telegram",
+                    "bot_chat_limit": 3,
+                },
+            ]
+            from pillywiggins.onboard import _add_agent_flow
+
+            await _add_agent_flow()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.validate_telegram_token", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    @patch("pillywiggins.onboard.agent_ids_in_use", return_value={"puck"})
+    @patch("pillywiggins.onboard.remove_agent_from_configs")
+    async def test_overwrite_existing_agent(
+        self, mock_remove, mock_ids, mock_q, mock_list_models, mock_validate
+    ):
+        mock_validate.return_value = (True, "testbot")
+        mock_list_models.return_value = []
+
+        select_responses = iter(["Puck — mischievous", "telegram", "ollama"])
+        text_responses = iter(
+            [
+                "puck",
+                "123456:ABC-DEF1234",
+                "http://host.docker.internal:11434/v1",
+                "qwen3.5:8b",
+                "all",
+                "3",
+            ]
+        )
+        confirm_responses = iter([True, True, False])
+
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(select_responses))
+            )
+        )
+        mock_q.text = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(text_responses))
+            )
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(confirm_responses))
+            )
+        )
+        mock_q.Choice = MagicMock
+
+        with (
+            patch("pillywiggins.onboard.discover_personalities") as mock_disc,
+            patch("pillywiggins.onboard.add_agent_to_configs"),
+            patch("pillywiggins.onboard.get_first_agent_llm_config", return_value=None),
+            patch(
+                "pillywiggins.onboard.get_default_llm_config",
+                return_value={
+                    k: "" for k in ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "MODEL_NAME")
+                },
+            ),
+            patch("pillywiggins.onboard.load_existing_agents", return_value=[]),
+        ):
+            mock_disc.return_value = [
+                {
+                    "name": "Puck",
+                    "description": "mischievous",
+                    "filename": "puck.yaml",
+                    "stem": "puck",
+                    "channel": "telegram",
+                    "bot_chat_limit": 3,
+                },
+            ]
+            from pillywiggins.onboard import _add_agent_flow
+
+            await _add_agent_flow()
+            mock_remove.assert_called_once_with("puck")
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.add_agent_to_configs")
+    @patch("pillywiggins.onboard.validate_telegram_token", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_invalid_token_continue(
+        self, mock_q, mock_list_models, mock_validate, mock_add_configs
+    ):
+        mock_validate.return_value = (False, "Invalid token")
+        mock_list_models.return_value = []
+
+        select_responses = iter(["Puck — mischievous", "telegram", "ollama"])
+        text_responses = iter(
+            [
+                "puck",
+                "badtoken1234567890",
+                "http://host.docker.internal:11434/v1",
+                "qwen3.5:8b",
+                "all",
+                "3",
+            ]
+        )
+        confirm_responses = iter([True, True, False])
+
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(select_responses))
+            )
+        )
+        mock_q.text = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(text_responses))
+            )
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(confirm_responses))
+            )
+        )
+        mock_q.Choice = MagicMock
+
+        with (
+            patch("pillywiggins.onboard.discover_personalities") as mock_disc,
+            patch("pillywiggins.onboard.agent_ids_in_use", return_value=set()),
+            patch("pillywiggins.onboard.get_first_agent_llm_config", return_value=None),
+            patch(
+                "pillywiggins.onboard.get_default_llm_config",
+                return_value={
+                    k: "" for k in ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "MODEL_NAME")
+                },
+            ),
+            patch("pillywiggins.onboard.load_existing_agents", return_value=[]),
+        ):
+            mock_disc.return_value = [
+                {
+                    "name": "Puck",
+                    "description": "mischievous",
+                    "filename": "puck.yaml",
+                    "stem": "puck",
+                    "channel": "telegram",
+                    "bot_chat_limit": 3,
+                },
+            ]
+            from pillywiggins.onboard import _add_agent_flow
+
+            await _add_agent_flow()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.add_agent_to_configs")
+    @patch("pillywiggins.onboard.validate_telegram_token", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_with_models_available(
+        self, mock_q, mock_list_models, mock_validate, mock_add_configs
+    ):
+        from pillywiggins.adapters.models import ModelInfo
+
+        mock_validate.return_value = (True, "testbot")
+        mock_list_models.return_value = [ModelInfo(id="qwen3.5:8b"), ModelInfo(id="llama3:8b")]
+
+        select_responses = iter(["Puck — mischievous", "telegram", "ollama", "qwen3.5:8b"])
+        text_responses = iter(
+            ["puck", "123456:ABC-DEF1234", "http://host.docker.internal:11434/v1", "all", "3"]
+        )
+        confirm_responses = iter([True, False])
+
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(select_responses))
+            )
+        )
+        mock_q.text = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(text_responses))
+            )
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(confirm_responses))
+            )
+        )
+        mock_q.Choice = MagicMock
+
+        with (
+            patch("pillywiggins.onboard.discover_personalities") as mock_disc,
+            patch("pillywiggins.onboard.agent_ids_in_use", return_value=set()),
+            patch("pillywiggins.onboard.get_first_agent_llm_config", return_value=None),
+            patch(
+                "pillywiggins.onboard.get_default_llm_config",
+                return_value={
+                    k: "" for k in ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "MODEL_NAME")
+                },
+            ),
+            patch("pillywiggins.onboard.load_existing_agents", return_value=[]),
+        ):
+            mock_disc.return_value = [
+                {
+                    "name": "Puck",
+                    "description": "mischievous",
+                    "filename": "puck.yaml",
+                    "stem": "puck",
+                    "channel": "telegram",
+                    "bot_chat_limit": 3,
+                },
+            ]
+            from pillywiggins.onboard import _add_agent_flow
+
+            await _add_agent_flow()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.validate_telegram_token", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_openai_provider_prompts_api_key(self, mock_q, mock_list_models, mock_validate):
+        mock_validate.return_value = (True, "testbot")
+        mock_list_models.return_value = []
+
+        select_responses = iter(["Puck — mischievous", "telegram", "openai"])
+        text_responses = iter(
+            [
+                "puck",
+                "123456:ABC-DEF1234",
+                "https://api.openai.com/v1",
+                "sk-testkey",
+                "gpt-4o",
+                "all",
+                "3",
+            ]
+        )
+        confirm_responses = iter([True, False])
+
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(select_responses))
+            )
+        )
+        mock_q.text = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(text_responses))
+            )
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(confirm_responses))
+            )
+        )
+        mock_q.Choice = MagicMock
+
+        with (
+            patch("pillywiggins.onboard.add_agent_to_configs"),
+            patch("pillywiggins.onboard.discover_personalities") as mock_disc,
+            patch("pillywiggins.onboard.agent_ids_in_use", return_value=set()),
+            patch("pillywiggins.onboard.get_first_agent_llm_config", return_value=None),
+            patch(
+                "pillywiggins.onboard.get_default_llm_config",
+                return_value={
+                    k: "" for k in ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "MODEL_NAME")
+                },
+            ),
+            patch("pillywiggins.onboard.load_existing_agents", return_value=[]),
+        ):
+            mock_disc.return_value = [
+                {
+                    "name": "Puck",
+                    "description": "mischievous",
+                    "filename": "puck.yaml",
+                    "stem": "puck",
+                    "channel": "telegram",
+                    "bot_chat_limit": 3,
+                },
+            ]
+            from pillywiggins.onboard import _add_agent_flow
+
+            await _add_agent_flow()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.validate_telegram_token", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_invalid_bot_chat_limit_defaults_to_3(
+        self, mock_q, mock_list_models, mock_validate
+    ):
+        mock_validate.return_value = (True, "testbot")
+        mock_list_models.return_value = []
+
+        select_responses = iter(["Puck — mischievous", "telegram", "ollama"])
+        text_responses = iter(
+            [
+                "puck",
+                "123456:ABC-DEF1234",
+                "http://host.docker.internal:11434/v1",
+                "qwen3.5:8b",
+                "all",
+                "notanumber",
+            ]
+        )
+        confirm_responses = iter([True, False])
+
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(select_responses))
+            )
+        )
+        mock_q.text = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(text_responses))
+            )
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(confirm_responses))
+            )
+        )
+        mock_q.Choice = MagicMock
+
+        with (
+            patch("pillywiggins.onboard.add_agent_to_configs") as mock_add,
+            patch("pillywiggins.onboard.discover_personalities") as mock_disc,
+            patch("pillywiggins.onboard.agent_ids_in_use", return_value=set()),
+            patch("pillywiggins.onboard.get_first_agent_llm_config", return_value=None),
+            patch(
+                "pillywiggins.onboard.get_default_llm_config",
+                return_value={
+                    k: "" for k in ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "MODEL_NAME")
+                },
+            ),
+            patch("pillywiggins.onboard.load_existing_agents", return_value=[]),
+        ):
+            mock_disc.return_value = [
+                {
+                    "name": "Puck",
+                    "description": "mischievous",
+                    "filename": "puck.yaml",
+                    "stem": "puck",
+                    "channel": "telegram",
+                    "bot_chat_limit": 3,
+                },
+            ]
+            from pillywiggins.onboard import _add_agent_flow
+
+            await _add_agent_flow()
+            call_args = mock_add.call_args
+            assert call_args.kwargs["bot_chat_limit"] == 3
+
+
+class TestReconfigureAgentFlow:
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_reconfigure_flow(self, mock_q, mock_list_models):
+        mock_list_models.return_value = []
+
+        select_responses = iter(["puck", "ollama"])
+        text_responses = iter(["all", "", "http://localhost:11434/v1", "qwen3.5:8b"])
+        confirm_responses = iter([True, False])
+
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(select_responses))
+            )
+        )
+        mock_q.text = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(text_responses))
+            )
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(confirm_responses))
+            )
+        )
+
+        agents = [
+            {
+                "id": "puck",
+                "personality": "/config/puck.yaml",
+                "allowed_user_ids": "all",
+                "environment": {
+                    "TELEGRAM_BOT_TOKEN": "${PUCK_TELEGRAM_TOKEN}",
+                    "LLM_PROVIDER": "ollama",
+                    "LLM_BASE_URL": "http://localhost:11434/v1",
+                    "MODEL_NAME": "qwen3.5:8b",
+                },
+            }
+        ]
+
+        with (
+            patch("pillywiggins.onboard.load_existing_agents", return_value=agents),
+            patch("pillywiggins.onboard.load_yaml", return_value={"agents": agents}),
+            patch("pillywiggins.onboard.save_yaml"),
+            patch(
+                "pillywiggins.onboard.get_default_llm_config",
+                return_value={
+                    k: "" for k in ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "MODEL_NAME")
+                },
+            ),
+            patch("pillywiggins.onboard.DOCKER_COMPOSE", Path("/tmp/nonexistent-dc.yaml")),
+        ):
+            from pillywiggins.onboard import _reconfigure_agent_flow
+
+            await _reconfigure_agent_flow()
+
+    @pytest.mark.asyncio
+    async def test_no_agents(self):
+        with patch("pillywiggins.onboard.load_existing_agents", return_value=[]):
+            from pillywiggins.onboard import _reconfigure_agent_flow
+
+            await _reconfigure_agent_flow()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_cancel_at_agent_select(self, mock_q, mock_list_models):
+        mock_q.select.return_value.ask_async = AsyncMock(return_value=None)
+        with patch("pillywiggins.onboard.load_existing_agents", return_value=[{"id": "puck"}]):
+            from pillywiggins.onboard import _reconfigure_agent_flow
+
+            await _reconfigure_agent_flow()
+
+
+class TestRemoveAgentFlow:
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.remove_agent_from_configs")
+    @patch("pillywiggins.onboard.questionary")
+    async def test_remove_confirmed(self, mock_q, mock_remove):
+        confirm_responses = iter([True])
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(ask_async=AsyncMock(return_value="puck"))
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(confirm_responses))
+            )
+        )
+
+        with (
+            patch("pillywiggins.onboard.load_existing_agents", return_value=[{"id": "puck"}]),
+            patch("pillywiggins.onboard.subprocess") as mock_sub,
+        ):
+            mock_sub.run.return_value = MagicMock(returncode=0)
+            from pillywiggins.onboard import _remove_agent_flow
+
+            await _remove_agent_flow()
+            mock_remove.assert_called_once_with("puck")
+
+    @pytest.mark.asyncio
+    async def test_no_agents(self):
+        with patch("pillywiggins.onboard.load_existing_agents", return_value=[]):
+            from pillywiggins.onboard import _remove_agent_flow
+
+            await _remove_agent_flow()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.questionary")
+    async def test_cancel_at_select(self, mock_q):
+        mock_q.select.return_value.ask_async = AsyncMock(return_value=None)
+        with patch("pillywiggins.onboard.load_existing_agents", return_value=[{"id": "puck"}]):
+            from pillywiggins.onboard import _remove_agent_flow
+
+            await _remove_agent_flow()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.remove_agent_from_configs")
+    @patch("pillywiggins.onboard.questionary")
+    async def test_cancel_at_confirm(self, mock_q, mock_remove):
+        select_responses = iter(["puck"])
+        confirm_responses = iter([False])
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(select_responses))
+            )
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(confirm_responses))
+            )
+        )
+
+        with patch("pillywiggins.onboard.load_existing_agents", return_value=[{"id": "puck"}]):
+            from pillywiggins.onboard import _remove_agent_flow
+
+            await _remove_agent_flow()
+            mock_remove.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.remove_agent_from_configs")
+    @patch("pillywiggins.onboard.questionary")
+    async def test_docker_not_found(self, mock_q, mock_remove):
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(ask_async=AsyncMock(return_value="puck"))
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(ask_async=AsyncMock(return_value=True))
+        )
+
+        with (
+            patch("pillywiggins.onboard.load_existing_agents", return_value=[{"id": "puck"}]),
+            patch("pillywiggins.onboard.subprocess") as mock_sub,
+        ):
+            mock_sub.run.side_effect = FileNotFoundError("docker not found")
+            from pillywiggins.onboard import _remove_agent_flow
+
+            await _remove_agent_flow()
+            mock_remove.assert_called_once()
+
+
+class TestStartRestartFlow:
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.questionary")
+    async def test_no_agents(self, mock_q):
+        with patch("pillywiggins.onboard.load_existing_agents", return_value=[]):
+            from pillywiggins.onboard import _start_restart_flow
+
+            await _start_restart_flow()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.questionary")
+    async def test_start_all_agents(self, mock_q):
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(ask_async=AsyncMock(return_value="All agents"))
+        )
+
+        with (
+            patch("pillywiggins.onboard.load_existing_agents", return_value=[{"id": "puck"}]),
+            patch("pillywiggins.onboard.subprocess") as mock_sub,
+        ):
+            mock_sub.run.return_value = MagicMock(returncode=0)
+            from pillywiggins.onboard import _start_restart_flow
+
+            await _start_restart_flow()
+            mock_sub.run.assert_called()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.questionary")
+    async def test_start_specific_agent(self, mock_q):
+        select_responses = iter(["Select specific agent", "puck"])
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(select_responses))
+            )
+        )
+
+        with (
+            patch("pillywiggins.onboard.load_existing_agents", return_value=[{"id": "puck"}]),
+            patch("pillywiggins.onboard.subprocess") as mock_sub,
+        ):
+            mock_sub.run.return_value = MagicMock(returncode=0)
+            from pillywiggins.onboard import _start_restart_flow
+
+            await _start_restart_flow()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.questionary")
+    async def test_cancel_at_action(self, mock_q):
+        mock_q.select.return_value.ask_async = AsyncMock(return_value=None)
+        with patch("pillywiggins.onboard.load_existing_agents", return_value=[{"id": "puck"}]):
+            from pillywiggins.onboard import _start_restart_flow
+
+            await _start_restart_flow()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.questionary")
+    async def test_docker_not_found(self, mock_q):
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(ask_async=AsyncMock(return_value="All agents"))
+        )
+
+        with (
+            patch("pillywiggins.onboard.load_existing_agents", return_value=[{"id": "puck"}]),
+            patch("pillywiggins.onboard.subprocess") as mock_sub,
+        ):
+            mock_sub.run.side_effect = FileNotFoundError("docker not found")
+            from pillywiggins.onboard import _start_restart_flow
+
+            await _start_restart_flow()
+
+
+class TestOnboard:
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.questionary")
+    async def test_exit(self, mock_q):
+        mock_q.select.return_value.ask_async = AsyncMock(return_value="\U0001f44b Exit")
+        with patch("pillywiggins.onboard.ensure_config_files"):
+            from pillywiggins.onboard import onboard
+
+            await onboard()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard._add_agent_flow", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_add_agent_menu(self, mock_q, mock_add):
+        responses = iter(["✨ Add agent", "\U0001f44b Exit"])
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(responses))
+            )
+        )
+        with patch("pillywiggins.onboard.ensure_config_files"):
+            from pillywiggins.onboard import onboard
+
+            await onboard()
+            mock_add.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard._reconfigure_agent_flow", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_reconfigure_menu(self, mock_q, mock_reconfig):
+        responses = iter(["🔧 Reconfigure agent", "\U0001f44b Exit"])
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(responses))
+            )
+        )
+        with patch("pillywiggins.onboard.ensure_config_files"):
+            from pillywiggins.onboard import onboard
+
+            await onboard()
+            mock_reconfig.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard._remove_agent_flow", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_remove_menu(self, mock_q, mock_remove):
+        responses = iter(["🗑️  Remove agent", "\U0001f44b Exit"])
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(responses))
+            )
+        )
+        with patch("pillywiggins.onboard.ensure_config_files"):
+            from pillywiggins.onboard import onboard
+
+            await onboard()
+            mock_remove.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard._start_restart_flow", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_start_restart_menu(self, mock_q, mock_start):
+        responses = iter(["🚀 Start/restart agents", "\U0001f44b Exit"])
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(responses))
+            )
+        )
+        with patch("pillywiggins.onboard.ensure_config_files"):
+            from pillywiggins.onboard import onboard
+
+            await onboard()
+            mock_start.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.questionary")
+    async def test_cancel_returns_none_exits(self, mock_q):
+        mock_q.select.return_value.ask_async = AsyncMock(return_value=None)
+        with patch("pillywiggins.onboard.ensure_config_files"):
+            from pillywiggins.onboard import onboard
+
+            await onboard()
+
+
+class TestAddAgentFlowCancellations:
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.validate_telegram_token", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_cancel_at_agent_id(self, mock_q, mock_list_models, mock_validate):
+        from pillywiggins.onboard import _add_agent_flow
+
+        select_responses = iter(["Puck — mischievous", "telegram"])
+        text_iter = iter(["puck", None])
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(select_responses))
+            )
+        )
+        mock_q.text = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(text_iter))
+            )
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(ask_async=AsyncMock(return_value=True))
+        )
+        mock_q.Choice = MagicMock
+
+        with (
+            patch("pillywiggins.onboard.discover_personalities") as mock_disc,
+            patch("pillywiggins.onboard.agent_ids_in_use", return_value=set()),
+        ):
+            mock_disc.return_value = [
+                {
+                    "name": "Puck",
+                    "description": "mischievous",
+                    "filename": "puck.yaml",
+                    "stem": "puck",
+                    "channel": "telegram",
+                    "bot_chat_limit": 3,
+                }
+            ]
+            await _add_agent_flow()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.validate_telegram_token", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    @patch("pillywiggins.onboard.agent_ids_in_use", return_value={"puck"})
+    async def test_overwrite_declined(self, mock_ids, mock_q, mock_list_models, mock_validate):
+        from pillywiggins.onboard import _add_agent_flow
+
+        select_responses = iter(["Puck — mischievous", "telegram"])
+        text_iter = iter(["puck"])
+        confirm_iter = iter([False])
+
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(select_responses))
+            )
+        )
+        mock_q.text = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(text_iter))
+            )
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(confirm_iter))
+            )
+        )
+        mock_q.Choice = MagicMock
+
+        with patch("pillywiggins.onboard.discover_personalities") as mock_disc:
+            mock_disc.return_value = [
+                {
+                    "name": "Puck",
+                    "description": "mischievous",
+                    "filename": "puck.yaml",
+                    "stem": "puck",
+                    "channel": "telegram",
+                    "bot_chat_limit": 3,
+                }
+            ]
+            await _add_agent_flow()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.validate_telegram_token", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_invalid_token_declined(self, mock_q, mock_list_models, mock_validate):
+        from pillywiggins.onboard import _add_agent_flow
+
+        mock_validate.return_value = (False, "Bad token")
+        select_responses = iter(["Puck — mischievous", "telegram"])
+        text_iter = iter(["puck", "badtoken1234567890"])
+        confirm_iter = iter([False])
+
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(select_responses))
+            )
+        )
+        mock_q.text = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(text_iter))
+            )
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(confirm_iter))
+            )
+        )
+        mock_q.Choice = MagicMock
+
+        with (
+            patch("pillywiggins.onboard.discover_personalities") as mock_disc,
+            patch("pillywiggins.onboard.agent_ids_in_use", return_value=set()),
+        ):
+            mock_disc.return_value = [
+                {
+                    "name": "Puck",
+                    "description": "mischievous",
+                    "filename": "puck.yaml",
+                    "stem": "puck",
+                    "channel": "telegram",
+                    "bot_chat_limit": 3,
+                }
+            ]
+            await _add_agent_flow()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.add_agent_to_configs")
+    @patch("pillywiggins.onboard.validate_telegram_token", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_docker_up_confirmed(
+        self, mock_q, mock_list_models, mock_validate, mock_add_configs
+    ):
+        from pillywiggins.onboard import _add_agent_flow
+
+        mock_validate.return_value = (True, "testbot")
+        mock_list_models.return_value = []
+
+        select_responses = iter(["Puck — mischievous", "telegram", "ollama"])
+        text_iter = iter(
+            [
+                "puck",
+                "123456:ABC-DEF1234",
+                "http://host.docker.internal:11434/v1",
+                "qwen3.5:8b",
+                "all",
+                "3",
+            ]
+        )
+        confirm_iter = iter([True, True])
+
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(select_responses))
+            )
+        )
+        mock_q.text = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(text_iter))
+            )
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(confirm_iter))
+            )
+        )
+        mock_q.Choice = MagicMock
+
+        with (
+            patch("pillywiggins.onboard.discover_personalities") as mock_disc,
+            patch("pillywiggins.onboard.agent_ids_in_use", return_value=set()),
+            patch("pillywiggins.onboard.get_first_agent_llm_config", return_value=None),
+            patch(
+                "pillywiggins.onboard.get_default_llm_config",
+                return_value={
+                    k: "" for k in ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "MODEL_NAME")
+                },
+            ),
+            patch("pillywiggins.onboard.load_existing_agents", return_value=[]),
+            patch("pillywiggins.onboard.subprocess") as mock_sub,
+        ):
+            mock_disc.return_value = [
+                {
+                    "name": "Puck",
+                    "description": "mischievous",
+                    "filename": "puck.yaml",
+                    "stem": "puck",
+                    "channel": "telegram",
+                    "bot_chat_limit": 3,
+                }
+            ]
+            mock_sub.run.return_value = MagicMock(returncode=0)
+            await _add_agent_flow()
+            mock_sub.run.assert_called()
+
+
+class TestAddAgentToDockerComposeEdgeCases:
+    def test_creates_services_key_if_missing(self, tmp_path):
+        compose_path = tmp_path / "docker-compose.yaml"
+        compose_path.write_text(yaml.dump({"volumes": {}}))
+        with patch("pillywiggins.onboard.DOCKER_COMPOSE", compose_path):
+            add_agent_to_docker_compose(
+                agent_id="puck",
+                personality_filename="puck.yaml",
+                token_env="PUCK_TELEGRAM_TOKEN",
+            )
+        data = yaml.safe_load(compose_path.read_text())
+        assert "puck" in data["services"]
+
+    def test_creates_volumes_key_if_missing(self, tmp_path):
+        compose_path = tmp_path / "docker-compose.yaml"
+        compose_path.write_text(yaml.dump({"services": {}}))
+        with patch("pillywiggins.onboard.DOCKER_COMPOSE", compose_path):
+            add_agent_to_docker_compose(
+                agent_id="puck",
+                personality_filename="puck.yaml",
+                token_env="PUCK_TELEGRAM_TOKEN",
+            )
+        data = yaml.safe_load(compose_path.read_text())
+        assert "pgdata" in data["volumes"]
+
+    def test_noop_if_no_services_key(self, tmp_path):
+        compose_path = tmp_path / "docker-compose.yaml"
+        compose_path.write_text(yaml.dump({"volumes": {}}))
+        with patch("pillywiggins.onboard.DOCKER_COMPOSE", compose_path):
+            remove_agent_from_docker_compose("puck")

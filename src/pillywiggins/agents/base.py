@@ -225,6 +225,7 @@ class PillywigginAgent:
             self._provider,
             self._base_url,
             self._api_key,
+            skill_registry=self._skill_registry,
         )
         logger.info("Switched model to %s", new_model)
 
@@ -239,13 +240,24 @@ class PillywigginAgent:
         else:
             self._message_history = history
 
-    def clear_history(self, conversation_key: str | None = None) -> None:
+    async def clear_history(self, conversation_key: str | None = None) -> None:
         if conversation_key and conversation_key in self._conversation_histories:
             del self._conversation_histories[conversation_key]
             logger.info("Cleared conversation history for key %s", conversation_key)
         else:
             self._message_history = []
             logger.info("Cleared conversation history")
+
+        # Persist the cleared state so restart doesn't reload stale data
+        empty_messages: list[ModelMessage] = []
+        if conversation_key:
+            self._conversation_histories[conversation_key] = empty_messages
+        if self._cache is not None:
+            await self._cache.save(
+                self.agent_id, empty_messages, conversation_key=conversation_key or ""
+            )
+        if self._store is not None and conversation_key is not None:
+            await self._store.save(conversation_key, empty_messages)
 
     def get_status(self) -> dict:
         total_chars = sum(

@@ -71,7 +71,7 @@ def mock_agent(personality):
     agent._brain = MagicMock()
     agent.model_name = "qwen3.5:8b"
     agent.switch_model = MagicMock()
-    agent.clear_history = MagicMock()
+    agent.clear_history = AsyncMock()
     agent.handle_message = AsyncMock(return_value="response")
     return agent
 

@@ -112,10 +112,12 @@ async def _run(adapter, agent, settings):
         logger.exception("Failed to connect conversation store, continuing without it")
         agent._store = None
     await agent.load_history()
+    await agent.start()
     try:
         await adapter.connect()
         await adapter.listen()
     finally:
+        await agent.shutdown()
         if agent._private_memory is not None:
             await agent._private_memory.close()
         if agent._store is not None:

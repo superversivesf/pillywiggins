@@ -153,7 +153,7 @@ class TelegramAdapter(BaseAdapter):
         chat_id = update.message.chat_id
         is_group = update.message.chat.type in ("group", "supergroup")
         conversation_key = str(update.message.from_user.id) if is_group else str(chat_id)
-        self.agent.clear_history(conversation_key=conversation_key)
+        await self.agent.clear_history(conversation_key=conversation_key)
         await update.message.reply_text("Conversation history cleared.")
 
     async def _cmd_compact(self, update: Update, context) -> None:

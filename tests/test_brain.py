@@ -1,4 +1,6 @@
+import json
 import os
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,7 +13,9 @@ from pillywiggins.agents.brain import (
     query_council_memory,
     share_to_council,
     _make_skill_tool,
+    _should_sandbox,
     build_skill,
+    test_skill_code as run_skill_test,
     review_skill_code,
     deploy_skill_code,
     schedule_task,
@@ -46,7 +50,12 @@ def _make_ctx(
 
 
 def _make_skill(
-    name="test_skill", description="A test skill", run_func=None, meta=None, permissions=None
+    name="test_skill",
+    description="A test skill",
+    run_func=None,
+    meta=None,
+    permissions=None,
+    file_path=None,
 ):
     if run_func is None:
         run_func = AsyncMock(return_value="ok")
@@ -55,7 +64,12 @@ def _make_skill(
     if permissions is None:
         permissions = {"network": False, "subprocess": False, "file_write": False}
     return Skill(
-        name=name, description=description, run_func=run_func, meta=meta, permissions=permissions
+        name=name,
+        description=description,
+        run_func=run_func,
+        meta=meta,
+        permissions=permissions,
+        file_path=file_path,
     )
 
 
@@ -589,3 +603,476 @@ class TestShareToCouncil:
         ctx = _make_ctx(council_memory=council, nats_bus=nats)
         result = await share_to_council(ctx, "still works")
         assert result == "Shared to council: still works"
+
+
+class TestShouldSandbox:
+    @patch("pillywiggins.config.Settings")
+    def test_returns_true_when_sandbox_all(self, mock_settings_cls):
+        mock_settings = MagicMock()
+        mock_settings.should_sandbox_all.return_value = True
+        mock_settings_cls.return_value = mock_settings
+        assert _should_sandbox("any_skill") is True
+
+    @patch("pillywiggins.config.Settings")
+    def test_returns_true_when_skill_in_sandbox_list(self, mock_settings_cls):
+        mock_settings = MagicMock()
+        mock_settings.should_sandbox_all.return_value = False
+        mock_settings.get_sandbox_skill_names.return_value = {"dangerous_skill", "web_search"}
+        mock_settings_cls.return_value = mock_settings
+        assert _should_sandbox("web_search") is True
+
+    @patch("pillywiggins.config.Settings")
+    def test_returns_false_when_skill_not_in_list(self, mock_settings_cls):
+        mock_settings = MagicMock()
+        mock_settings.should_sandbox_all.return_value = False
+        mock_settings.get_sandbox_skill_names.return_value = {"dangerous_skill"}
+        mock_settings_cls.return_value = mock_settings
+        assert _should_sandbox("safe_skill") is False
+
+
+class TestRunSandboxedSkill:
+    @pytest.mark.asyncio
+    async def test_skill_no_file_path_returns_error(self):
+        from pillywiggins.agents.brain import _run_sandboxed_skill
+
+        skill = _make_skill(name="nofile")
+        result = await _run_sandboxed_skill(skill, {})
+        assert "no source file" in result
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.skills.sandbox.run_sandboxed", new_callable=AsyncMock)
+    async def test_sandbox_failure_returns_error(self, mock_run_sandboxed):
+        from pillywiggins.agents.brain import _run_sandboxed_skill
+
+        mock_run_sandboxed.return_value = MagicMock(
+            success=False, error="timeout exceeded", result=None
+        )
+        skill = _make_skill(name="fail_skill", file_path=Path("/some/path/fail_skill.py"))
+        with patch.object(Path, "read_text", return_value="code"):
+            result = await _run_sandboxed_skill(skill, {})
+        assert "Sandbox error" in result
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.skills.sandbox.run_sandboxed", new_callable=AsyncMock)
+    async def test_sandbox_success_with_string_result(self, mock_run_sandboxed):
+        from pillywiggins.agents.brain import _run_sandboxed_skill
+
+        mock_run_sandboxed.return_value = MagicMock(success=True, error=None, result="hello world")
+        skill = _make_skill(name="str_skill", file_path=Path("/some/path/str_skill.py"))
+        with patch.object(Path, "read_text", return_value="code"):
+            result = await _run_sandboxed_skill(skill, {})
+        assert result == "hello world"
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.skills.sandbox.run_sandboxed", new_callable=AsyncMock)
+    async def test_sandbox_success_with_dict_result(self, mock_run_sandboxed):
+        from pillywiggins.agents.brain import _run_sandboxed_skill
+
+        mock_run_sandboxed.return_value = MagicMock(
+            success=True, error=None, result={"key": "value"}
+        )
+        skill = _make_skill(name="dict_skill", file_path=Path("/some/path/dict_skill.py"))
+        with patch.object(Path, "read_text", return_value="code"):
+            result = await _run_sandboxed_skill(skill, {})
+        parsed = json.loads(result)
+        assert parsed == {"key": "value"}
+
+
+class TestMakeSkillTool:
+    def test_generates_tool_with_name_and_doc(self):
+        skill = _make_skill(
+            name="weather",
+            description="Get the weather for a city",
+            meta={"parameters": {"city": {"type": "string", "description": "City name"}}},
+        )
+        tool_fn = _make_skill_tool(skill)
+        assert tool_fn.__name__ == "weather"
+        assert "weather" in tool_fn.__doc__
+        assert "city" in tool_fn.__doc__
+
+    def test_generates_tool_with_permissions_in_doc(self):
+        skill = _make_skill(
+            name="net_skill",
+            description="Network skill",
+            permissions={"network": True, "subprocess": False, "file_write": False},
+        )
+        tool_fn = _make_skill_tool(skill)
+        assert "network" in tool_fn.__doc__
+
+    def test_generates_tool_with_default_parameter_values(self):
+        skill = _make_skill(
+            name="param_skill",
+            description="Skill with defaults",
+            meta={
+                "parameters": {
+                    "count": {"type": "int", "description": "Number", "default": 5},
+                },
+            },
+        )
+        tool_fn = _make_skill_tool(skill)
+        assert "default: 5" in tool_fn.__doc__
+
+    @pytest.mark.asyncio
+    async def test_skill_tool_calls_execute(self):
+        run_func = AsyncMock(return_value="executed")
+        skill = _make_skill(name="test_skill", description="test", run_func=run_func)
+        tool_fn = _make_skill_tool(skill)
+        ctx = _make_ctx()
+        with patch("pillywiggins.agents.brain._should_sandbox", return_value=False):
+            result = await tool_fn(ctx, query="hello")
+        run_func.assert_awaited_once_with(query="hello")
+        assert result == "executed"
+
+    @pytest.mark.asyncio
+    async def test_skill_tool_returns_json_for_non_string(self):
+        run_func = AsyncMock(return_value={"key": "value"})
+        skill = _make_skill(name="json_skill", description="json test", run_func=run_func)
+        tool_fn = _make_skill_tool(skill)
+        ctx = _make_ctx()
+        with patch("pillywiggins.agents.brain._should_sandbox", return_value=False):
+            result = await tool_fn(ctx)
+        import json
+
+        parsed = json.loads(result)
+        assert parsed == {"key": "value"}
+
+    @pytest.mark.asyncio
+    async def test_skill_tool_type_error_returns_available_params(self):
+        run_func = AsyncMock(side_effect=TypeError("unexpected keyword argument 'bad_param'"))
+        skill = _make_skill(
+            name="strict_skill",
+            description="strict",
+            run_func=run_func,
+            meta={"parameters": {"valid_param": {"type": "string"}}},
+        )
+        tool_fn = _make_skill_tool(skill)
+        ctx = _make_ctx()
+        with patch("pillywiggins.agents.brain._should_sandbox", return_value=False):
+            result = await tool_fn(ctx, bad_param="oops")
+        assert "Error" in result
+        assert "valid_param" in result
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.agents.brain._should_sandbox", return_value=True)
+    @patch("pillywiggins.agents.brain._run_sandboxed_skill", new_callable=AsyncMock)
+    async def test_skill_tool_sandbox_path(self, mock_run_sandboxed, mock_should_sandbox):
+        skill = _make_skill(name="dangerous", description="dangerous skill")
+        tool_fn = _make_skill_tool(skill)
+        ctx = _make_ctx()
+        mock_run_sandboxed.return_value = "sandboxed result"
+        result = await tool_fn(ctx)
+        mock_run_sandboxed.assert_awaited_once_with(skill, {})
+        assert result == "sandboxed result"
+
+
+class TestBuildSkill:
+    @pytest.mark.asyncio
+    async def test_build_skill_success(self):
+        code = 'SKILL_META = {"name": "hello", "description": "says hi"}\nasync def run(**kwargs): return "hello"'
+        ctx = _make_ctx()
+        result = await build_skill(ctx, name="hello", code=code)
+        assert "Draft created" in result
+        assert "hello" in result
+
+    @pytest.mark.asyncio
+    async def test_build_skill_validation_failure(self):
+        code = "print('no meta or run')"
+        ctx = _make_ctx()
+        result = await build_skill(ctx, name="bad_skill", code=code)
+        assert "validation failed" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_build_skill_with_permissions(self):
+        code = (
+            'SKILL_META = {"name": "net_skill", "description": "network skill", '
+            '"permissions": {"network": True, "subprocess": False, "file_write": False}}\n'
+            "async def run(**kwargs): return 'net'"
+        )
+        ctx = _make_ctx()
+        result = await build_skill(ctx, name="net_skill", code=code)
+        assert "Permissions requested: network" in result
+
+    @pytest.mark.asyncio
+    async def test_build_skill_no_permissions(self):
+        code = (
+            'SKILL_META = {"name": "safe_skill", "description": "safe"}\n'
+            "async def run(**kwargs): return 'safe'"
+        )
+        ctx = _make_ctx()
+        result = await build_skill(ctx, name="safe_skill", code=code)
+        assert "Permissions: none" in result
+
+
+class TestTestSkillCode:
+    @pytest.mark.asyncio
+    async def test_invalid_json(self):
+        ctx = _make_ctx()
+        result = await run_skill_test(ctx, name="skill", code="pass", test_cases_json="not json")
+        assert "Invalid test_cases_json" in result
+
+    @pytest.mark.asyncio
+    async def test_not_array(self):
+        ctx = _make_ctx()
+        result = await run_skill_test(
+            ctx, name="skill", code="pass", test_cases_json='{"key": "val"}'
+        )
+        assert "must be a JSON array" in result
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.skills.builder.draft_skill")
+    async def test_code_validation_failure(self, mock_draft):
+        mock_draft.side_effect = ValueError("Code must contain a SKILL_META dict assignment")
+        ctx = _make_ctx()
+        result = await run_skill_test(ctx, name="skill", code="bad code", test_cases_json="[]")
+        assert "validation failed" in result.lower()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.skills.builder.test_skill", new_callable=AsyncMock)
+    @patch("pillywiggins.skills.builder.draft_skill")
+    async def test_successful_test_results(self, mock_draft, mock_test):
+        from pillywiggins.skills.builder import SkillDraft, DraftStatus
+
+        draft = SkillDraft(name="hello", code="code", meta={}, status=DraftStatus.TESTED)
+        mock_draft.return_value = draft
+        draft_with_results = SkillDraft(
+            name="hello", code="code", meta={}, status=DraftStatus.TESTED
+        )
+        draft_with_results.test_results = [
+            {
+                "args": {},
+                "expected": "hello",
+                "passed": True,
+                "actual": "hello",
+                "error": None,
+                "execution_time_ms": 10.0,
+            },
+            {
+                "args": {},
+                "expected": "world",
+                "passed": False,
+                "actual": "hello",
+                "error": None,
+                "execution_time_ms": 5.0,
+            },
+        ]
+        mock_test.return_value = draft_with_results
+        ctx = _make_ctx()
+        result = await run_skill_test(
+            ctx, name="hello", code="code", test_cases_json='[{"args": {}}]'
+        )
+        assert "1/2 passed" in result
+        assert "PASS" in result
+        assert "FAIL" in result
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.skills.builder.test_skill", new_callable=AsyncMock)
+    @patch("pillywiggins.skills.builder.draft_skill")
+    async def test_test_results_with_error_and_no_expected(self, mock_draft, mock_test):
+        from pillywiggins.skills.builder import SkillDraft, DraftStatus
+
+        draft = SkillDraft(name="fail", code="code", meta={}, status=DraftStatus.TESTED)
+        mock_draft.return_value = draft
+        draft_with_results = SkillDraft(
+            name="fail", code="code", meta={}, status=DraftStatus.TESTED
+        )
+        draft_with_results.test_results = [
+            {
+                "args": {},
+                "expected": None,
+                "passed": False,
+                "actual": None,
+                "error": "crashed",
+                "execution_time_ms": 1.0,
+            },
+        ]
+        mock_test.return_value = draft_with_results
+        ctx = _make_ctx()
+        result = await run_skill_test(
+            ctx, name="fail", code="code", test_cases_json='[{"args": {}}]'
+        )
+        assert "Error: crashed" in result
+
+
+class TestReviewSkillCode:
+    @pytest.mark.asyncio
+    async def test_invalid_json(self):
+        ctx = _make_ctx()
+        result = await review_skill_code(ctx, name="skill", code="pass", test_cases_json="bad json")
+        assert "Invalid test_cases_json" in result
+
+    @pytest.mark.asyncio
+    async def test_not_array(self):
+        ctx = _make_ctx()
+        result = await review_skill_code(ctx, name="skill", code="pass", test_cases_json='{"a": 1}')
+        assert "must be a JSON array" in result
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.skills.builder.draft_skill")
+    async def test_code_validation_failure(self, mock_draft):
+        mock_draft.side_effect = ValueError("Code must contain a SKILL_META dict assignment")
+        ctx = _make_ctx()
+        result = await review_skill_code(ctx, name="skill", code="bad", test_cases_json="[]")
+        assert "validation failed" in result.lower()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.skills.builder.review_skill")
+    @patch("pillywiggins.skills.builder.test_skill", new_callable=AsyncMock)
+    @patch("pillywiggins.skills.builder.draft_skill")
+    async def test_successful_review(self, mock_draft, mock_test, mock_review):
+        from pillywiggins.skills.builder import SkillDraft, DraftStatus
+
+        draft = SkillDraft(name="hello", code="code", meta={}, status=DraftStatus.TESTED)
+        mock_draft.return_value = draft
+        mock_test.return_value = draft
+        mock_review.return_value = "=== Skill Review: hello ===\nApproved!"
+        ctx = _make_ctx()
+        result = await review_skill_code(ctx, name="hello", code="code", test_cases_json="[]")
+        mock_review.assert_called_once_with(draft)
+
+
+class TestDeploySkillCode:
+    @pytest.mark.asyncio
+    async def test_invalid_json(self):
+        ctx = _make_ctx(skill_registry=MagicMock(spec=SkillRegistry))
+        result = await deploy_skill_code(
+            ctx, name="skill", code="pass", test_cases_json="bad", approved=True
+        )
+        assert "Invalid test_cases_json" in result
+
+    @pytest.mark.asyncio
+    async def test_not_array(self):
+        ctx = _make_ctx(skill_registry=MagicMock(spec=SkillRegistry))
+        result = await deploy_skill_code(
+            ctx, name="skill", code="pass", test_cases_json='{"a":1}', approved=True
+        )
+        assert "must be a JSON array" in result
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.skills.builder.draft_skill")
+    async def test_code_validation_failure(self, mock_draft):
+        mock_draft.side_effect = ValueError("Code must contain a SKILL_META dict assignment")
+        ctx = _make_ctx(skill_registry=MagicMock(spec=SkillRegistry))
+        result = await deploy_skill_code(
+            ctx, name="skill", code="bad", test_cases_json="[]", approved=True
+        )
+        assert "validation failed" in result.lower()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.config.Settings")
+    @patch("pillywiggins.skills.builder.deploy_skill")
+    @patch("pillywiggins.skills.builder.test_skill", new_callable=AsyncMock)
+    @patch("pillywiggins.skills.builder.draft_skill")
+    async def test_successful_deploy(self, mock_draft, mock_test, mock_deploy, mock_settings_cls):
+        from pillywiggins.skills.builder import SkillDraft, DraftStatus
+
+        draft = SkillDraft(name="hello", code="code", meta={}, status=DraftStatus.TESTED)
+        mock_draft.return_value = draft
+        mock_test.return_value = draft
+        mock_deploy.return_value = "Skill 'hello' deployed successfully."
+        mock_settings_cls.return_value = MagicMock(skills_dir="/tmp/skills")
+        registry = MagicMock(spec=SkillRegistry)
+        ctx = _make_ctx(skill_registry=registry)
+        result = await deploy_skill_code(
+            ctx, name="hello", code="code", test_cases_json="[]", approved=True
+        )
+        mock_deploy.assert_called_once()
+
+
+class TestScheduleTask:
+    @pytest.mark.asyncio
+    async def test_returns_unavailable_when_no_scheduler(self):
+        ctx = _make_ctx(scheduler=None)
+        result = await schedule_task(ctx, name="test", action="heartbeat")
+        assert result == "Scheduler not available"
+
+    @pytest.mark.asyncio
+    async def test_schedules_interval_job(self):
+        scheduler = MagicMock()
+        scheduler.add_job = AsyncMock(return_value={"success": True, "name": "test"})
+        ctx = _make_ctx(scheduler=scheduler)
+        result = await schedule_task(ctx, name="test_job", action="heartbeat", interval_seconds=300)
+        scheduler.add_job.assert_awaited_once()
+        assert "Scheduled task" in result
+
+    @pytest.mark.asyncio
+    async def test_schedules_cron_job(self):
+        scheduler = MagicMock()
+        scheduler.add_job = AsyncMock(return_value={"success": True, "name": "cron_test"})
+        ctx = _make_ctx(scheduler=scheduler)
+        result = await schedule_task(
+            ctx, name="cron_test", action="heartbeat", cron_expr="0 * * * *"
+        )
+        assert "Scheduled task" in result
+
+    @pytest.mark.asyncio
+    async def test_invalid_args_json(self):
+        scheduler = MagicMock()
+        scheduler.add_job = AsyncMock(return_value={"success": True, "name": "test"})
+        ctx = _make_ctx(scheduler=scheduler)
+        result = await schedule_task(ctx, name="test", action="send_message", args_json="not json")
+        assert "Invalid args_json" in result
+
+    @pytest.mark.asyncio
+    async def test_valid_args_json(self):
+        scheduler = MagicMock()
+        scheduler.add_job = AsyncMock(return_value={"success": True, "name": "test"})
+        ctx = _make_ctx(scheduler=scheduler)
+        result = await schedule_task(
+            ctx, name="test", action="send_message", args_json='{"conversation_key": "123"}'
+        )
+        scheduler.add_job.assert_awaited_once()
+        call_kwargs = scheduler.add_job.call_args[1]
+        assert call_kwargs["args"] == {"conversation_key": "123"}
+
+    @pytest.mark.asyncio
+    async def test_failed_schedule(self):
+        scheduler = MagicMock()
+        scheduler.add_job = AsyncMock(return_value={"success": False, "error": "job exists"})
+        ctx = _make_ctx(scheduler=scheduler)
+        result = await schedule_task(ctx, name="dup", action="heartbeat", interval_seconds=60)
+        assert "Failed to schedule" in result
+
+
+class TestUnscheduleTask:
+    @pytest.mark.asyncio
+    async def test_returns_unavailable_when_no_scheduler(self):
+        ctx = _make_ctx(scheduler=None)
+        result = await unschedule_task(ctx, name="test")
+        assert result == "Scheduler not available"
+
+    @pytest.mark.asyncio
+    async def test_successful_removal(self):
+        scheduler = MagicMock()
+        scheduler.remove_job = AsyncMock(return_value=True)
+        ctx = _make_ctx(scheduler=scheduler)
+        result = await unschedule_task(ctx, name="test_job")
+        assert "Unscheduled task" in result
+
+    @pytest.mark.asyncio
+    async def test_removal_not_found(self):
+        scheduler = MagicMock()
+        scheduler.remove_job = AsyncMock(return_value=False)
+        ctx = _make_ctx(scheduler=scheduler)
+        result = await unschedule_task(ctx, name="nonexistent")
+        assert "not found" in result
+
+
+class TestPersonalityPromptNone:
+    def test_none_personality_returns_default(self, monkeypatch):
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        agent = create_brain(
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        ctx = MagicMock(spec=RunContext)
+        ctx.deps = AgentDeps(
+            agent_id="test",
+            channel="telegram",
+            personality=None,
+        )
+        prompt_fn = agent._system_prompt_functions[0].function
+        result = prompt_fn(ctx)
+        assert "helpful AI assistant" in result

@@ -59,6 +59,7 @@ def test_switch_model_creates_new_brain(agent):
         "ollama",
         "http://localhost:11434",
         "",
+        skill_registry=agent._skill_registry,
     )
 
 
@@ -70,11 +71,12 @@ def test_switch_model_updates_brain_reference(agent):
     assert agent._brain is new_brain
 
 
-def test_clear_history_empties_message_history(agent):
+@pytest.mark.asyncio
+async def test_clear_history_empties_message_history(agent):
     agent._message_history = [MagicMock(), MagicMock()]
     assert len(agent._message_history) == 2
 
-    agent.clear_history()
+    await agent.clear_history()
 
     assert agent._message_history == []
 
@@ -243,10 +245,18 @@ async def test_compact_history_summarizes_old_messages(personality):
     mock_result = MagicMock()
     mock_result.output = "This is a summary."
     mock_response = ModelResponse(parts=[TextPart(content="This is a summary.")])
-    mock_result.all_messages = MagicMock(return_value=[
-        ModelRequest(parts=[UserPromptPart(content="Summarize this conversation so far in 2-3 concise sentences.")]),
-        mock_response,
-    ])
+    mock_result.all_messages = MagicMock(
+        return_value=[
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content="Summarize this conversation so far in 2-3 concise sentences."
+                    )
+                ]
+            ),
+            mock_response,
+        ]
+    )
 
     mock_brain_instance = MagicMock()
     mock_brain_instance.run = AsyncMock(return_value=mock_result)
@@ -302,10 +312,18 @@ async def test_compact_history_truncates_long_messages(personality):
     mock_result = MagicMock()
     mock_result.output = "Summary."
     mock_response = ModelResponse(parts=[TextPart(content="Summary.")])
-    mock_result.all_messages = MagicMock(return_value=[
-        ModelRequest(parts=[UserPromptPart(content="Summarize this conversation so far in 2-3 concise sentences.")]),
-        mock_response,
-    ])
+    mock_result.all_messages = MagicMock(
+        return_value=[
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content="Summarize this conversation so far in 2-3 concise sentences."
+                    )
+                ]
+            ),
+            mock_response,
+        ]
+    )
 
     mock_brain_instance = MagicMock()
     mock_brain_instance.run = AsyncMock(return_value=mock_result)
@@ -438,9 +456,17 @@ async def test_handle_message_saves_to_store(personality):
 async def test_compact_history_no_summary_parts_fallback(personality):
     mock_result = MagicMock()
     mock_result.output = "Fallback summary text."
-    mock_result.all_messages = MagicMock(return_value=[
-        ModelRequest(parts=[UserPromptPart(content="Summarize this conversation so far in 2-3 concise sentences.")]),
-    ])
+    mock_result.all_messages = MagicMock(
+        return_value=[
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content="Summarize this conversation so far in 2-3 concise sentences."
+                    )
+                ]
+            ),
+        ]
+    )
 
     mock_brain_instance = MagicMock()
     mock_brain_instance.run = AsyncMock(return_value=mock_result)
@@ -474,10 +500,18 @@ async def test_compact_history_non_string_content_part(personality):
     mock_result = MagicMock()
     mock_result.output = "Summary."
     mock_response = ModelResponse(parts=[TextPart(content="Summary.")])
-    mock_result.all_messages = MagicMock(return_value=[
-        ModelRequest(parts=[UserPromptPart(content="Summarize this conversation so far in 2-3 concise sentences.")]),
-        mock_response,
-    ])
+    mock_result.all_messages = MagicMock(
+        return_value=[
+            ModelRequest(
+                parts=[
+                    UserPromptPart(
+                        content="Summarize this conversation so far in 2-3 concise sentences."
+                    )
+                ]
+            ),
+            mock_response,
+        ]
+    )
 
     mock_brain_instance = MagicMock()
     mock_brain_instance.run = AsyncMock(return_value=mock_result)
@@ -548,8 +582,10 @@ def test_agent_compact_keep_messages_default(personality):
 
 @pytest.mark.asyncio
 async def test_start_connects_council_memory(personality):
-    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()), \
-         patch("pillywiggins.agents.base.CouncilMemory") as mock_council_cls:
+    with (
+        patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()),
+        patch("pillywiggins.agents.base.CouncilMemory") as mock_council_cls,
+    ):
         mock_council = AsyncMock()
         mock_council_cls.return_value = mock_council
         agent = PillywigginAgent(
@@ -569,8 +605,10 @@ async def test_start_connects_council_memory(personality):
 
 @pytest.mark.asyncio
 async def test_start_connects_nats_bus(personality):
-    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()), \
-         patch("pillywiggins.agents.base.NatsBus") as mock_nats_cls:
+    with (
+        patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()),
+        patch("pillywiggins.agents.base.NatsBus") as mock_nats_cls,
+    ):
         mock_bus = AsyncMock()
         mock_nats_cls.return_value = mock_bus
         agent = PillywigginAgent(
@@ -620,8 +658,10 @@ async def test_start_skips_nats_bus_when_no_nats_url(personality):
 
 @pytest.mark.asyncio
 async def test_start_handles_council_memory_failure_gracefully(personality):
-    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()), \
-         patch("pillywiggins.agents.base.CouncilMemory") as mock_council_cls:
+    with (
+        patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()),
+        patch("pillywiggins.agents.base.CouncilMemory") as mock_council_cls,
+    ):
         mock_council = AsyncMock()
         mock_council.connect = AsyncMock(side_effect=ConnectionError("db down"))
         mock_council_cls.return_value = mock_council
@@ -640,8 +680,10 @@ async def test_start_handles_council_memory_failure_gracefully(personality):
 
 @pytest.mark.asyncio
 async def test_start_handles_nats_bus_failure_gracefully(personality):
-    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()), \
-         patch("pillywiggins.agents.base.NatsBus") as mock_nats_cls:
+    with (
+        patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()),
+        patch("pillywiggins.agents.base.NatsBus") as mock_nats_cls,
+    ):
         mock_bus = AsyncMock()
         mock_bus.connect = AsyncMock(side_effect=ConnectionError("nats down"))
         mock_nats_cls.return_value = mock_bus
@@ -716,3 +758,70 @@ async def test_shutdown_noop_when_no_connections(personality):
         await agent.shutdown()
         assert agent._council_memory is None
         assert agent._nats_bus is None
+
+
+def test_switch_model_passes_skill_registry(personality):
+    mock_registry = MagicMock()
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()) as mock_brain:
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+            skill_registry=mock_registry,
+        )
+
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()) as mock_brain:
+        agent.switch_model("llama3:8b")
+
+    mock_brain.assert_called_once_with(
+        "llama3:8b",
+        "ollama",
+        "http://localhost:11434",
+        "",
+        skill_registry=mock_registry,
+    )
+
+
+@pytest.mark.asyncio
+async def test_clear_history_persists_to_cache(personality):
+    mock_cache = AsyncMock()
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+            cache=mock_cache,
+        )
+
+    agent._message_history = [MagicMock(), MagicMock()]
+    await agent.clear_history()
+
+    assert agent._message_history == []
+    mock_cache.save.assert_called_once_with("puck", [], conversation_key="")
+
+
+@pytest.mark.asyncio
+async def test_clear_history_persists_to_store(personality):
+    mock_store = AsyncMock()
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()):
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+            store=mock_store,
+        )
+
+    agent._conversation_histories["chat_123"] = [MagicMock(), MagicMock()]
+    await agent.clear_history(conversation_key="chat_123")
+
+    assert agent._conversation_histories["chat_123"] == []
+    mock_store.save.assert_called_once_with("chat_123", [])
