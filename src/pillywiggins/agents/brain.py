@@ -360,8 +360,9 @@ async def schedule_task(
     Args:
         name: A unique name for this scheduled task.
         action: The action to perform. Available actions:
-            - "send_message": Send a proactive message to a user/chat. Requires args_json with
-              {"conversation_key": "<chat_id>", "chat_id": "<chat_id>", "prompt": "<instruction for LLM>"}
+            - "send_message": Send a proactive message to the current chat. The conversation_key
+              is automatically set from the current conversation. Optionally provide args_json with
+              {"prompt": "<instruction for LLM>"}. Do NOT ask the user for their chat ID.
             - "heartbeat": Broadcast heartbeat via NATS.
             - "memory_review": Log a memory review.
             - "skill_reload": Log a skill reload.
@@ -384,6 +385,12 @@ async def schedule_task(
             args = json.loads(args_json)
         except json.JSONDecodeError as e:
             return f"Invalid args_json: {e}"
+
+    if action == "send_message" and args:
+        if not args.get("conversation_key") and ctx.deps.conversation_key:
+            args["conversation_key"] = ctx.deps.conversation_key
+        if not args.get("chat_id") and ctx.deps.conversation_key:
+            args["chat_id"] = ctx.deps.conversation_key
 
     interval = interval_seconds if interval_seconds > 0 else None
     cron = cron_expr if cron_expr else None

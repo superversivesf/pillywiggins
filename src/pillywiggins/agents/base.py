@@ -352,6 +352,7 @@ class PillywigginAgent:
                 council_memory=self._council_memory,
                 nats_bus=self._nats_bus,
                 scheduler=self._scheduler,
+                conversation_key=conversation_key or "",
             )
             result = await self._brain.run(
                 message.content,

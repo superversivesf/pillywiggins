@@ -16,3 +16,4 @@ class AgentDeps:
     council_memory: Any = field(default=None)
     nats_bus: Any = field(default=None)
     scheduler: Any = field(default=None)
+    conversation_key: str = field(default="")
