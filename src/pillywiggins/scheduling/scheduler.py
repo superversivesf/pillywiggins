@@ -13,6 +13,27 @@ logger = logging.getLogger(__name__)
 CRON_FIELDS = ["minute", "hour", "day", "month", "day_of_week"]
 
 
+async def _builtin_heartbeat(**kwargs: Any) -> None:
+    agent_id = kwargs.get("agent_id", "unknown")
+    logger.info("heartbeat for %s", agent_id)
+
+
+async def _builtin_memory_review(**kwargs: Any) -> None:
+    agent_id = kwargs.get("agent_id", "unknown")
+    logger.info("memory review for %s", agent_id)
+
+
+async def _builtin_skill_reload(**kwargs: Any) -> None:
+    agent_id = kwargs.get("agent_id", "unknown")
+    logger.info("skill reload for %s", agent_id)
+
+
+async def _builtin_custom(**kwargs: Any) -> None:
+    agent_id = kwargs.get("agent_id", "unknown")
+    args = kwargs.get("args", {})
+    logger.info("custom action for %s: %s", agent_id, args)
+
+
 def parse_cron(expr: str) -> dict[str, str]:
     parts = expr.strip().split()
     if len(parts) != 5:
@@ -41,23 +62,10 @@ class AgentScheduler:
         self._register_builtin_handlers()
 
     def _register_builtin_handlers(self) -> None:
-        async def _heartbeat(**kwargs: Any) -> None:
-            logger.info("heartbeat for %s", self._agent_id)
-
-        async def _memory_review(**kwargs: Any) -> None:
-            logger.info("memory review for %s", self._agent_id)
-
-        async def _skill_reload(**kwargs: Any) -> None:
-            logger.info("skill reload for %s", self._agent_id)
-
-        async def _custom(**kwargs: Any) -> None:
-            args = kwargs.get("args", {})
-            logger.info("custom action for %s: %s", self._agent_id, args)
-
-        self._action_handlers["heartbeat"] = _heartbeat
-        self._action_handlers["memory_review"] = _memory_review
-        self._action_handlers["skill_reload"] = _skill_reload
-        self._action_handlers["custom"] = _custom
+        self._action_handlers["heartbeat"] = _builtin_heartbeat
+        self._action_handlers["memory_review"] = _builtin_memory_review
+        self._action_handlers["skill_reload"] = _builtin_skill_reload
+        self._action_handlers["custom"] = _builtin_custom
 
     def register_handler(self, action: str, handler: Callable[..., Coroutine]) -> None:
         self._action_handlers[action] = handler
@@ -69,7 +77,10 @@ class AgentScheduler:
 
     def _parse_redis_url(self) -> dict[str, Any]:
         parsed = urlparse(self._redis_url)
-        kwargs: dict[str, Any] = {"host": parsed.hostname or "localhost", "port": parsed.port or 6379}
+        kwargs: dict[str, Any] = {
+            "host": parsed.hostname or "localhost",
+            "port": parsed.port or 6379,
+        }
         if parsed.password:
             kwargs["password"] = parsed.password
         if parsed.username:
@@ -168,7 +179,7 @@ class AgentScheduler:
         action = job.get("action", "custom")
         job_id = _make_job_id(self._agent_id, name)
         handler = self._get_handler(action)
-        kwargs = {"action": action}
+        kwargs = {"action": action, "agent_id": self._agent_id}
         if "args" in job:
             kwargs["args"] = job["args"]
 
