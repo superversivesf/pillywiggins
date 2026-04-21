@@ -18,6 +18,60 @@ from pillywiggins.scheduling.scheduler import AgentScheduler
 
 logger = logging.getLogger(__name__)
 
+_ACTIVE_AGENTS: dict[str, "PillywigginAgent"] = {}
+
+
+async def _builtin_heartbeat_handler(**kwargs: Any) -> None:
+    agent_id = kwargs.get("agent_id", "")
+    agent = _ACTIVE_AGENTS.get(agent_id)
+    if agent is None or agent._nats_bus is None:
+        logger.info("heartbeat for %s (no NATS bus)", agent_id)
+        return
+    try:
+        await agent._nats_bus.publish_broadcast("heartbeat", {"agent_id": agent_id})
+    except Exception:
+        logger.warning("Failed to broadcast heartbeat for %s", agent_id, exc_info=True)
+
+
+async def _builtin_send_message_handler(**kwargs: Any) -> None:
+    agent_id = kwargs.get("agent_id", "")
+    args = kwargs.get("args", {})
+    agent = _ACTIVE_AGENTS.get(agent_id)
+    if agent is None:
+        logger.warning("send_message: agent %s not found", agent_id)
+        return
+    conversation_key = args.get("conversation_key", "")
+    chat_id = args.get("chat_id", conversation_key)
+    prompt = args.get("prompt", "Send a brief friendly check-in message.")
+
+    if not conversation_key:
+        logger.warning("send_message action missing conversation_key for %s", agent_id)
+        return
+
+    if agent._adapter is None:
+        logger.warning("send_message action but no adapter for %s", agent_id)
+        return
+
+    try:
+        result = await agent._brain.run(
+            user_prompt=prompt,
+            deps=AgentDeps(
+                agent_id=agent.agent_id,
+                channel="telegram",
+                personality=agent.personality,
+                private_memory=agent._private_memory,
+                skill_registry=agent._skill_registry,
+                council_memory=agent._council_memory,
+                nats_bus=agent._nats_bus,
+                scheduler=agent._scheduler,
+            ),
+        )
+        message_text = result.output
+        await agent._adapter.send(conversation_key, message_text, chat_id=chat_id)
+        logger.info("send_message for %s to %s", agent_id, conversation_key)
+    except Exception:
+        logger.exception("send_message failed for %s", agent_id)
+
 
 class PillywigginAgent:
     def __init__(
@@ -96,6 +150,7 @@ class PillywigginAgent:
     async def start(self) -> None:
         from pillywiggins.config import Settings
 
+        _ACTIVE_AGENTS[self.agent_id] = self
         settings = Settings()
         if self._database_url is not None:
             try:
@@ -134,6 +189,7 @@ class PillywigginAgent:
                 self._scheduler = None
 
     async def shutdown(self) -> None:
+        _ACTIVE_AGENTS.pop(self.agent_id, None)
         if self._council_memory is not None:
             try:
                 await self._council_memory.close()
@@ -157,62 +213,9 @@ class PillywigginAgent:
         self._adapter = adapter
 
     def _register_scheduler_handlers(self) -> None:
-        async def _heartbeat_handler(**kwargs):
-            if self._nats_bus is not None:
-                try:
-                    await self._nats_bus.publish_broadcast("heartbeat", {"agent_id": self.agent_id})
-                except Exception:
-                    logger.warning(
-                        "Failed to broadcast heartbeat for %s", self.agent_id, exc_info=True
-                    )
-            else:
-                logger.info("heartbeat for %s (no NATS bus)", self.agent_id)
-
-        async def _memory_review_handler(**kwargs):
-            logger.info("memory review for %s", self.agent_id)
-
-        async def _skill_reload_handler(**kwargs):
-            logger.info("skill reload for %s", self.agent_id)
-
-        async def _send_message_handler(**kwargs):
-            args = kwargs.get("args", {})
-            conversation_key = args.get("conversation_key", "")
-            chat_id = args.get("chat_id", conversation_key)
-            prompt = args.get("prompt", "Send a brief friendly check-in message.")
-
-            if not conversation_key:
-                logger.warning("send_message action missing conversation_key for %s", self.agent_id)
-                return
-
-            if self._adapter is None:
-                logger.warning("send_message action but no adapter for %s", self.agent_id)
-                return
-
-            try:
-                result = await self._brain.run(
-                    user_prompt=prompt,
-                    deps=AgentDeps(
-                        agent_id=self.agent_id,
-                        channel="telegram",
-                        personality=self.personality,
-                        private_memory=self._private_memory,
-                        skill_registry=self._skill_registry,
-                        council_memory=self._council_memory,
-                        nats_bus=self._nats_bus,
-                        scheduler=self._scheduler,
-                    ),
-                )
-                message_text = result.output
-                await self._adapter.send(conversation_key, message_text, chat_id=chat_id)
-                logger.info("send_message for %s to %s", self.agent_id, conversation_key)
-            except Exception:
-                logger.exception("send_message failed for %s", self.agent_id)
-
         if self._scheduler is not None:
-            self._scheduler.register_handler("heartbeat", _heartbeat_handler)
-            self._scheduler.register_handler("memory_review", _memory_review_handler)
-            self._scheduler.register_handler("skill_reload", _skill_reload_handler)
-            self._scheduler.register_handler("send_message", _send_message_handler)
+            self._scheduler.register_handler("heartbeat", _builtin_heartbeat_handler)
+            self._scheduler.register_handler("send_message", _builtin_send_message_handler)
 
     @property
     def model_name(self) -> str:
