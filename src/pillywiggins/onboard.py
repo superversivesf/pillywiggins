@@ -30,6 +30,24 @@ COMPOSE_VOLUMES = [
 
 LLM_ENV_KEYS = ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "MODEL_NAME")
 
+COMMON_TIMEZONES = [
+    "UTC",
+    "America/Los_Angeles",
+    "America/New_York",
+    "America/Chicago",
+    "America/Denver",
+    "Europe/London",
+    "Europe/Paris",
+    "Europe/Berlin",
+    "Asia/Tokyo",
+    "Asia/Shanghai",
+    "Asia/Kolkata",
+    "Australia/Sydney",
+    "Pacific/Auckland",
+]
+
+CUSTOM_TIMEZONE_OPTION = "Type custom timezone"
+
 B = "\033[1m"
 DIM = "\033[2m"
 CYAN = "\033[36m"
@@ -186,6 +204,7 @@ def add_agent_to_agents_yaml(
     allowed_user_ids: str,
     bot_chat_limit: int,
     llm_config: dict | None,
+    timezone: str = "UTC",
 ) -> None:
     personality_path = _personality_path_for(personality_filename)
 
@@ -204,6 +223,8 @@ def add_agent_to_agents_yaml(
 
     environment = {
         "TELEGRAM_BOT_TOKEN": f"${{{token_env}}}",
+        "TIMEZONE": timezone,
+        "TZ": timezone,
     }
     # Always write per-agent LLM vars when a config is provided.
     # LLM_PROVIDER, LLM_BASE_URL, MODEL_NAME are literal values.
@@ -224,6 +245,7 @@ def add_agent_to_agents_yaml(
         "channel": channel,
         "allowed_user_ids": allowed_user_ids,
         "bot_chat_limit": bot_chat_limit,
+        "timezone": timezone,
         "environment": environment,
     }
 
@@ -237,6 +259,7 @@ def add_agent_to_docker_compose(
     personality_filename: str,
     token_env: str,
     llm_config: dict | None = None,
+    timezone: str = "UTC",
 ) -> None:
     personality_path = _personality_path_for(personality_filename)
 
@@ -256,6 +279,8 @@ def add_agent_to_docker_compose(
         "AGENT_ID": agent_id,
         "TELEGRAM_BOT_TOKEN": f"${{{token_env}}}",
         "PERSONALITY_FILE": personality_path,
+        "TIMEZONE": timezone,
+        "TZ": timezone,
     }
     # Add per-agent LLM vars to docker-compose environment section.
     # LLM_PROVIDER, LLM_BASE_URL, MODEL_NAME are literal values.
@@ -405,6 +430,7 @@ def add_agent_to_configs(
     bot_chat_limit: int,
     llm_config: dict | None,
     token_value: str = "",
+    timezone: str = "UTC",
 ) -> None:
     add_agent_to_agents_yaml(
         agent_id,
@@ -414,8 +440,11 @@ def add_agent_to_configs(
         allowed_user_ids,
         bot_chat_limit,
         llm_config,
+        timezone=timezone,
     )
-    add_agent_to_docker_compose(agent_id, personality_filename, token_env, llm_config=llm_config)
+    add_agent_to_docker_compose(
+        agent_id, personality_filename, token_env, llm_config=llm_config, timezone=timezone
+    )
     if token_value:
         add_token_to_env(agent_id, token_value)
     if llm_config and llm_config.get("LLM_API_KEY"):
@@ -630,7 +659,26 @@ async def _add_agent_flow() -> None:
     except ValueError:
         bot_chat_limit = 3
 
-    # 8. Review
+    # 8. Timezone
+    tz_choices = COMMON_TIMEZONES + [CUSTOM_TIMEZONE_OPTION]
+    tz_choice = await questionary.select(
+        "Select timezone:",
+        choices=tz_choices,
+        default="UTC",
+    ).ask_async()
+    if tz_choice is None:
+        return
+    if tz_choice == CUSTOM_TIMEZONE_OPTION:
+        tz = await questionary.text(
+            "Enter timezone (e.g. America/Los_Angeles):",
+            default="UTC",
+        ).ask_async()
+        if tz is None:
+            return
+    else:
+        tz = tz_choice
+
+    # 9. Review
     token_env = _token_env_for_agent(agent_id)
 
     llm_config = {
@@ -651,6 +699,7 @@ async def _add_agent_flow() -> None:
     print(f"  Model:          {chosen_model}")
     print(f"  Allowed users:  {allowed_user_ids}")
     print(f"  Bot chat limit: {bot_chat_limit}")
+    print(f"  Timezone:       {tz}")
     if llm_api_key:
         print(f"  API key:        {'*' * 8}{llm_api_key[-4:]}")
     print()
@@ -659,7 +708,7 @@ async def _add_agent_flow() -> None:
     if not confirm:
         return
 
-    # 9. Write configs
+    # 10. Write configs
     add_agent_to_configs(
         agent_id=agent_id,
         personality_filename=personality["filename"],
@@ -669,9 +718,10 @@ async def _add_agent_flow() -> None:
         bot_chat_limit=bot_chat_limit,
         llm_config=llm_config,
         token_value=token,
+        timezone=tz,
     )
 
-    # 10. Docker up
+    # 11. Docker up
     start = await questionary.confirm(
         "Build and start all services now?",
         default=True,
@@ -708,6 +758,7 @@ async def _reconfigure_agent_flow() -> None:
 
     env = agent_data.get("environment", {})
     current_uids = agent_data.get("allowed_user_ids", "all")
+    current_tz = agent_data.get("timezone", "UTC")
 
     # Allowed users
     new_uids = await questionary.text(
@@ -716,6 +767,26 @@ async def _reconfigure_agent_flow() -> None:
     ).ask_async()
     if new_uids is None:
         return
+
+    # Timezone
+    tz_choices = COMMON_TIMEZONES + [CUSTOM_TIMEZONE_OPTION]
+    default_tz = current_tz if current_tz in COMMON_TIMEZONES else "UTC"
+    tz_choice = await questionary.select(
+        "Select timezone:",
+        choices=tz_choices,
+        default=default_tz,
+    ).ask_async()
+    if tz_choice is None:
+        return
+    if tz_choice == CUSTOM_TIMEZONE_OPTION:
+        new_tz = await questionary.text(
+            "Enter timezone (e.g. America/Los_Angeles):",
+            default=current_tz,
+        ).ask_async()
+        if new_tz is None:
+            return
+    else:
+        new_tz = tz_choice
 
     # Token
     new_token = await questionary.text(
@@ -779,6 +850,7 @@ async def _reconfigure_agent_flow() -> None:
             return
 
     agent_data["allowed_user_ids"] = new_uids
+    agent_data["timezone"] = new_tz
 
     # Build new environment — always include per-agent LLM vars
     new_env = {"TELEGRAM_BOT_TOKEN": env.get("TELEGRAM_BOT_TOKEN", "")}
@@ -823,6 +895,8 @@ async def _reconfigure_agent_flow() -> None:
         svc_env["AGENT_ID"] = agent_id
         svc_env["TELEGRAM_BOT_TOKEN"] = f"${{{token_env}}}"
         svc_env["PERSONALITY_FILE"] = agent_data["personality"]
+        svc_env["TIMEZONE"] = new_tz
+        svc_env["TZ"] = new_tz
 
         # Per-agent LLM vars
         if new_provider:

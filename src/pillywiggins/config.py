@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     searxng_categories: str = "general"
     searxng_max_results: int = 5
     agents_config_path: str = "agents.yaml"
+    timezone: str = "UTC"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 

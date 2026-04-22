@@ -1238,6 +1238,7 @@ class TestAddAgentFlow:
                 "Puck — mischievous",
                 "telegram",
                 "ollama",
+                "UTC",
             ]
         )
         text_responses = iter(
@@ -1378,7 +1379,7 @@ class TestAddAgentFlow:
         mock_validate.return_value = (True, "testbot")
         mock_list_models.return_value = []
 
-        select_responses = iter(["Puck — mischievous", "telegram", "ollama"])
+        select_responses = iter(["Puck — mischievous", "telegram", "ollama", "UTC"])
         text_responses = iter(
             [
                 "puck",
@@ -1446,7 +1447,7 @@ class TestAddAgentFlow:
         mock_validate.return_value = (False, "Invalid token")
         mock_list_models.return_value = []
 
-        select_responses = iter(["Puck — mischievous", "telegram", "ollama"])
+        select_responses = iter(["Puck — mischievous", "telegram", "ollama", "UTC"])
         text_responses = iter(
             [
                 "puck",
@@ -1515,7 +1516,7 @@ class TestAddAgentFlow:
         mock_validate.return_value = (True, "testbot")
         mock_list_models.return_value = [ModelInfo(id="qwen3.5:8b"), ModelInfo(id="llama3:8b")]
 
-        select_responses = iter(["Puck — mischievous", "telegram", "ollama", "qwen3.5:8b"])
+        select_responses = iter(["Puck — mischievous", "telegram", "ollama", "qwen3.5:8b", "UTC"])
         text_responses = iter(
             ["puck", "123456:ABC-DEF1234", "http://host.docker.internal:11434/v1", "all", "3"]
         )
@@ -1572,7 +1573,7 @@ class TestAddAgentFlow:
         mock_validate.return_value = (True, "testbot")
         mock_list_models.return_value = []
 
-        select_responses = iter(["Puck — mischievous", "telegram", "openai"])
+        select_responses = iter(["Puck — mischievous", "telegram", "openai", "UTC"])
         text_responses = iter(
             [
                 "puck",
@@ -1640,7 +1641,7 @@ class TestAddAgentFlow:
         mock_validate.return_value = (True, "testbot")
         mock_list_models.return_value = []
 
-        select_responses = iter(["Puck — mischievous", "telegram", "ollama"])
+        select_responses = iter(["Puck — mischievous", "telegram", "ollama", "UTC"])
         text_responses = iter(
             [
                 "puck",
@@ -1707,7 +1708,7 @@ class TestReconfigureAgentFlow:
     async def test_reconfigure_flow(self, mock_q, mock_list_models):
         mock_list_models.return_value = []
 
-        select_responses = iter(["puck", "ollama"])
+        select_responses = iter(["puck", "UTC", "ollama"])
         text_responses = iter(["all", "", "http://localhost:11434/v1", "qwen3.5:8b"])
         confirm_responses = iter([True, False])
 
@@ -2157,7 +2158,7 @@ class TestAddAgentFlowCancellations:
         mock_validate.return_value = (True, "testbot")
         mock_list_models.return_value = []
 
-        select_responses = iter(["Puck — mischievous", "telegram", "ollama"])
+        select_responses = iter(["Puck — mischievous", "telegram", "ollama", "UTC"])
         text_iter = iter(
             [
                 "puck",
@@ -2245,3 +2246,466 @@ class TestAddAgentToDockerComposeEdgeCases:
         compose_path.write_text(yaml.dump({"volumes": {}}))
         with patch("pillywiggins.onboard.DOCKER_COMPOSE", compose_path):
             remove_agent_from_docker_compose("puck")
+
+
+from pillywiggins.onboard import CUSTOM_TIMEZONE_OPTION
+
+
+class TestTimezoneInAddAgentToAgentsYaml:
+    def test_default_timezone_is_utc(self, tmp_path):
+        config_path = tmp_path / "agents.yaml"
+        with patch("pillywiggins.onboard.AGENTS_YAML", config_path):
+            add_agent_to_agents_yaml(
+                agent_id="puck",
+                personality_filename="puck.yaml",
+                channel="telegram",
+                token_env="PUCK_TELEGRAM_TOKEN",
+                allowed_user_ids="all",
+                bot_chat_limit=3,
+                llm_config=None,
+            )
+        data = yaml.safe_load(config_path.read_text())
+        assert data["agents"][0]["timezone"] == "UTC"
+
+    def test_custom_timezone(self, tmp_path):
+        config_path = tmp_path / "agents.yaml"
+        with patch("pillywiggins.onboard.AGENTS_YAML", config_path):
+            add_agent_to_agents_yaml(
+                agent_id="puck",
+                personality_filename="puck.yaml",
+                channel="telegram",
+                token_env="PUCK_TELEGRAM_TOKEN",
+                allowed_user_ids="all",
+                bot_chat_limit=3,
+                llm_config=None,
+                timezone="America/Los_Angeles",
+            )
+        data = yaml.safe_load(config_path.read_text())
+        assert data["agents"][0]["timezone"] == "America/Los_Angeles"
+
+
+class TestTimezoneInAddAgentToDockerCompose:
+    def test_default_timezone_in_environment(self, tmp_path):
+        compose_path = tmp_path / "docker-compose.yaml"
+        compose_path.write_text(yaml.dump({"services": {}, "volumes": {}}))
+        with patch("pillywiggins.onboard.DOCKER_COMPOSE", compose_path):
+            add_agent_to_docker_compose(
+                agent_id="puck",
+                personality_filename="puck.yaml",
+                token_env="PUCK_TELEGRAM_TOKEN",
+            )
+        data = yaml.safe_load(compose_path.read_text())
+        svc_env = data["services"]["puck"]["environment"]
+        assert svc_env["TIMEZONE"] == "UTC"
+        assert svc_env["TZ"] == "UTC"
+
+    def test_custom_timezone_in_environment(self, tmp_path):
+        compose_path = tmp_path / "docker-compose.yaml"
+        compose_path.write_text(yaml.dump({"services": {}, "volumes": {}}))
+        with patch("pillywiggins.onboard.DOCKER_COMPOSE", compose_path):
+            add_agent_to_docker_compose(
+                agent_id="puck",
+                personality_filename="puck.yaml",
+                token_env="PUCK_TELEGRAM_TOKEN",
+                timezone="Asia/Tokyo",
+            )
+        data = yaml.safe_load(compose_path.read_text())
+        svc_env = data["services"]["puck"]["environment"]
+        assert svc_env["TIMEZONE"] == "Asia/Tokyo"
+        assert svc_env["TZ"] == "Asia/Tokyo"
+
+
+class TestTimezoneInAddAgentToConfigs:
+    def test_timezone_passed_through(self):
+        with (
+            patch("pillywiggins.onboard.add_agent_to_agents_yaml") as mock_yaml,
+            patch("pillywiggins.onboard.add_agent_to_docker_compose") as mock_compose,
+            patch("pillywiggins.onboard.add_token_to_env"),
+            patch("pillywiggins.onboard.add_llm_api_key_to_env"),
+        ):
+            add_agent_to_configs(
+                agent_id="puck",
+                personality_filename="puck.yaml",
+                channel="telegram",
+                token_env="PUCK_TELEGRAM_TOKEN",
+                allowed_user_ids="all",
+                bot_chat_limit=3,
+                llm_config=None,
+                token_value="",
+                timezone="Europe/Berlin",
+            )
+            _, kwargs = mock_yaml.call_args
+            assert kwargs["timezone"] == "Europe/Berlin"
+            _, kwargs = mock_compose.call_args
+            assert kwargs["timezone"] == "Europe/Berlin"
+
+    def test_default_timezone_is_utc(self):
+        with (
+            patch("pillywiggins.onboard.add_agent_to_agents_yaml") as mock_yaml,
+            patch("pillywiggins.onboard.add_agent_to_docker_compose") as mock_compose,
+            patch("pillywiggins.onboard.add_token_to_env"),
+            patch("pillywiggins.onboard.add_llm_api_key_to_env"),
+        ):
+            add_agent_to_configs(
+                agent_id="puck",
+                personality_filename="puck.yaml",
+                channel="telegram",
+                token_env="PUCK_TELEGRAM_TOKEN",
+                allowed_user_ids="all",
+                bot_chat_limit=3,
+                llm_config=None,
+                token_value="",
+            )
+            _, kwargs = mock_yaml.call_args
+            assert kwargs["timezone"] == "UTC"
+
+
+class TestTimezoneInAddAgentFlow:
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.add_agent_to_configs")
+    @patch("pillywiggins.onboard.validate_telegram_token", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_timezone_default_utc(
+        self, mock_q, mock_list_models, mock_validate, mock_add_configs
+    ):
+        mock_validate.return_value = (True, "testbot")
+        mock_list_models.return_value = []
+
+        select_responses = iter(
+            [
+                "Puck — mischievous",
+                "telegram",
+                "ollama",
+                "UTC",
+            ]
+        )
+        text_responses = iter(
+            [
+                "puck",
+                "123456:ABC-DEF1234",
+                "http://host.docker.internal:11434/v1",
+                "qwen3.5:8b",
+                "all",
+                "3",
+            ]
+        )
+        confirm_responses = iter([True, False])
+
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(select_responses))
+            )
+        )
+        mock_q.text = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(text_responses))
+            )
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(confirm_responses))
+            )
+        )
+        mock_q.Choice = MagicMock
+
+        with (
+            patch("pillywiggins.onboard.discover_personalities") as mock_disc,
+            patch("pillywiggins.onboard.agent_ids_in_use", return_value=set()),
+            patch("pillywiggins.onboard.get_first_agent_llm_config", return_value=None),
+            patch(
+                "pillywiggins.onboard.get_default_llm_config",
+                return_value={
+                    k: "" for k in ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "MODEL_NAME")
+                },
+            ),
+            patch("pillywiggins.onboard.load_existing_agents", return_value=[]),
+        ):
+            mock_disc.return_value = [
+                {
+                    "name": "Puck",
+                    "description": "mischievous",
+                    "filename": "puck.yaml",
+                    "stem": "puck",
+                    "channel": "telegram",
+                    "bot_chat_limit": 3,
+                },
+            ]
+            from pillywiggins.onboard import _add_agent_flow
+
+            await _add_agent_flow()
+
+        _, kwargs = mock_add_configs.call_args
+        assert kwargs["timezone"] == "UTC"
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.add_agent_to_configs")
+    @patch("pillywiggins.onboard.validate_telegram_token", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_timezone_custom_via_custom_option(
+        self, mock_q, mock_list_models, mock_validate, mock_add_configs
+    ):
+        mock_validate.return_value = (True, "testbot")
+        mock_list_models.return_value = []
+
+        select_responses = iter(
+            [
+                "Puck — mischievous",
+                "telegram",
+                "ollama",
+                CUSTOM_TIMEZONE_OPTION,
+            ]
+        )
+        text_responses = iter(
+            [
+                "puck",
+                "123456:ABC-DEF1234",
+                "http://host.docker.internal:11434/v1",
+                "qwen3.5:8b",
+                "all",
+                "3",
+                "Europe/Moscow",
+            ]
+        )
+        confirm_responses = iter([True, False])
+
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(select_responses))
+            )
+        )
+        mock_q.text = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(text_responses))
+            )
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(confirm_responses))
+            )
+        )
+        mock_q.Choice = MagicMock
+
+        with (
+            patch("pillywiggins.onboard.discover_personalities") as mock_disc,
+            patch("pillywiggins.onboard.agent_ids_in_use", return_value=set()),
+            patch("pillywiggins.onboard.get_first_agent_llm_config", return_value=None),
+            patch(
+                "pillywiggins.onboard.get_default_llm_config",
+                return_value={
+                    k: "" for k in ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "MODEL_NAME")
+                },
+            ),
+            patch("pillywiggins.onboard.load_existing_agents", return_value=[]),
+        ):
+            mock_disc.return_value = [
+                {
+                    "name": "Puck",
+                    "description": "mischievous",
+                    "filename": "puck.yaml",
+                    "stem": "puck",
+                    "channel": "telegram",
+                    "bot_chat_limit": 3,
+                },
+            ]
+            from pillywiggins.onboard import _add_agent_flow
+
+            await _add_agent_flow()
+
+        _, kwargs = mock_add_configs.call_args
+        assert kwargs["timezone"] == "Europe/Moscow"
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.validate_telegram_token", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_cancel_at_timezone(self, mock_q, mock_list_models, mock_validate):
+        mock_validate.return_value = (True, "testbot")
+        mock_list_models.return_value = []
+
+        select_responses = iter(
+            [
+                "Puck — mischievous",
+                "telegram",
+                "ollama",
+                None,
+            ]
+        )
+        text_responses = iter(
+            [
+                "puck",
+                "123456:ABC-DEF1234",
+                "http://host.docker.internal:11434/v1",
+                "qwen3.5:8b",
+                "all",
+                "3",
+            ]
+        )
+
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(select_responses))
+            )
+        )
+        mock_q.text = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(text_responses))
+            )
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(ask_async=AsyncMock(return_value=True))
+        )
+        mock_q.Choice = MagicMock
+
+        with (
+            patch("pillywiggins.onboard.discover_personalities") as mock_disc,
+            patch("pillywiggins.onboard.agent_ids_in_use", return_value=set()),
+            patch("pillywiggins.onboard.get_first_agent_llm_config", return_value=None),
+            patch(
+                "pillywiggins.onboard.get_default_llm_config",
+                return_value={
+                    k: "" for k in ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "MODEL_NAME")
+                },
+            ),
+            patch("pillywiggins.onboard.load_existing_agents", return_value=[]),
+        ):
+            mock_disc.return_value = [
+                {
+                    "name": "Puck",
+                    "description": "mischievous",
+                    "filename": "puck.yaml",
+                    "stem": "puck",
+                    "channel": "telegram",
+                    "bot_chat_limit": 3,
+                },
+            ]
+            from pillywiggins.onboard import _add_agent_flow
+
+            await _add_agent_flow()
+
+
+class TestTimezoneInReconfigureAgentFlow:
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_reconfigure_timezone(self, mock_q, mock_list_models):
+        mock_list_models.return_value = []
+
+        select_responses = iter(["puck", "America/Chicago", "ollama"])
+        text_responses = iter(["all", "", "http://localhost:11434/v1", "qwen3.5:8b"])
+        confirm_responses = iter([True, False])
+
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(select_responses))
+            )
+        )
+        mock_q.text = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(text_responses))
+            )
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(confirm_responses))
+            )
+        )
+
+        agents = [
+            {
+                "id": "puck",
+                "personality": "/config/puck.yaml",
+                "allowed_user_ids": "all",
+                "timezone": "UTC",
+                "environment": {
+                    "TELEGRAM_BOT_TOKEN": "${PUCK_TELEGRAM_TOKEN}",
+                    "LLM_PROVIDER": "ollama",
+                    "LLM_BASE_URL": "http://localhost:11434/v1",
+                    "MODEL_NAME": "qwen3.5:8b",
+                },
+            }
+        ]
+
+        with (
+            patch("pillywiggins.onboard.load_existing_agents", return_value=agents),
+            patch("pillywiggins.onboard.load_yaml", return_value={"agents": agents}),
+            patch("pillywiggins.onboard.save_yaml") as mock_save,
+            patch(
+                "pillywiggins.onboard.get_default_llm_config",
+                return_value={
+                    k: "" for k in ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "MODEL_NAME")
+                },
+            ),
+            patch("pillywiggins.onboard.DOCKER_COMPOSE", Path("/tmp/nonexistent-dc.yaml")),
+        ):
+            from pillywiggins.onboard import _reconfigure_agent_flow
+
+            await _reconfigure_agent_flow()
+
+            saved_data = mock_save.call_args[0][1]
+            saved_agent = saved_data["agents"][0]
+            assert saved_agent["timezone"] == "America/Chicago"
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.onboard.list_models", new_callable=AsyncMock)
+    @patch("pillywiggins.onboard.questionary")
+    async def test_reconfigure_custom_timezone(self, mock_q, mock_list_models):
+        mock_list_models.return_value = []
+
+        select_responses = iter(["puck", CUSTOM_TIMEZONE_OPTION, "ollama"])
+        text_responses = iter(
+            ["all", "Europe/Helsinki", "", "http://localhost:11434/v1", "qwen3.5:8b"]
+        )
+        confirm_responses = iter([True, False])
+
+        mock_q.select = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(select_responses))
+            )
+        )
+        mock_q.text = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(text_responses))
+            )
+        )
+        mock_q.confirm = MagicMock(
+            side_effect=lambda *a, **kw: MagicMock(
+                ask_async=AsyncMock(return_value=next(confirm_responses))
+            )
+        )
+
+        agents = [
+            {
+                "id": "puck",
+                "personality": "/config/puck.yaml",
+                "allowed_user_ids": "all",
+                "timezone": "UTC",
+                "environment": {
+                    "TELEGRAM_BOT_TOKEN": "${PUCK_TELEGRAM_TOKEN}",
+                    "LLM_PROVIDER": "ollama",
+                    "LLM_BASE_URL": "http://localhost:11434/v1",
+                    "MODEL_NAME": "qwen3.5:8b",
+                },
+            }
+        ]
+
+        with (
+            patch("pillywiggins.onboard.load_existing_agents", return_value=agents),
+            patch("pillywiggins.onboard.load_yaml", return_value={"agents": agents}),
+            patch("pillywiggins.onboard.save_yaml") as mock_save,
+            patch(
+                "pillywiggins.onboard.get_default_llm_config",
+                return_value={
+                    k: "" for k in ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "MODEL_NAME")
+                },
+            ),
+            patch("pillywiggins.onboard.DOCKER_COMPOSE", Path("/tmp/nonexistent-dc.yaml")),
+        ):
+            from pillywiggins.onboard import _reconfigure_agent_flow
+
+            await _reconfigure_agent_flow()
+
+            saved_data = mock_save.call_args[0][1]
+            saved_agent = saved_data["agents"][0]
+            assert saved_agent["timezone"] == "Europe/Helsinki"

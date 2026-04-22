@@ -12,6 +12,7 @@ class AgentConfig:
     personality: str
     channel: str
     allowed_user_ids: str = "all"
+    timezone: str = "UTC"
     environment: dict[str, str] = field(default_factory=dict)
 
 
@@ -40,6 +41,7 @@ def load_agents_config(path: str = "agents.yaml") -> list[AgentConfig]:
         personality = entry["personality"]
         channel = entry["channel"]
         allowed_user_ids = entry.get("allowed_user_ids", "all")
+        timezone = entry.get("timezone", "UTC")
         environment = entry.get("environment", {})
         configs.append(
             AgentConfig(
@@ -47,6 +49,7 @@ def load_agents_config(path: str = "agents.yaml") -> list[AgentConfig]:
                 personality=personality,
                 channel=channel,
                 allowed_user_ids=allowed_user_ids,
+                timezone=timezone,
                 environment=environment,
             )
         )
@@ -68,3 +71,6 @@ def apply_agent_env(agent_config: AgentConfig) -> None:
         os.environ[key] = expanded
     if agent_config.allowed_user_ids:
         os.environ["ALLOWED_USER_IDS"] = agent_config.allowed_user_ids
+    if agent_config.timezone:
+        os.environ["TIMEZONE"] = agent_config.timezone
+        os.environ["TZ"] = agent_config.timezone
