@@ -26,6 +26,9 @@ def _make_update(user_id=42, username="testuser", first_name="Test", text="hello
 
 def _make_adapter():
     agent = MagicMock()
+    agent.agent_id = "puck"
+    agent.personality = MagicMock()
+    agent.personality.channel = "telegram"
     agent.model_name = "qwen3.5:8b"
     agent.handle_message = AsyncMock(return_value="response")
     agent.switch_model = MagicMock()
@@ -39,6 +42,9 @@ def _make_adapter():
             "estimated_tokens": 1500,
         }
     )
+    mock_msg = MagicMock()
+    mock_msg.parts = [MagicMock(content="x" * 857)]
+    agent._get_history = MagicMock(return_value=[mock_msg] * 7)
     agent.compact_history = AsyncMock(return_value="Compacted: 7 messages → 1 summary")
     settings = MagicMock()
     settings.llm_base_url = "http://localhost:11434"

@@ -20,6 +20,9 @@ from pillywiggins.agents.brain import (
     deploy_skill_code,
     schedule_task,
     unschedule_task,
+    list_scheduled_tasks,
+    get_current_time,
+    get_conversation_info,
 )
 from pillywiggins.agents.deps import AgentDeps
 from pillywiggins.agents.personality import Personality
@@ -34,12 +37,13 @@ def _make_ctx(
     council_memory=None,
     nats_bus=None,
     scheduler=None,
+    personality=None,
 ):
     ctx = MagicMock(spec=RunContext)
     ctx.deps = AgentDeps(
         agent_id=agent_id,
         channel=channel,
-        personality=None,
+        personality=personality,
         private_memory=private_memory,
         skill_registry=skill_registry,
         council_memory=council_memory,
@@ -259,13 +263,16 @@ def test_create_brain_no_skill_registry_no_skill_tools(monkeypatch):
     assert "save_to_private_memory" in tool_names
     assert "query_council_memory" in tool_names
     assert "share_to_council" in tool_names
-    assert len(tool_names) == 10
     assert "build_skill" in tool_names
     assert "test_skill_code" in tool_names
     assert "review_skill_code" in tool_names
     assert "deploy_skill_code" in tool_names
     assert "schedule_task" in tool_names
     assert "unschedule_task" in tool_names
+    assert "list_scheduled_tasks" in tool_names
+    assert "get_current_time" in tool_names
+    assert "get_conversation_info" in tool_names
+    assert len(tool_names) == 13
 
 
 def test_create_brain_empty_skill_registry(monkeypatch):
@@ -280,7 +287,7 @@ def test_create_brain_empty_skill_registry(monkeypatch):
         skill_registry=registry,
     )
     tool_names = list(agent._function_toolset.tools.keys())
-    assert len(tool_names) == 10
+    assert len(tool_names) == 13
 
 
 def test_create_brain_multiple_skill_tools(monkeypatch):
@@ -301,7 +308,7 @@ def test_create_brain_multiple_skill_tools(monkeypatch):
     assert "weather" in tool_names
     assert "calculator" in tool_names
     assert "translator" in tool_names
-    assert len(tool_names) == 13
+    assert len(tool_names) == 16
 
 
 def test_create_brain_deps_type_is_agent_deps(monkeypatch):
@@ -1057,6 +1064,110 @@ class TestUnscheduleTask:
         assert "not found" in result
 
 
+class TestListScheduledTasks:
+    @pytest.mark.asyncio
+    async def test_returns_unavailable_when_no_scheduler(self):
+        ctx = _make_ctx(scheduler=None)
+        result = await list_scheduled_tasks(ctx)
+        assert result == "Scheduler not available"
+
+    @pytest.mark.asyncio
+    async def test_returns_no_tasks_when_empty(self):
+        scheduler = MagicMock()
+        scheduler.list_jobs = AsyncMock(return_value=[])
+        ctx = _make_ctx(scheduler=scheduler)
+        result = await list_scheduled_tasks(ctx)
+        assert result == "No scheduled tasks"
+
+    @pytest.mark.asyncio
+    async def test_lists_single_task_without_args(self):
+        scheduler = MagicMock()
+        scheduler.list_jobs = AsyncMock(
+            return_value=[
+                {
+                    "id": "job1",
+                    "name": "heartbeat",
+                    "next_run_time": "2026-04-21 10:05:00",
+                    "action": "heartbeat",
+                    "args": None,
+                }
+            ]
+        )
+        ctx = _make_ctx(scheduler=scheduler)
+        result = await list_scheduled_tasks(ctx)
+        assert "Scheduled tasks (1)" in result
+        assert "heartbeat" in result
+        assert "action: heartbeat" in result
+        assert "next: 2026-04-21 10:05:00" in result
+
+    @pytest.mark.asyncio
+    async def test_lists_multiple_tasks_with_args(self):
+        scheduler = MagicMock()
+        scheduler.list_jobs = AsyncMock(
+            return_value=[
+                {
+                    "id": "job1",
+                    "name": "hourly_greeting",
+                    "next_run_time": "2026-04-21 10:00:00",
+                    "action": "send_message",
+                    "args": {"conversation_key": "123", "prompt": "Say hi"},
+                },
+                {
+                    "id": "job2",
+                    "name": "heartbeat",
+                    "next_run_time": "2026-04-21 10:05:00",
+                    "action": "heartbeat",
+                    "args": None,
+                },
+                {
+                    "id": "job3",
+                    "name": "review",
+                    "next_run_time": "2026-04-21 12:00:00",
+                    "action": "memory_review",
+                    "args": None,
+                },
+            ]
+        )
+        ctx = _make_ctx(scheduler=scheduler)
+        result = await list_scheduled_tasks(ctx)
+        assert "Scheduled tasks (3)" in result
+        assert "hourly_greeting" in result
+        assert "send_message" in result
+        assert "heartbeat" in result
+        assert "memory_review" in result
+        assert "conversation_key" in result
+
+    @pytest.mark.asyncio
+    async def test_task_with_empty_args_not_shown(self):
+        scheduler = MagicMock()
+        scheduler.list_jobs = AsyncMock(
+            return_value=[
+                {
+                    "id": "job1",
+                    "name": "review",
+                    "next_run_time": "2026-04-21 12:00:00",
+                    "action": "memory_review",
+                    "args": {},
+                }
+            ]
+        )
+        ctx = _make_ctx(scheduler=scheduler)
+        result = await list_scheduled_tasks(ctx)
+        assert "review" in result
+        assert "action: memory_review" in result
+        assert "args" not in result
+
+    @pytest.mark.asyncio
+    async def test_task_with_missing_keys_uses_defaults(self):
+        scheduler = MagicMock()
+        scheduler.list_jobs = AsyncMock(return_value=[{"id": "job1"}])
+        ctx = _make_ctx(scheduler=scheduler)
+        result = await list_scheduled_tasks(ctx)
+        assert "unnamed" in result
+        assert "action: unknown" in result
+        assert "next: N/A" in result
+
+
 class TestPersonalityPromptNone:
     def test_none_personality_returns_default(self, monkeypatch):
         monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
@@ -1076,3 +1187,194 @@ class TestPersonalityPromptNone:
         prompt_fn = agent._system_prompt_functions[0].function
         result = prompt_fn(ctx)
         assert "helpful AI assistant" in result
+
+
+class TestGetCurrentTime:
+    @pytest.mark.asyncio
+    async def test_returns_utc_time_with_no_personality(self):
+        ctx = _make_ctx(personality=None)
+        result = await get_current_time(ctx)
+        assert "UTC" in result
+
+    @pytest.mark.asyncio
+    async def test_returns_timezone_with_personality(self):
+        personality = Personality(
+            name="Puck",
+            channel="telegram",
+            description="A fairy",
+            system_prompt="You are Puck.",
+            timezone="America/Los_Angeles",
+        )
+        ctx = _make_ctx(personality=personality)
+        result = await get_current_time(ctx)
+        assert "America/Los_Angeles" in result
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_utc_on_invalid_timezone(self):
+        personality = Personality(
+            name="BadTz",
+            channel="telegram",
+            description="test",
+            system_prompt="test",
+            timezone="Invalid/Timezone",
+        )
+        ctx = _make_ctx(personality=personality)
+        result = await get_current_time(ctx)
+        assert "UTC" in result
+
+    @pytest.mark.asyncio
+    async def test_utc_personality_returns_utc(self):
+        personality = Personality(
+            name="UTCBot",
+            channel="discord",
+            description="test",
+            system_prompt="test",
+            timezone="UTC",
+        )
+        ctx = _make_ctx(personality=personality)
+        result = await get_current_time(ctx)
+        assert "UTC" in result
+
+
+class TestGetConversationInfo:
+    @pytest.mark.asyncio
+    async def test_default_conversation_info_returns_zero(self):
+        ctx = _make_ctx()
+        result = await get_conversation_info(ctx)
+        assert "0 messages" in result
+        assert "0 tokens" in result
+
+    @pytest.mark.asyncio
+    async def test_custom_conversation_info_with_messages(self):
+        ctx = _make_ctx()
+        ctx.deps = AgentDeps(
+            agent_id="puck",
+            channel="telegram",
+            conversation_info=lambda: {"message_count": 5, "estimated_tokens": 120},
+        )
+        result = await get_conversation_info(ctx)
+        assert "5 messages" in result
+        assert "120 tokens" in result
+
+    @pytest.mark.asyncio
+    async def test_conversation_info_with_zero_messages(self):
+        ctx = _make_ctx()
+        ctx.deps = AgentDeps(
+            agent_id="puck",
+            channel="telegram",
+            conversation_info=lambda: {"message_count": 0, "estimated_tokens": 0},
+        )
+        result = await get_conversation_info(ctx)
+        assert "0 messages" in result
+
+    @pytest.mark.asyncio
+    async def test_conversation_info_missing_keys_defaults_to_zero(self):
+        ctx = _make_ctx()
+        ctx.deps = AgentDeps(
+            agent_id="puck",
+            channel="telegram",
+            conversation_info=lambda: {},
+        )
+        result = await get_conversation_info(ctx)
+        assert "0 messages" in result
+        assert "0 tokens" in result
+
+
+class TestTimezoneInSystemPrompt:
+    def test_timezone_in_prompt(self, monkeypatch):
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        agent = create_brain(
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        personality = Personality(
+            name="Puck",
+            channel="telegram",
+            description="A mischievous fairy",
+            system_prompt="You are Puck.",
+            traits=["playful"],
+            timezone="America/Los_Angeles",
+        )
+        ctx = MagicMock(spec=RunContext)
+        ctx.deps = AgentDeps(
+            agent_id="puck",
+            channel="telegram",
+            personality=personality,
+        )
+        prompt_fn = agent._system_prompt_functions[0].function
+        result = prompt_fn(ctx)
+        assert "America/Los_Angeles" in result
+        assert "Your timezone is" in result
+        assert "Current time is" in result
+
+    def test_utc_timezone_in_prompt(self, monkeypatch):
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        agent = create_brain(
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        personality = Personality(
+            name="UTCBot",
+            channel="telegram",
+            description="A UTC bot",
+            system_prompt="You are a UTC bot.",
+            timezone="UTC",
+        )
+        ctx = MagicMock(spec=RunContext)
+        ctx.deps = AgentDeps(
+            agent_id="utctest",
+            channel="telegram",
+            personality=personality,
+        )
+        prompt_fn = agent._system_prompt_functions[0].function
+        result = prompt_fn(ctx)
+        assert "Your timezone is UTC" in result
+
+    def test_no_timezone_in_default_prompt(self, monkeypatch):
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        agent = create_brain(
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        ctx = MagicMock(spec=RunContext)
+        ctx.deps = AgentDeps(
+            agent_id="test",
+            channel="telegram",
+            personality=None,
+        )
+        prompt_fn = agent._system_prompt_functions[0].function
+        result = prompt_fn(ctx)
+        assert "helpful AI assistant" in result
+
+
+class TestGetCurentTimeToolRegistered:
+    def test_get_current_time_tool_registered(self, monkeypatch):
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        agent = create_brain(
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        tool_names = list(agent._function_toolset.tools.keys())
+        assert "get_current_time" in tool_names
+
+    def test_get_conversation_info_tool_registered(self, monkeypatch):
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        agent = create_brain(
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        tool_names = list(agent._function_toolset.tools.keys())
+        assert "get_conversation_info" in tool_names

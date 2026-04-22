@@ -64,6 +64,7 @@ async def _builtin_send_message_handler(**kwargs: Any) -> None:
                 council_memory=agent._council_memory,
                 nats_bus=agent._nats_bus,
                 scheduler=agent._scheduler,
+                conversation_key=conversation_key,
             ),
         )
         message_text = result.output
@@ -346,6 +347,14 @@ class PillywigginAgent:
         async with self._lock:
             conversation_key = message.conversation_key
             history = self._get_history(conversation_key)
+
+            def _get_conversation_info():
+                hist = self._get_history(conversation_key)
+                return {
+                    "message_count": len(hist),
+                    "estimated_tokens": sum(len(str(m)) // 4 for m in hist) if hist else 0,
+                }
+
             deps = AgentDeps(
                 agent_id=self.agent_id,
                 channel=message.channel.value,
@@ -356,6 +365,7 @@ class PillywigginAgent:
                 nats_bus=self._nats_bus,
                 scheduler=self._scheduler,
                 conversation_key=conversation_key or "",
+                conversation_info=_get_conversation_info,
             )
             result = await self._brain.run(
                 message.content,

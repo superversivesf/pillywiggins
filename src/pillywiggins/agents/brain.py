@@ -1,5 +1,7 @@
 import os
+from datetime import datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from pydantic_ai import Agent, RunContext
 
@@ -426,6 +428,68 @@ async def unschedule_task(ctx: RunContext[AgentDeps], name: str) -> str:
     return f"Task '{name}' not found or could not be removed"
 
 
+async def list_scheduled_tasks(ctx: RunContext[AgentDeps]) -> str:
+    """List all currently scheduled tasks for this agent.
+
+    Returns:
+        A formatted list of scheduled tasks with their names, actions,
+        next run times, and arguments, or a message if none exist.
+    """
+    import json
+
+    if ctx.deps.scheduler is None:
+        return "Scheduler not available"
+
+    jobs = await ctx.deps.scheduler.list_jobs()
+    if not jobs:
+        return "No scheduled tasks"
+
+    lines = [f"Scheduled tasks ({len(jobs)}):"]
+    for i, job in enumerate(jobs, 1):
+        name = job.get("name", "unnamed")
+        action = job.get("action", "unknown")
+        next_run = job.get("next_run_time", "N/A")
+        parts = [f"{i}. {name} (action: {action}, next: {next_run}"]
+        args = job.get("args")
+        if args:
+            parts.append(f", args: {json.dumps(args)}")
+        parts.append(")")
+        lines.append("".join(parts))
+    return "\n".join(lines)
+
+
+async def get_conversation_info(ctx: RunContext[AgentDeps]) -> str:
+    """Get information about the current conversation.
+
+    Returns the number of messages and estimated token count.
+    """
+    info = ctx.deps.conversation_info()
+    message_count = info.get("message_count", 0)
+    estimated_tokens = info.get("estimated_tokens", 0)
+    return f"Conversation has {message_count} messages (approximately {estimated_tokens} tokens)."
+
+
+async def get_current_time(ctx: RunContext[AgentDeps]) -> str:
+    """Get the current date and time in your configured timezone.
+
+    Use this to know what time it is for you right now, including the date,
+    day of week, and whether it is morning, afternoon, or evening.
+
+    Returns:
+        The current date and time formatted for readability, e.g.
+        "Wednesday, April 22, 2026 at 03:45 PM PDT (America/Los_Angeles)".
+    """
+    personality = ctx.deps.personality
+    tz_name = personality.timezone if personality else "UTC"
+    try:
+        tz = ZoneInfo(tz_name)
+    except (KeyError, ValueError):
+        tz = ZoneInfo("UTC")
+    now = datetime.now(tz)
+    formatted = now.strftime("%A, %B %d, %Y at %I:%M %p %Z")
+    return f"{formatted} ({tz_name})"
+
+
 def _make_skill_tool(skill):
     if skill.meta.get("parameters"):
         param_lines = []
@@ -510,6 +574,16 @@ def create_brain(
             traits_str = ", ".join(personality.traits)
             parts.append(f"Your personality traits: {traits_str}")
         parts.append(personality.system_prompt)
+        tz_name = personality.timezone
+        try:
+            tz = ZoneInfo(tz_name)
+        except (KeyError, ValueError):
+            tz = ZoneInfo("UTC")
+            tz_name = "UTC"
+        now = datetime.now(tz)
+        parts.append(
+            f"Your timezone is {tz_name}. Current time is {now.strftime('%A, %B %d, %Y at %I:%M %p %Z')}."
+        )
         parts.append(
             "You have private memory that persists across all conversations. "
             "When you learn important facts about the user or the world, save them to private memory so you can recall them later. "
@@ -527,6 +601,9 @@ def create_brain(
     agent.tool(deploy_skill_code)
     agent.tool(schedule_task)
     agent.tool(unschedule_task)
+    agent.tool(list_scheduled_tasks)
+    agent.tool(get_current_time)
+    agent.tool(get_conversation_info)
 
     if skill_registry is not None:
         for skill in skill_registry.list_skills():

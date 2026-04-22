@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, Callable, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pillywiggins.memory.private import PrivateMemory
@@ -17,3 +17,4 @@ class AgentDeps:
     nats_bus: Any = field(default=None)
     scheduler: Any = field(default=None)
     conversation_key: str = field(default="")
+    conversation_info: Callable = field(default=lambda: {"message_count": 0, "estimated_tokens": 0})

@@ -13,6 +13,7 @@ class Personality:
     scheduling: dict = field(default_factory=dict)
     schedules: list[dict] = field(default_factory=list)
     bot_chat_limit: int = 3
+    timezone: str = "UTC"
 
 
 def load_personality(path: str) -> Personality:
@@ -32,4 +33,5 @@ def load_personality(path: str) -> Personality:
         scheduling=data.get("scheduling", {}),
         schedules=data.get("schedules", []),
         bot_chat_limit=int(limit),
+        timezone=data.get("timezone", "UTC"),
     )

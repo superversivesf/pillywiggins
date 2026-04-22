@@ -114,6 +114,7 @@ def test_load_personality_complex_scheduling(tmp_path):
 
 def test_load_personality_file_not_found():
     import pytest
+
     with pytest.raises(FileNotFoundError):
         load_personality("/nonexistent/path/personality.yaml")
 
@@ -123,6 +124,7 @@ def test_load_personality_missing_required_field(tmp_path):
     path = tmp_path / "incomplete.yaml"
     path.write_text(yaml.dump(data))
     import pytest
+
     with pytest.raises(KeyError):
         load_personality(str(path))
 
@@ -131,6 +133,7 @@ def test_load_personality_none_yaml(tmp_path):
     path = tmp_path / "empty.yaml"
     path.write_text("")
     import pytest
+
     with pytest.raises(TypeError):
         load_personality(str(path))
 
@@ -180,3 +183,65 @@ def test_personality_yaml_has_description(yaml_path):
     p = load_personality(str(yaml_path))
     assert isinstance(p.description, str)
     assert len(p.description) > 0
+
+
+def test_personality_timezone_default():
+    p = Personality(
+        name="testbot",
+        channel="telegram",
+        description="A test bot",
+        system_prompt="You are a test bot.",
+    )
+    assert p.timezone == "UTC"
+
+
+def test_personality_timezone_custom():
+    p = Personality(
+        name="puck",
+        channel="telegram",
+        description="A fairy",
+        system_prompt="You are Puck.",
+        timezone="America/Los_Angeles",
+    )
+    assert p.timezone == "America/Los_Angeles"
+
+
+def test_load_personality_with_timezone(tmp_path):
+    data = {
+        "name": "puck",
+        "channel": "telegram",
+        "description": "A fairy",
+        "system_prompt": "You are Puck.",
+        "timezone": "America/Los_Angeles",
+    }
+    path = tmp_path / "tz_personality.yaml"
+    path.write_text(yaml.dump(data))
+    p = load_personality(str(path))
+    assert p.timezone == "America/Los_Angeles"
+
+
+def test_load_personality_timezone_defaults_to_utc(tmp_path):
+    data = {
+        "name": "acorn",
+        "channel": "telegram",
+        "description": "A squirrel",
+        "system_prompt": "You are Acorn.",
+    }
+    path = tmp_path / "no_tz.yaml"
+    path.write_text(yaml.dump(data))
+    p = load_personality(str(path))
+    assert p.timezone == "UTC"
+
+
+@pytest.mark.parametrize("yaml_path", _all_personality_yamls(), ids=lambda p: p.stem)
+def test_personality_yaml_has_timezone(yaml_path):
+    p = load_personality(str(yaml_path))
+    assert isinstance(p.timezone, str)
+    assert len(p.timezone) > 0
+
+
+def test_load_personality_puck_has_los_angeles_timezone():
+    puck_path = PERSONALITIES_DIR / "puck.yaml"
+    if puck_path.exists():
+        p = load_personality(str(puck_path))
+        assert p.timezone == "America/Los_Angeles"

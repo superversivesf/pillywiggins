@@ -112,13 +112,24 @@ class TelegramAdapter(BaseAdapter):
         await update.message.reply_text(HELP_TEXT, parse_mode="Markdown")
 
     async def _cmd_status(self, update: Update, context) -> None:
-        status = self.agent.get_status()
+        chat_id = update.message.chat_id
+        is_group = update.message.chat.type in ("group", "supergroup")
+        conversation_key = str(update.message.from_user.id) if is_group else str(chat_id)
+        history = self.agent._get_history(conversation_key)
+        message_count = len(history)
+        total_chars = sum(
+            len(getattr(p, "content", "")) if hasattr(p, "content") else len(str(p))
+            for msg in history
+            for p in (msg.parts if hasattr(msg, "parts") else [])
+        )
+        estimated_tokens = round(total_chars / 4)
+        model = self.agent.model_name
         lines = [
-            f"*Agent:* `{status['agent_id']}`",
-            f"*Channel:* `{status['channel']}`",
-            f"*Model:* `{status['model_name']}`",
-            f"*Messages:* {status['message_count']}",
-            f"*Est. tokens:* ~{status['estimated_tokens']}",
+            f"*Agent:* `{self.agent.agent_id}`",
+            f"*Channel:* `{self.agent.personality.channel}`",
+            f"*Model:* `{model}`",
+            f"*Messages:* {message_count}",
+            f"*Est. tokens:* ~{estimated_tokens}",
         ]
         await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
