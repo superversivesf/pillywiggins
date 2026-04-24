@@ -8,6 +8,14 @@ logger = logging.getLogger(__name__)
 SETTINGS_KEY = web.AppKey("settings", object)
 
 
+def _normalize_ollama_url(base_url: str) -> str:
+    """Strip OpenAI-compatible /v1 suffix so Ollama native endpoints work."""
+    stripped = base_url.rstrip("/")
+    if stripped.endswith("/v1"):
+        stripped = stripped[:-3]
+    return stripped.rstrip("/")
+
+
 async def check_health(settings) -> dict:
     checks = {}
 
@@ -34,11 +42,21 @@ async def check_health(settings) -> dict:
     try:
         import aiohttp
 
+        ollama_url = _normalize_ollama_url(settings.llm_base_url)
         async with aiohttp.ClientSession() as session:
-            async with session.get(f"{settings.llm_base_url}/api/tags") as resp:
+            async with session.get(f"{ollama_url}/api/tags") as resp:
                 checks["llm"] = "ok" if resp.status == 200 else f"error: status {resp.status}"
     except Exception as e:
         checks["llm"] = f"error: {e}"
+
+    try:
+        import nats
+
+        nc = await nats.connect(settings.nats_url)
+        await nc.close()
+        checks["nats"] = "ok"
+    except Exception as e:
+        checks["nats"] = f"error: {e}"
 
     overall = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
     logger.info("Health check: %s — %s", overall, checks)

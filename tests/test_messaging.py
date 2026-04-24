@@ -83,6 +83,7 @@ def test_channel_type_from_string():
 
 def test_channel_type_invalid_value():
     import pytest
+
     with pytest.raises(ValueError):
         ChannelType("irc")
 
@@ -123,3 +124,40 @@ def test_unified_message_content_can_be_empty():
         conversation_key="email_a",
     )
     assert msg.content == ""
+
+
+# --- Tests for messaging/__init__.py exports ---
+
+
+def test_messaging_package_exports_unified_message():
+    from pillywiggins.messaging import UnifiedMessage as ExportedUnifiedMessage
+
+    assert ExportedUnifiedMessage is UnifiedMessage
+
+
+def test_messaging_package_exports_channel_type():
+    from pillywiggins.messaging import ChannelType as ExportedChannelType
+
+    assert ExportedChannelType is ChannelType
+
+
+def test_messaging_package_exports_nats_bus():
+    from pillywiggins.messaging import NatsBus
+
+    assert NatsBus is not None
+
+
+def test_messaging_package_exports_constants():
+    from pillywiggins.messaging import COUNCIL_STREAM, BROADCAST_SUBJECT, DIRECT_SUBJECT_PREFIX
+
+    assert isinstance(COUNCIL_STREAM, str)
+    assert isinstance(BROADCAST_SUBJECT, str)
+    assert isinstance(DIRECT_SUBJECT_PREFIX, str)
+
+    from pillywiggins.messaging.nats_bus import COUNCIL_STREAM as ORIG_COUNCIL_STREAM
+    from pillywiggins.messaging.nats_bus import BROADCAST_SUBJECT as ORIG_BROADCAST_SUBJECT
+    from pillywiggins.messaging.nats_bus import DIRECT_SUBJECT_PREFIX as ORIG_DIRECT_SUBJECT_PREFIX
+
+    assert COUNCIL_STREAM is ORIG_COUNCIL_STREAM
+    assert BROADCAST_SUBJECT is ORIG_BROADCAST_SUBJECT
+    assert DIRECT_SUBJECT_PREFIX is ORIG_DIRECT_SUBJECT_PREFIX

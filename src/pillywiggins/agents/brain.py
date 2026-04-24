@@ -341,11 +341,12 @@ async def deploy_skill_code(
     draft = await test_skill(draft, test_cases)
 
     settings = Settings()
-    return deploy_skill(
+    return await deploy_skill(
         draft,
         approved=approved,
         skills_dir=settings.skills_dir,
         registry=ctx.deps.skill_registry,
+        nats_bus=ctx.deps.nats_bus,
     )
 
 
@@ -469,6 +470,45 @@ async def get_conversation_info(ctx: RunContext[AgentDeps]) -> str:
     return f"Conversation has {message_count} messages (approximately {estimated_tokens} tokens)."
 
 
+async def send_message_to_agent(
+    ctx: RunContext[AgentDeps],
+    target_agent_id: str,
+    message: str,
+) -> str:
+    """Send a direct message to another agent via NATS.
+
+    Args:
+        target_agent_id: The ID of the agent to send the message to.
+        message: The message content to send.
+
+    Returns:
+        Confirmation that the message was sent, or an error message.
+    """
+    if ctx.deps.nats_bus is None:
+        return "NATS bus is not available."
+    from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
+
+    msg = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id=ctx.deps.agent_id,
+        content=message,
+        conversation_key="",
+        metadata={"from": ctx.deps.agent_id},
+    )
+    await ctx.deps.nats_bus.publish_direct(
+        target_agent_id=target_agent_id,
+        message_type="message",
+        data={
+            "channel": msg.channel.value,
+            "channel_user_id": msg.channel_user_id,
+            "content": msg.content,
+            "conversation_key": msg.conversation_key,
+            "metadata": msg.metadata,
+        },
+    )
+    return f"Sent message to {target_agent_id}"
+
+
 async def get_current_time(ctx: RunContext[AgentDeps]) -> str:
     """Get the current date and time in your configured timezone.
 
@@ -568,12 +608,7 @@ def create_brain(
         from pillywiggins.agents.personality import Personality
 
         personality: Personality = personality
-        parts = []
-        parts.append(f"You are {personality.name}. {personality.description}")
-        if personality.traits:
-            traits_str = ", ".join(personality.traits)
-            parts.append(f"Your personality traits: {traits_str}")
-        parts.append(personality.system_prompt)
+        parts = [personality.build_system_prompt()]
         tz_name = personality.timezone
         try:
             tz = ZoneInfo(tz_name)
@@ -602,6 +637,7 @@ def create_brain(
     agent.tool(schedule_task)
     agent.tool(unschedule_task)
     agent.tool(list_scheduled_tasks)
+    agent.tool(send_message_to_agent)
     agent.tool(get_current_time)
     agent.tool(get_conversation_info)
 

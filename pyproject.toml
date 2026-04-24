@@ -10,6 +10,7 @@ dependencies = [
     "redis[hiredis]",
     "nats-py",
     "python-telegram-bot",
+    "discord.py",
     "apscheduler",
     "pydantic-settings",
     "pydantic",

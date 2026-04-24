@@ -1,8 +1,9 @@
+import importlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pillywiggins.__main__ import _run
+from pillywiggins.__main__ import _load_adapter_class, _run
 
 
 def _make_mock_agent():
@@ -127,12 +128,15 @@ def test_main_parses_args():
         patch("pillywiggins.__main__.ConversationCache") as mock_cache_cls,
         patch("pillywiggins.__main__.PrivateMemory") as mock_pm_cls,
         patch("pillywiggins.__main__.PillywigginAgent") as mock_agent_cls,
-        patch("pillywiggins.__main__.TelegramAdapter") as mock_adapter_cls,
+        patch("pillywiggins.__main__._load_adapter_class") as mock_load_adapter,
         patch("pillywiggins.__main__.asyncio") as mock_asyncio,
         patch("sys.argv", ["pillywiggins", "--channel", "telegram"]),
     ):
         mock_settings = MagicMock()
+        mock_settings.telegram_bot_token = "fake-token"
         mock_settings_cls.return_value = mock_settings
+        mock_adapter_cls = MagicMock()
+        mock_load_adapter.return_value = mock_adapter_cls
 
         from pillywiggins.__main__ import main
 
@@ -160,15 +164,18 @@ def test_main_with_agent_id_calls_get_agent_config():
         patch("pillywiggins.__main__.ConversationCache") as mock_cache_cls,
         patch("pillywiggins.__main__.PrivateMemory") as mock_pm_cls,
         patch("pillywiggins.__main__.PillywigginAgent") as mock_agent_cls,
-        patch("pillywiggins.__main__.TelegramAdapter") as mock_adapter_cls,
+        patch("pillywiggins.__main__._load_adapter_class") as mock_load_adapter,
         patch("pillywiggins.__main__.SkillRegistry") as mock_skill_cls,
         patch("pillywiggins.__main__.asyncio") as mock_asyncio,
         patch("sys.argv", ["pillywiggins", "--agent-id", "bramblethorn"]),
     ):
         mock_settings = MagicMock()
+        mock_settings.telegram_bot_token = "fake-token"
         mock_settings.agents_config_path = "agents.yaml"
         mock_settings_cls.return_value = mock_settings
         mock_get_cfg.return_value = mock_agent_cfg
+        mock_adapter_cls = MagicMock()
+        mock_load_adapter.return_value = mock_adapter_cls
 
         from pillywiggins.__main__ import main
 
@@ -202,15 +209,18 @@ def test_main_agent_id_sets_channel_from_config():
         patch("pillywiggins.__main__.ConversationCache") as mock_cache_cls,
         patch("pillywiggins.__main__.PrivateMemory") as mock_pm_cls,
         patch("pillywiggins.__main__.PillywigginAgent") as mock_agent_cls,
-        patch("pillywiggins.__main__.TelegramAdapter") as mock_adapter_cls,
+        patch("pillywiggins.__main__._load_adapter_class") as mock_load_adapter,
         patch("pillywiggins.__main__.SkillRegistry") as mock_skill_cls,
         patch("pillywiggins.__main__.asyncio") as mock_asyncio,
         patch("sys.argv", ["pillywiggins", "--agent-id", "bramblethorn"]),
     ):
         mock_settings = MagicMock()
+        mock_settings.telegram_bot_token = "fake-token"
         mock_settings.agents_config_path = "agents.yaml"
         mock_settings_cls.return_value = mock_settings
         mock_get_cfg.return_value = mock_agent_cfg
+        mock_adapter_cls = MagicMock()
+        mock_load_adapter.return_value = mock_adapter_cls
 
         from pillywiggins.__main__ import main
 
@@ -226,21 +236,65 @@ def test_main_agent_id_sets_channel_from_config():
         assert mock_agent_cls.call_args[1]["agent_id"] == "bramblethorn"
 
 
-def test_main_rejects_unimplemented_channel():
+def test_load_adapter_class_telegram():
+    cls = _load_adapter_class("telegram")
+    from pillywiggins.adapters.telegram_adapter import TelegramAdapter
+
+    assert cls is TelegramAdapter
+
+
+def test_load_adapter_class_raises_for_missing_adapter():
+    with pytest.raises(ImportError):
+        _load_adapter_class("irc")
+
+
+def test_main_routes_telegram_via_dynamic_load():
     with (
         patch("pillywiggins.__main__.Settings") as mock_settings_cls,
         patch("pillywiggins.__main__.load_personality") as mock_load,
         patch("pillywiggins.__main__.ConversationCache") as mock_cache_cls,
         patch("pillywiggins.__main__.PrivateMemory") as mock_pm_cls,
         patch("pillywiggins.__main__.PillywigginAgent") as mock_agent_cls,
-        patch("sys.argv", ["pillywiggins", "--channel", "discord"]),
+        patch("pillywiggins.__main__._load_adapter_class") as mock_load_adapter,
+        patch("pillywiggins.__main__.asyncio") as mock_asyncio,
+        patch("sys.argv", ["pillywiggins", "--channel", "telegram"]),
     ):
         mock_settings = MagicMock()
+        mock_settings.telegram_bot_token = "fake-token"
         mock_settings_cls.return_value = mock_settings
+        mock_adapter_cls = MagicMock()
+        mock_load_adapter.return_value = mock_adapter_cls
 
         from pillywiggins.__main__ import main
 
-        with pytest.raises(ValueError, match="not yet implemented"):
+        main()
+
+    mock_load_adapter.assert_called_once_with("telegram")
+    mock_adapter_cls.assert_called_once_with(
+        agent=mock_agent_cls.return_value,
+        token="fake-token",
+        settings=mock_settings,
+    )
+
+
+def test_main_raises_import_error_for_missing_adapter():
+    with (
+        patch("pillywiggins.__main__.Settings") as mock_settings_cls,
+        patch("pillywiggins.__main__.load_personality") as mock_load,
+        patch("pillywiggins.__main__.ConversationCache") as mock_cache_cls,
+        patch("pillywiggins.__main__.PrivateMemory") as mock_pm_cls,
+        patch("pillywiggins.__main__.PillywigginAgent") as mock_agent_cls,
+        patch("pillywiggins.__main__._load_adapter_class") as mock_load_adapter,
+        patch("sys.argv", ["pillywiggins", "--channel", "discord"]),
+    ):
+        mock_settings = MagicMock()
+        mock_settings.telegram_bot_token = "fake-token"
+        mock_settings_cls.return_value = mock_settings
+        mock_load_adapter.side_effect = ImportError("No module named 'discord_adapter'")
+
+        from pillywiggins.__main__ import main
+
+        with pytest.raises(ImportError, match="discord"):
             main()
 
 

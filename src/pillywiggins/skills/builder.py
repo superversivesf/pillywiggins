@@ -24,7 +24,9 @@ DANGEROUS_PATTERNS = {
 }
 
 
-def validate_skill_code(code: str, permissions: Optional[dict[str, bool]] = None) -> tuple[bool, str]:
+def validate_skill_code(
+    code: str, permissions: Optional[dict[str, bool]] = None
+) -> tuple[bool, str]:
     try:
         ast.parse(code)
     except SyntaxError as e:
@@ -85,7 +87,8 @@ class SkillDraft:
 def draft_skill(name: str, code: str) -> SkillDraft:
     meta = _extract_meta(code)
     permissions = {
-        "network": meta.get("permissions", {}).get("network", False) or meta.get("network_access", False),
+        "network": meta.get("permissions", {}).get("network", False)
+        or meta.get("network_access", False),
         "subprocess": meta.get("permissions", {}).get("subprocess", False),
         "file_write": meta.get("permissions", {}).get("file_write", False),
     }
@@ -110,39 +113,45 @@ async def test_skill(draft: SkillDraft, test_cases: list[dict[str, Any]]) -> Ski
             )
 
             if not sandbox_result.success:
-                results.append({
-                    "args": args,
-                    "expected": expected,
-                    "passed": False,
-                    "actual": None,
-                    "error": sandbox_result.error,
-                    "timed_out": sandbox_result.timed_out,
-                    "execution_time_ms": sandbox_result.execution_time_ms,
-                })
+                results.append(
+                    {
+                        "args": args,
+                        "expected": expected,
+                        "passed": False,
+                        "actual": None,
+                        "error": sandbox_result.error,
+                        "timed_out": sandbox_result.timed_out,
+                        "execution_time_ms": sandbox_result.execution_time_ms,
+                    }
+                )
                 continue
 
             actual = sandbox_result.result
             passed = actual == expected if expected is not None else True
 
-            results.append({
-                "args": args,
-                "expected": expected,
-                "passed": passed,
-                "actual": actual,
-                "error": None,
-                "timed_out": False,
-                "execution_time_ms": sandbox_result.execution_time_ms,
-            })
+            results.append(
+                {
+                    "args": args,
+                    "expected": expected,
+                    "passed": passed,
+                    "actual": actual,
+                    "error": None,
+                    "timed_out": False,
+                    "execution_time_ms": sandbox_result.execution_time_ms,
+                }
+            )
         except Exception as e:
-            results.append({
-                "args": args,
-                "expected": expected,
-                "passed": False,
-                "actual": None,
-                "error": str(e),
-                "timed_out": False,
-                "execution_time_ms": 0.0,
-            })
+            results.append(
+                {
+                    "args": args,
+                    "expected": expected,
+                    "passed": False,
+                    "actual": None,
+                    "error": str(e),
+                    "timed_out": False,
+                    "execution_time_ms": 0.0,
+                }
+            )
 
     draft.test_results = results
     draft.status = DraftStatus.TESTED
@@ -183,11 +192,12 @@ def review_skill(draft: SkillDraft) -> str:
     return "\n".join(lines)
 
 
-def deploy_skill(
+async def deploy_skill(
     draft: SkillDraft,
     approved: bool,
     skills_dir: str,
     registry: Any,
+    nats_bus: Any = None,
 ) -> str:
     if not approved:
         return f"Skill '{draft.name}' deployment was not approved."
@@ -201,4 +211,17 @@ def deploy_skill(
             return f"Skill '{draft.name}' has {len(failed)} failing test(s). Fix before deploying."
 
     registry.register_skill(draft.name, draft.code, draft.meta)
+
+    if nats_bus is not None:
+        try:
+            await nats_bus.publish_broadcast(
+                "skill_deployed",
+                {
+                    "skill_name": draft.name,
+                    "meta": draft.meta,
+                },
+            )
+        except Exception:
+            pass
+
     return f"Skill '{draft.name}' deployed successfully."

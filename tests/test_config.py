@@ -1,3 +1,7 @@
+from pathlib import Path
+
+import pytest
+
 from pillywiggins.config import Settings
 
 
@@ -164,3 +168,37 @@ def test_settings_agents_config_path_from_env(monkeypatch):
     monkeypatch.setenv("AGENTS_CONFIG_PATH", "/env/agents.yaml")
     s = Settings()
     assert s.agents_config_path == "/env/agents.yaml"
+
+
+def test_dotenv_telegram_token_not_a_timezone_string():
+    """PUCK_TELEGRAM_TOKEN must not be a timezone string (regression check)."""
+    env_path = Path(".env")
+    if env_path.exists():
+        content = env_path.read_text()
+        for line in content.splitlines():
+            if line.startswith("PUCK_TELEGRAM_TOKEN="):
+                value = line.split("=", 1)[1]
+                assert value != "Europe/Helsinki", (
+                    "PUCK_TELEGRAM_TOKEN should not be a timezone string "
+                    "( Europe/Helsinki ) in .env"
+                )
+                return
+        pytest.fail("PUCK_TELEGRAM_TOKEN not found in .env")
+    else:
+        pytest.skip("No .env file present")
+
+
+def test_env_example_telegram_token_is_placeholder():
+    """env.example must contain a placeholder, not a real token or timezone."""
+    env_example_path = Path("env.example")
+    assert env_example_path.exists(), "env.example should exist"
+    content = env_example_path.read_text()
+    for line in content.splitlines():
+        if line.startswith("PUCK_TELEGRAM_TOKEN="):
+            value = line.split("=", 1)[1]
+            assert value != "Europe/Helsinki", (
+                "PUCK_TELEGRAM_TOKEN should not be a timezone string in env.example"
+            )
+            assert value != "", "PUCK_TELEGRAM_TOKEN should not be empty in env.example"
+            return
+    pytest.fail("PUCK_TELEGRAM_TOKEN not found in env.example")

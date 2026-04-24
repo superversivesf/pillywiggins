@@ -31,7 +31,7 @@ def test_incomplete_subclass_missing_connect():
         async def listen(self) -> None:
             pass
 
-        async def send(self, conversation_key: str, text: str, **kwargs) -> None:
+        async def send(self, channel_id: str, content: str, metadata: dict | None = None) -> None:
             pass
 
         def normalize(self, raw_message: dict) -> UnifiedMessage:
@@ -47,7 +47,7 @@ def test_incomplete_subclass_missing_listen():
         async def connect(self) -> None:
             pass
 
-        async def send(self, conversation_key: str, text: str, **kwargs) -> None:
+        async def send(self, channel_id: str, content: str, metadata: dict | None = None) -> None:
             pass
 
         def normalize(self, raw_message: dict) -> UnifiedMessage:
@@ -82,7 +82,7 @@ def test_incomplete_subclass_missing_normalize():
         async def listen(self) -> None:
             pass
 
-        async def send(self, conversation_key: str, text: str, **kwargs) -> None:
+        async def send(self, channel_id: str, content: str, metadata: dict | None = None) -> None:
             pass
 
     mock_agent = MagicMock()
@@ -98,7 +98,7 @@ def test_complete_subclass_can_instantiate():
         async def listen(self) -> None:
             pass
 
-        async def send(self, conversation_key: str, text: str, **kwargs) -> None:
+        async def send(self, channel_id: str, content: str, metadata: dict | None = None) -> None:
             pass
 
         def normalize(self, raw_message: dict) -> UnifiedMessage:
@@ -122,7 +122,7 @@ def test_init_stores_agent_reference():
         async def listen(self) -> None:
             pass
 
-        async def send(self, conversation_key: str, text: str, **kwargs) -> None:
+        async def send(self, channel_id: str, content: str, metadata: dict | None = None) -> None:
             pass
 
         def normalize(self, raw_message: dict) -> UnifiedMessage:
@@ -152,7 +152,7 @@ async def test_connect_is_async():
         async def listen(self) -> None:
             pass
 
-        async def send(self, conversation_key: str, text: str, **kwargs) -> None:
+        async def send(self, channel_id: str, content: str, metadata: dict | None = None) -> None:
             pass
 
         def normalize(self, raw_message: dict) -> UnifiedMessage:
@@ -179,7 +179,7 @@ async def test_listen_is_async():
         async def listen(self) -> None:
             self.listening = True
 
-        async def send(self, conversation_key: str, text: str, **kwargs) -> None:
+        async def send(self, channel_id: str, content: str, metadata: dict | None = None) -> None:
             pass
 
         def normalize(self, raw_message: dict) -> UnifiedMessage:
@@ -206,8 +206,8 @@ async def test_send_is_async():
         async def listen(self) -> None:
             pass
 
-        async def send(self, conversation_key: str, text: str, **kwargs) -> None:
-            self.sent_messages.append((conversation_key, text, kwargs))
+        async def send(self, channel_id: str, content: str, metadata: dict | None = None) -> None:
+            self.sent_messages.append((channel_id, content, metadata))
 
         def normalize(self, raw_message: dict) -> UnifiedMessage:
             return UnifiedMessage(
@@ -218,8 +218,35 @@ async def test_send_is_async():
             )
 
     adapter = ConcreteAdapter(MagicMock())
-    await adapter.send("conv1", "hello", foo="bar")
-    assert adapter.sent_messages == [("conv1", "hello", {"foo": "bar"})]
+    await adapter.send("ch1", "hello", {"foo": "bar"})
+    assert adapter.sent_messages == [("ch1", "hello", {"foo": "bar"})]
+
+
+@pytest.mark.asyncio
+async def test_send_without_metadata():
+    class ConcreteAdapter(BaseAdapter):
+        sent_messages = []
+
+        async def connect(self) -> None:
+            pass
+
+        async def listen(self) -> None:
+            pass
+
+        async def send(self, channel_id: str, content: str, metadata: dict | None = None) -> None:
+            self.sent_messages.append((channel_id, content, metadata))
+
+        def normalize(self, raw_message: dict) -> UnifiedMessage:
+            return UnifiedMessage(
+                channel=ChannelType.TELEGRAM,
+                channel_user_id="1",
+                content="",
+                conversation_key="1",
+            )
+
+    adapter = ConcreteAdapter(MagicMock())
+    await adapter.send("ch1", "hello")
+    assert adapter.sent_messages == [("ch1", "hello", None)]
 
 
 def test_normalize_returns_unified_message():
@@ -230,7 +257,7 @@ def test_normalize_returns_unified_message():
         async def listen(self) -> None:
             pass
 
-        async def send(self, conversation_key: str, text: str, **kwargs) -> None:
+        async def send(self, channel_id: str, content: str, metadata: dict | None = None) -> None:
             pass
 
         def normalize(self, raw_message: dict) -> UnifiedMessage:
@@ -262,7 +289,7 @@ def test_normalize_with_empty_raw_message():
         async def listen(self) -> None:
             pass
 
-        async def send(self, conversation_key: str, text: str, **kwargs) -> None:
+        async def send(self, channel_id: str, content: str, metadata: dict | None = None) -> None:
             pass
 
         def normalize(self, raw_message: dict) -> UnifiedMessage:

@@ -1,13 +1,17 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS private_memory (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    agent_id    TEXT NOT NULL,
-    content     TEXT NOT NULL,
-    embedding   vector(768),
-    metadata    JSONB DEFAULT '{}',
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id          TEXT NOT NULL,
+    content           TEXT NOT NULL,
+    memory_type       VARCHAR(32) NOT NULL DEFAULT 'episodic',
+    embedding         vector(768),
+    metadata          JSONB DEFAULT '{}',
+    importance        FLOAT DEFAULT 0.5,
+    access_count      INTEGER DEFAULT 0,
+    last_accessed_at  TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_private_memory_agent_id
@@ -24,12 +28,17 @@ CREATE POLICY private_memory_isolation ON private_memory
     USING (agent_id = current_setting('app.agent_id')::text);
 
 CREATE TABLE IF NOT EXISTS council_memory (
-    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     contributing_agent TEXT NOT NULL,
-    tags              TEXT[] DEFAULT '{}',
+    tags               TEXT[] DEFAULT '{}',
     content            TEXT NOT NULL,
     embedding          vector(768),
-    created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+    message_type       VARCHAR(32) NOT NULL DEFAULT 'insight',
+    confidence         FLOAT DEFAULT 1.0,
+    source_context     JSONB DEFAULT '{}',
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at         TIMESTAMPTZ,
+    superseded_by      UUID REFERENCES council_memory(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_council_memory_embedding

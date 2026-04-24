@@ -14,7 +14,7 @@ class PrivateMemory:
 
     async def connect(self) -> None:
         async def _init_connection(conn):
-            await conn.execute(f"SET app.agent_id = '{self._agent_id}'")
+            await conn.execute("SET app.agent_id = $1", self._agent_id)
 
         self._pool = await asyncpg.create_pool(
             self._database_url,
@@ -24,17 +24,19 @@ class PrivateMemory:
         )
         logger.info("Private memory connected for agent %s", self._agent_id)
 
-    async def save(self, content: str, embedding: list[float], metadata: Optional[dict] = None) -> None:
+    async def save(
+        self, content: str, embedding: list[float], metadata: Optional[dict] = None
+    ) -> None:
         if self._pool is None:
             logger.error("Private memory not connected, cannot save")
             return
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """INSERT INTO private_memory (agent_id, content, embedding, metadata)
-                   VALUES ($1, $2, $3, $4)""",
+                   VALUES ($1, $2, $3::vector, $4)""",
                 self._agent_id,
                 content,
-                str(embedding),
+                embedding,
                 metadata or {},
             )
 
@@ -49,7 +51,7 @@ class PrivateMemory:
                    FROM private_memory
                    ORDER BY embedding <=> $1::vector
                    LIMIT $2""",
-                str(query_embedding),
+                query_embedding,
                 limit,
             )
         return [

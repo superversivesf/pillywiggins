@@ -13,7 +13,7 @@ from pillywiggins.memory.private import PrivateMemory
 from pillywiggins.memory.store import ConversationStore
 from pillywiggins.skills.registry import SkillRegistry
 from pillywiggins.messaging.nats_bus import NatsBus
-from pillywiggins.messaging.unified import UnifiedMessage
+from pillywiggins.messaging.unified import UnifiedMessage, ChannelType
 from pillywiggins.scheduling.scheduler import AgentScheduler
 
 logger = logging.getLogger(__name__)
@@ -68,7 +68,7 @@ async def _builtin_send_message_handler(**kwargs: Any) -> None:
             ),
         )
         message_text = result.output
-        await agent._adapter.send(conversation_key, message_text, chat_id=chat_id)
+        await agent._adapter.send(conversation_key, message_text, {"chat_id": chat_id})
         logger.info("send_message for %s to %s", agent_id, conversation_key)
     except Exception:
         logger.exception("send_message failed for %s", agent_id)
@@ -148,6 +148,35 @@ class PillywigginAgent:
                     conversation_key,
                 )
 
+    async def _on_nats_message(self, msg_type: str, data: dict) -> None:
+        if msg_type == "message":
+            try:
+                channel = ChannelType(data.get("channel", "telegram"))
+            except ValueError:
+                channel = ChannelType.TELEGRAM
+            msg = UnifiedMessage(
+                channel=channel,
+                channel_user_id=data.get("channel_user_id", ""),
+                content=data.get("content", ""),
+                conversation_key=data.get("conversation_key", ""),
+                metadata=data.get("metadata", {}),
+            )
+            await self.process_message(msg)
+        elif msg_type == "insight":
+            if self._council_memory is not None:
+                await self._council_memory.write_entry(
+                    content=data.get("content", ""),
+                    tags=data.get("tags", []),
+                    embedding=data.get("embedding", []),
+                    message_type="insight",
+                    confidence=1.0,
+                )
+        elif msg_type == "skill_deployed":
+            if self._skill_registry is not None:
+                self._skill_registry.load_all()
+        else:
+            logger.warning("Unknown NATS message type: %s", msg_type)
+
     async def start(self) -> None:
         from pillywiggins.config import Settings
 
@@ -169,7 +198,9 @@ class PillywigginAgent:
                 bus = NatsBus(self._nats_url, self.agent_id)
                 await bus.connect()
                 self._nats_bus = bus
-                logger.info("NATS bus connected for %s", self.agent_id)
+                await bus.subscribe_broadcast(self._on_nats_message)
+                await bus.subscribe_direct(self._on_nats_message)
+                logger.info("NATS bus connected and subscribed for %s", self.agent_id)
             except Exception:
                 logger.warning("Failed to connect NATS bus for %s", self.agent_id, exc_info=True)
                 self._nats_bus = None
@@ -342,6 +373,9 @@ class PillywigginAgent:
         new_history = [summary_prompt, summary_response, *truncated_kept]
         self._set_history(new_history, conversation_key)
         return f"Compacted {len(old_messages)} messages into summary. Keeping {keep_count} recent."
+
+    async def process_message(self, message: UnifiedMessage) -> str:
+        return await self.handle_message(message)
 
     async def handle_message(self, message: UnifiedMessage) -> str:
         async with self._lock:

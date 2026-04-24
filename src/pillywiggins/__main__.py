@@ -1,9 +1,9 @@
 import argparse
 import asyncio
+import importlib
 import logging
 from pathlib import Path
 
-from pillywiggins.adapters.telegram_adapter import TelegramAdapter
 from pillywiggins.agents.base import PillywigginAgent
 from pillywiggins.agents.personality import load_personality
 from pillywiggins.agents_config import apply_agent_env, get_agent_config
@@ -15,6 +15,25 @@ from pillywiggins.memory.store import ConversationStore
 from pillywiggins.skills.registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
+
+
+def _load_adapter_class(channel: str):
+    """Dynamically import the adapter class for the given channel name.
+
+    Naming convention: ``<channel>_adapter`` module containing
+    ``<Channel>Adapter`` class (e.g. ``telegram`` → ``TelegramAdapter``).
+    """
+    adapter_name = f"{channel}_adapter"
+    class_name = f"{channel.capitalize()}Adapter"
+    module_path = f"pillywiggins.adapters.{adapter_name}"
+    try:
+        mod = importlib.import_module(module_path)
+    except ModuleNotFoundError as exc:
+        raise ImportError(f"Adapter for channel '{channel}' not found ({module_path})") from exc
+    try:
+        return getattr(mod, class_name)
+    except AttributeError as exc:
+        raise ImportError(f"Adapter class '{class_name}' not found in {module_path}") from exc
 
 
 def main():
@@ -87,10 +106,14 @@ def main():
         compact_truncate_message_chars=settings.compact_truncate_message_chars,
     )
 
-    if channel == "telegram":
-        adapter = TelegramAdapter(agent=agent, token=settings.telegram_bot_token, settings=settings)
-    else:
-        raise ValueError(f"Channel {channel} not yet implemented")
+    AdapterClass = _load_adapter_class(channel)
+
+    token_attr = f"{channel}_bot_token"
+    token = getattr(settings, token_attr, None)
+    if token is None:
+        raise ValueError(f"Missing token setting: {token_attr}")
+
+    adapter = AdapterClass(agent=agent, token=token, settings=settings)
 
     agent.set_adapter(adapter)
 

@@ -245,3 +245,169 @@ def test_load_personality_puck_has_los_angeles_timezone():
     if puck_path.exists():
         p = load_personality(str(puck_path))
         assert p.timezone == "America/Los_Angeles"
+
+
+# ---- New schema support (archetype / tone / style / response_length) ----
+
+
+def test_load_personality_new_schema(tmp_path):
+    data = {
+        "name": "Puck",
+        "channel": "discord",
+        "archetype": "Mischievous fairy trickster",
+        "tone": "playful, witty, slightly chaotic",
+        "style": "uses emojis freely, loves puns",
+        "response_length": "concise, 1-3 sentences unless asked for more",
+    }
+    path = tmp_path / "new_schema.yaml"
+    path.write_text(yaml.dump(data))
+    p = load_personality(str(path))
+    assert p.name == "Puck"
+    assert p.channel == "discord"
+    assert p.archetype == "Mischievous fairy trickster"
+    assert p.tone == "playful, witty, slightly chaotic"
+    assert p.style == "uses emojis freely, loves puns"
+    assert p.response_length == "concise, 1-3 sentences unless asked for more"
+
+
+def test_load_personality_new_schema_missing_channel_raises(tmp_path):
+    data = {
+        "name": "Puck",
+        "archetype": "Mischievous fairy trickster",
+        "tone": "playful",
+        "style": "snarky",
+    }
+    path = tmp_path / "bad.yaml"
+    path.write_text(yaml.dump(data))
+    with pytest.raises(KeyError):
+        load_personality(str(path))
+
+
+def test_load_personality_new_schema_defaults(tmp_path):
+    data = {
+        "name": "Puck",
+        "channel": "discord",
+        "archetype": "Trickster",
+        "tone": "playful",
+        "style": "snarky",
+        "response_length": "short",
+    }
+    path = tmp_path / "defaults.yaml"
+    path.write_text(yaml.dump(data))
+    p = load_personality(str(path))
+    assert p.traits == []
+    assert p.scheduling == {}
+    assert p.schedules == []
+    assert p.bot_chat_limit == 3
+    assert p.timezone == "UTC"
+
+
+def test_new_schema_generates_system_prompt(tmp_path):
+    data = {
+        "name": "Puck",
+        "channel": "discord",
+        "archetype": "Mischievous fairy trickster",
+        "tone": "playful, witty, slightly chaotic",
+        "style": "uses emojis freely, loves puns, references internet culture",
+        "response_length": "concise, 1-3 sentences unless asked for more",
+    }
+    path = tmp_path / "new_schema.yaml"
+    path.write_text(yaml.dump(data))
+    p = load_personality(str(path))
+    prompt = p.build_system_prompt()
+    assert "Puck" in prompt
+    assert "Mischievous fairy trickster" in prompt
+    assert "playful, witty, slightly chaotic" in prompt
+    assert "uses emojis freely, loves puns, references internet culture" in prompt
+    assert "concise, 1-3 sentences unless asked for more" in prompt
+
+
+def test_old_schema_still_works(tmp_path):
+    data = {
+        "name": "Acorn",
+        "channel": "telegram",
+        "description": "A patient and visionary fae.",
+        "system_prompt": "You are Acorn.",
+        "traits": ["patient", "wise"],
+    }
+    path = tmp_path / "old_schema.yaml"
+    path.write_text(yaml.dump(data))
+    p = load_personality(str(path))
+    assert p.name == "Acorn"
+    assert p.description == "A patient and visionary fae."
+    assert p.system_prompt == "You are Acorn."
+    assert p.traits == ["patient", "wise"]
+
+
+def test_old_schema_system_prompt_roundtrip(tmp_path):
+    data = {
+        "name": "Acorn",
+        "channel": "telegram",
+        "description": "A patient and visionary fae.",
+        "system_prompt": "You are Acorn.",
+    }
+    path = tmp_path / "old_schema.yaml"
+    path.write_text(yaml.dump(data))
+    p = load_personality(str(path))
+    prompt = p.build_system_prompt()
+    assert "You are Acorn." in prompt
+    assert "A patient and visionary fae." in prompt
+
+
+def test_mixed_old_and_new_prefers_new_system_prompt_field(tmp_path):
+    data = {
+        "name": "Puck",
+        "channel": "discord",
+        "archetype": "Trickster",
+        "tone": "playful",
+        "style": "snarky",
+        "response_length": "short",
+        "system_prompt": "You are Puck.",
+    }
+    path = tmp_path / "mixed.yaml"
+    path.write_text(yaml.dump(data))
+    p = load_personality(str(path))
+    # system_prompt explicitly provided still takes priority
+    assert p.system_prompt == "You are Puck."
+    assert p.archetype == "Trickster"
+
+
+def test_backward_compat_existing_personalities_load():
+    """All existing personalities/ YAMLs must still be loadable."""
+    if not PERSONALITIES_DIR.exists():
+        pytest.skip("No personalities directory found")
+    for yaml_path in PERSONALITIES_DIR.glob("*.yaml"):
+        p = load_personality(str(yaml_path))
+        assert isinstance(p, Personality)
+        assert p.system_prompt  # should be non-empty
+
+
+def test_discord_personality_yaml_loads():
+    """personalities/discord.yaml must load with new schema fields."""
+    path = PERSONALITIES_DIR / "discord.yaml"
+    if not path.exists():
+        pytest.skip("discord.yaml not found")
+    p = load_personality(str(path))
+    assert p.name == "Robin"
+    assert p.channel == "discord"
+    assert p.archetype == "Mischievous fairy trickster"
+    assert p.tone == "playful, witty, slightly chaotic"
+    assert p.style == "uses emojis freely, loves puns, references internet culture"
+    assert p.response_length == "concise, 1-3 sentences unless asked for more"
+    assert p.timezone == "America/Los_Angeles"
+    assert p.bot_chat_limit == 3
+    assert len(p.schedules) == 3
+    assert p.system_prompt
+    prompt = p.build_system_prompt()
+    assert "Robin" in prompt
+    assert "Mischievous fairy trickster" in prompt
+    assert "playful, witty, slightly chaotic" in prompt
+    assert "uses emojis freely, loves puns, references internet culture" in prompt
+    assert "concise, 1-3 sentences unless asked for more" in prompt
+
+
+def test_schema_roundtrip_equality():
+    p1 = Personality(name="puck", channel="telegram", description="desc", system_prompt="sp")
+    p2 = Personality(name="puck", channel="telegram", archetype="desc", tone="sp")
+    # Both should be valid because new schema fields are optional
+    assert p1.name == p2.name == "puck"

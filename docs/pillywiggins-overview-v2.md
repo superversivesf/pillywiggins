@@ -183,7 +183,7 @@ Here's what happens when someone sends "Hey Puck, what's the weather?" on Discor
 
 ```
 1. Discord sends the message to the Discord adapter
-2. The adapter normalises it into a standard format
+2. The adapter normalizes it into a standard format
 3. The adapter hands this to Puck's agent process
 4. Puck's agent:
    a. Grabs recent conversation from Redis cache

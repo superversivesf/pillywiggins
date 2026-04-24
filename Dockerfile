@@ -35,4 +35,4 @@ COPY personalities/ ./personalities/
 COPY skills/ ./skills/
 
 # Run the agent
-CMD ["python", "-m", "pillywiggins", "--channel", "telegram"]
+CMD ["python", "-m", "pillywiggins", "--agent-id", "puck"]

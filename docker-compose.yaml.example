@@ -74,6 +74,26 @@ services:
         condition: service_started
       searxng:
         condition: service_healthy
+  puck-discord:
+    build: .
+    command: python -m pillywiggins --agent-id puck-discord
+    env_file: .env
+    extra_hosts:
+    - "host.docker.internal:host-gateway"
+    environment:
+      AGENT_ID: puck-discord
+      DISCORD_BOT_TOKEN: ${PUCK_DISCORD_TOKEN}
+    volumes:
+    - ./personalities:/config:ro
+    - ./agents.yaml:/app/agents.yaml:ro
+    - skills:/app/skills
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      nats:
+        condition: service_started
 volumes:
   pgdata: null
   redisdata: null

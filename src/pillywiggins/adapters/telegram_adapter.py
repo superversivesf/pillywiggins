@@ -82,9 +82,15 @@ class TelegramAdapter(BaseAdapter):
         await event.wait()
         await self.shutdown()
 
-    async def send(self, conversation_key: str, text: str, **kwargs) -> None:
-        chat_id = kwargs.get("chat_id", conversation_key)
-        await self._app.bot.send_message(chat_id=int(chat_id), text=text)
+    async def send(
+        self, channel_id: str, content: str, metadata: dict | None = None, **kwargs
+    ) -> None:
+        chat_id = kwargs.get("chat_id")
+        if chat_id is None and metadata is not None:
+            chat_id = metadata.get("chat_id")
+        if chat_id is None:
+            chat_id = channel_id
+        await self._app.bot.send_message(chat_id=int(chat_id), text=content)
 
     def normalize(self, raw_update: Update) -> UnifiedMessage:
         message = raw_update.message
@@ -224,7 +230,11 @@ class TelegramAdapter(BaseAdapter):
             send_kwargs = {}
             if "chat_id" in unified.metadata:
                 send_kwargs["chat_id"] = unified.metadata["chat_id"]
-            await self.send(unified.conversation_key, response, **send_kwargs)
+            await self.send(
+                unified.conversation_key,
+                response,
+                metadata=send_kwargs or None,
+            )
         except Exception:
             logger.exception("Error handling Telegram message")
 

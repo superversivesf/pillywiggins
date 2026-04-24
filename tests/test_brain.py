@@ -272,7 +272,8 @@ def test_create_brain_no_skill_registry_no_skill_tools(monkeypatch):
     assert "list_scheduled_tasks" in tool_names
     assert "get_current_time" in tool_names
     assert "get_conversation_info" in tool_names
-    assert len(tool_names) == 13
+    assert "send_message_to_agent" in tool_names
+    assert len(tool_names) == 14
 
 
 def test_create_brain_empty_skill_registry(monkeypatch):
@@ -287,7 +288,7 @@ def test_create_brain_empty_skill_registry(monkeypatch):
         skill_registry=registry,
     )
     tool_names = list(agent._function_toolset.tools.keys())
-    assert len(tool_names) == 13
+    assert len(tool_names) == 14
 
 
 def test_create_brain_multiple_skill_tools(monkeypatch):
@@ -308,7 +309,8 @@ def test_create_brain_multiple_skill_tools(monkeypatch):
     assert "weather" in tool_names
     assert "calculator" in tool_names
     assert "translator" in tool_names
-    assert len(tool_names) == 16
+    assert "send_message_to_agent" in tool_names
+    assert len(tool_names) == 17
 
 
 def test_create_brain_deps_type_is_agent_deps(monkeypatch):
@@ -982,7 +984,7 @@ class TestDeploySkillCode:
         result = await deploy_skill_code(
             ctx, name="hello", code="code", test_cases_json="[]", approved=True
         )
-        mock_deploy.assert_called_once()
+        mock_deploy.assert_awaited_once()
 
 
 class TestScheduleTask:

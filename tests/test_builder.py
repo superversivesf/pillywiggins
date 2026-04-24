@@ -430,6 +430,7 @@ def run() -> dict:
         test_cases = [{"args": {}, "expected": None}]
         with patch("pillywiggins.skills.builder.run_sandboxed") as mock_run:
             from pillywiggins.skills.sandbox import SandboxResult
+
             mock_run.return_value = SandboxResult(
                 success=False,
                 error="Sandbox timed out after 2s",
@@ -458,6 +459,7 @@ def run() -> dict:
         test_cases = [{"args": {"x": 5}, "expected": {"result": 10}}]
         with patch("pillywiggins.skills.builder.run_sandboxed") as mock_run:
             from pillywiggins.skills.sandbox import SandboxResult
+
             mock_run.return_value = SandboxResult(
                 success=False,
                 error="Process exited with code 1",
@@ -619,28 +621,30 @@ class TestReviewSkill:
                 "execution_time_ms": 1.0,
             },
         ]
-        draft = SkillDraft(name="test", code="pass", status=DraftStatus.TESTED, test_results=results)
+        draft = SkillDraft(
+            name="test", code="pass", status=DraftStatus.TESTED, test_results=results
+        )
         output = review_skill(draft)
         assert "2/3 tests passed" in output
 
 
 class TestDeploySkill:
-    def test_deploy_without_approval_rejected(self):
+    async def test_deploy_without_approval_rejected(self):
         draft = SkillDraft(name="test", code="pass", status=DraftStatus.TESTED)
         registry = MagicMock()
-        result = deploy_skill(draft, approved=False, skills_dir="/tmp", registry=registry)
+        result = await deploy_skill(draft, approved=False, skills_dir="/tmp", registry=registry)
         assert "not approved" in result
         registry.register_skill.assert_not_called()
 
-    def test_deploy_with_draft_status_rejected(self):
+    async def test_deploy_with_draft_status_rejected(self):
         draft = SkillDraft(name="test", code="pass", status=DraftStatus.DRAFT)
         registry = MagicMock()
-        result = deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
+        result = await deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
         assert "cannot be deployed" in result
         assert "draft" in result
         registry.register_skill.assert_not_called()
 
-    def test_deploy_with_reviewed_status_succeeds(self):
+    async def test_deploy_with_reviewed_status_succeeds(self):
         draft = SkillDraft(
             name="test",
             code=VALID_SKILL_CODE,
@@ -648,11 +652,11 @@ class TestDeploySkill:
             meta={"name": "test"},
         )
         registry = MagicMock()
-        result = deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
+        result = await deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
         assert "deployed successfully" in result
         registry.register_skill.assert_called_once_with("test", VALID_SKILL_CODE, {"name": "test"})
 
-    def test_deploy_with_approved_status_succeeds(self):
+    async def test_deploy_with_approved_status_succeeds(self):
         draft = SkillDraft(
             name="test",
             code=VALID_SKILL_CODE,
@@ -660,11 +664,11 @@ class TestDeploySkill:
             meta={"name": "test"},
         )
         registry = MagicMock()
-        result = deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
+        result = await deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
         assert "deployed successfully" in result
         registry.register_skill.assert_called_once()
 
-    def test_deploy_with_tested_status_succeeds(self):
+    async def test_deploy_with_tested_status_succeeds(self):
         draft = SkillDraft(
             name="test",
             code=VALID_SKILL_CODE,
@@ -683,18 +687,18 @@ class TestDeploySkill:
             ],
         )
         registry = MagicMock()
-        result = deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
+        result = await deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
         assert "deployed successfully" in result
         registry.register_skill.assert_called_once()
 
-    def test_deploy_with_rejected_status_blocked(self):
+    async def test_deploy_with_rejected_status_blocked(self):
         draft = SkillDraft(name="test", code="pass", status=DraftStatus.REJECTED)
         registry = MagicMock()
-        result = deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
+        result = await deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
         assert "cannot be deployed" in result
         registry.register_skill.assert_not_called()
 
-    def test_deploy_with_failing_tests_blocked(self):
+    async def test_deploy_with_failing_tests_blocked(self):
         draft = SkillDraft(
             name="test",
             code="pass",
@@ -721,11 +725,11 @@ class TestDeploySkill:
             ],
         )
         registry = MagicMock()
-        result = deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
+        result = await deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
         assert "failing test" in result
         registry.register_skill.assert_not_called()
 
-    def test_deploy_calls_registry_with_correct_args(self):
+    async def test_deploy_calls_registry_with_correct_args(self):
         draft = SkillDraft(
             name="my_skill",
             code=VALID_SKILL_CODE,
@@ -744,15 +748,15 @@ class TestDeploySkill:
             ],
         )
         registry = MagicMock()
-        deploy_skill(draft, approved=True, skills_dir="/tmp/skills", registry=registry)
+        await deploy_skill(draft, approved=True, skills_dir="/tmp/skills", registry=registry)
         registry.register_skill.assert_called_once_with(
             "my_skill",
             VALID_SKILL_CODE,
             {"name": "my_skill", "description": "A test skill"},
         )
 
-    def test_deploy_with_empty_test_results_passes(self):
+    async def test_deploy_with_empty_test_results_passes(self):
         draft = SkillDraft(name="test", code="pass", status=DraftStatus.TESTED, test_results=[])
         registry = MagicMock()
-        result = deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
+        result = await deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
         assert "deployed successfully" in result

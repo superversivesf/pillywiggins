@@ -312,7 +312,7 @@
       @abstractmethod
       async def send(self, channel_id, content, metadata): ...
       @abstractmethod
-      def normalise(self, platform_event) -> UnifiedMessage: ...
+      def normalize(self, platform_event) -> UnifiedMessage: ...
   ```
 - [ ] Implement `src/pillywiggins/adapters/discord_adapter.py` — Discord adapter using `discord.py` v2 (overview-v2 §5):
   - [ ] Gateway WebSocket connection
@@ -330,7 +330,7 @@
 
 - [ ] `tests/conftest.py` — fixtures for test database, mock Ollama, mock Redis
 - [ ] `tests/test_brain.py` — PydanticAI agent responds to prompts (use `TestModel`)
-- [ ] `tests/test_adapters.py` — Discord adapter normalises events correctly
+- [ ] `tests/test_adapters.py` — Discord adapter normalizes events correctly
 
 ### Verification Gate — Phase 1
 
@@ -794,7 +794,7 @@ ALL of the following must pass before proceeding:
       retries: 3
   ```
 - [ ] Add restart policies: `restart: unless-stopped` for all agent services
-- [ ] `/healthz` endpoint checks PostgreSQL, Redis, NATS, Ollama connectivity
+- [x] `/healthz` endpoint checks PostgreSQL, Redis, NATS, Ollama connectivity — **fixed**: LLM URL now strips `/v1` suffix (was producing `/v1/api/tags` 404), NATS connectivity check added (`cell-2r4g0k-moch5faq7q2`)
 
 #### 6.3 Conversation summarization and memory consolidation
 
