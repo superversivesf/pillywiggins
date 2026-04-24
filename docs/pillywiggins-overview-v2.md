@@ -223,7 +223,7 @@ Here's what's inside:
 │  │ +pgvector│ │          │ │ JetStream│        │
 │  └──────────┘ └──────────┘ └──────────┘        │
 │                                                 │
-│  Inference:                                     │
+│  Inference (intentionally external — see note):  │
 │  ┌─────────────────────────┐                    │
 │  │  Ollama (GPU-attached)  │                    │
 │  └─────────────────────────┘                    │
@@ -246,6 +246,10 @@ Here's what's inside:
 │                                                 │
 └─────────────────────────────────────────────────┘
 ```
+
+> **Note — Ollama is intentionally excluded from `docker-compose.yaml`.**  
+> Ollama is expected to run externally (e.g. on the host machine, in a separate GPU-optimized container you manage yourself, or via a remote/cloud endpoint). Agents connect to it using `OLLAMA_BASE_URL` set in `.env` (default: `http://host.docker.internal:11434` on Docker Desktop, or the IP of your Ollama host). This separation keeps GPU drivers, model pulls, and VRAM management outside the project's Compose lifecycle.
+
 
 Each agent is a Python process in its own container. They talk to each other through NATS (a lightweight message bus). They store memories in PostgreSQL. They cache conversations in Redis. They think using Ollama. They share skills through a mounted Docker volume.
 

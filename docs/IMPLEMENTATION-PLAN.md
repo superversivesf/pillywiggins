@@ -20,7 +20,10 @@
 
 ## Phase 1: One Agent Talks
 
-**Goal**: Docker Compose running PostgreSQL, Redis, NATS, and Ollama. A single Discord agent receives a message and responds using Ollama via PydanticAI. Conversation persists across container restarts.
+**Goal**: Docker Compose running PostgreSQL, Redis, and NATS. A single Discord agent receives a message and responds using Ollama via PydanticAI. Conversation persists across container restarts.
+
+> **Note — Ollama is intentionally excluded from `docker-compose.yaml`.**
+> Ollama is expected to run externally (e.g. on the host machine, in a separate GPU-optimized container you manage yourself, or via a remote/cloud endpoint). Agents connect to it using `OLLAMA_BASE_URL` set in `.env` (default: `http://host.docker.internal:11434` on Docker Desktop). This separation keeps GPU drivers, model pulls, and VRAM management outside the project's Compose lifecycle.
 
 **Prerequisites**: A machine with NVIDIA GPU (16 GB+ VRAM), Docker + Docker Compose installed, NVIDIA Container Toolkit.
 
@@ -91,8 +94,8 @@
   # NATS
   NATS_URL=nats://nats:4222
 
-  # Ollama
-  OLLAMA_BASE_URL=http://ollama:11434
+  # Ollama (runs externally — not in this docker-compose)
+  OLLAMA_BASE_URL=http://host.docker.internal:11434
   MODEL_NAME=qwen3.5:8b
   EMBEDDING_MODEL=nomic-embed-text
 
@@ -110,6 +113,8 @@
 #### 1.2 Docker Compose infrastructure
 
 - [ ] Create `docker-compose.yaml` with all infrastructure services:
+  > **Note:** Ollama is intentionally **excluded** from `docker-compose.yaml`. It runs externally (host machine, separate GPU container, or cloud endpoint) and is connected via `OLLAMA_BASE_URL` in `.env`.
+
   ```yaml
   services:
     postgres:
@@ -130,17 +135,6 @@
       image: nats:2-alpine
       command: -js
 
-    ollama:
-      image: ollama/ollama
-      volumes: [ollama_models:/root/.ollama]
-      deploy:
-        resources:
-          reservations:
-            devices:
-              - driver: nvidia
-                count: 1
-                capabilities: [gpu]
-
     discord-agent:
       build: .
       command: python -m pillywiggins --channel discord
@@ -155,16 +149,14 @@
         postgres: { condition: service_healthy }
         redis: { condition: service_started }
         nats: { condition: service_started }
-        ollama: { condition: service_started }
 
   volumes:
     pgdata:
     redisdata:
-    ollama_models:
     skills:
   ```
-- [ ] Verify GPU passthrough: `docker compose run ollama nvidia-smi`
-- [ ] Start infrastructure: `docker compose up -d postgres redis nats ollama`
+- [ ] Verify GPU passthrough: run `nvidia-smi` on the host (or `docker run --rm --gpus all nvidia/cuda nvidia-smi` if using a separate Ollama container)
+- [ ] Start infrastructure: `docker compose up -d postgres redis nats`
 - [ ] Wait for PostgreSQL health check: `docker compose exec postgres pg_isready -U postgres`
 
 #### 1.3 Database setup
@@ -231,22 +223,22 @@
 
 #### 1.4 Pull Ollama models
 
-- [ ] Create `scripts/pull-models.sh`:
+> **Note:** Ollama runs externally. Execute these commands on the Ollama host (or inside the separate Ollama container if you created one).
+
+- [ ] Create `scripts/pull-models.sh` (or run directly on the Ollama host):
   ```bash
   #!/bin/bash
-  docker compose exec ollama ollama pull qwen3.5:8b
-  docker compose exec ollama ollama pull nomic-embed-text
+  ollama pull qwen3.5:8b
+  ollama pull nomic-embed-text
   ```
 - [ ] Run the script and verify models are available:
   ```bash
-  docker compose exec ollama curl http://localhost:11434/api/tags
+  curl http://localhost:11434/api/tags
   ```
-- [ ] Set `OLLAMA_NUM_PARALLEL=2` via environment variable in `docker-compose.yaml`:
-  ```yaml
-  ollama:
-    environment:
-      OLLAMA_NUM_PARALLEL: "2"
-      OLLAMA_MAX_LOADED_MODELS: "2"
+- [ ] Set `OLLAMA_NUM_PARALLEL=2` via environment variable on the Ollama host or its container:
+  ```bash
+  export OLLAMA_NUM_PARALLEL=2
+  export OLLAMA_MAX_LOADED_MODELS=2
   ```
 
 #### 1.5 Minimal Discord agent
@@ -260,7 +252,7 @@
       database_url: str
       redis_url: str = "redis://redis:6379/0"
       nats_url: str = "nats://nats:4222"
-      ollama_base_url: str = "http://ollama:11434"
+      ollama_base_url: str = "http://host.docker.internal:11434"
       model_name: str = "qwen3.5:8b"
       embedding_model: str = "nomic-embed-text"
       personality_file: str = "/config/discord.yaml"
@@ -336,20 +328,20 @@
 
 ALL of the following must pass before proceeding:
 
-- [ ] `docker compose ps` — all containers Running (postgres, redis, nats, ollama, discord-agent)
+- [ ] `docker compose ps` — all project containers Running (postgres, redis, nats, discord-agent)
 - [ ] `docker compose exec postgres pg_isready -U postgres` — PostgreSQL is healthy
-- [ ] `docker compose exec ollama curl http://localhost:11434/api/tags` — Ollama lists both models
+- [ ] `curl http://localhost:11434/api/tags` (on the Ollama host) — Ollama lists both models
 - [ ] Send a Discord DM to the bot — receive an LLM-generated response
 - [ ] Second message in same conversation — bot has context from first message
 - [ ] `docker compose restart discord-agent` — bot resumes with conversation history intact (from Redis cache)
-- [ ] `curl http://localhost:8080/healthz` — returns healthy status for all services
+- [ ] `curl http://localhost:8080/healthz` — returns healthy status for all services (Ollama check skips if not in Compose)
 
 ### Risk items (Phase 1)
 
 | Risk | Mitigation |
 |------|------------|
-| NVIDIA Container Toolkit setup issues | Test GPU passthrough first: `docker compose run ollama nvidia-smi` before deploying the agent |
-| Ollama model pull timeouts | Pre-pull models using `scripts/pull-models.sh`; use persistent volume for `/root/.ollama` |
+| NVIDIA Container Toolkit setup issues | Test GPU passthrough first: `nvidia-smi` on the host before deploying the agent |
+| Ollama model pull timeouts | Pre-pull models using `scripts/pull-models.sh` (runs on external Ollama host); ensure persistent storage for `/root/.ollama` on the external host |
 | Discord gateway connection flakes | Add reconnection logic to `discord.py` client; Docker restart policy `unless-stopped` |
 | Redis connection loss on agent startup | `depends_on` with healthcheck; retry logic in Redis client |
 
@@ -604,7 +596,6 @@ ALL of the following must pass before proceeding:
       postgres: { condition: service_healthy }
       redis: { condition: service_started }
       nats: { condition: service_started }
-      ollama: { condition: service_started }
   ```
 - [ ] Verify both agents run simultaneously with isolated state
 - [ ] Verify Slack agent cannot read Discord agent's private memory (RLS enforcement)
@@ -878,11 +869,11 @@ Standalone checklist for bringing up the Docker Compose infrastructure from scra
 
 ### Docker Compose Services
 
-- [ ] Start all infrastructure: `docker compose up -d postgres redis nats ollama`
+- [ ] Start all infrastructure: `docker compose up -d postgres redis nats`
 - [ ] Verify PostgreSQL: `docker compose exec postgres pg_isready -U postgres`
 - [ ] Verify Redis: `docker compose exec redis redis-cli ping` → PONG
 - [ ] Verify NATS: `docker compose exec nats nats server check`
-- [ ] Verify Ollama: `docker compose exec ollama curl http://localhost:11434/api/tags`
+- [ ] Verify Ollama (on external host): `curl http://localhost:11434/api/tags`
 
 ### Database Schema
 
@@ -893,9 +884,11 @@ Standalone checklist for bringing up the Docker Compose infrastructure from scra
 
 ### Ollama Models
 
+> Ollama runs externally — run these commands on the Ollama host, not inside the project Compose.
+
 - [ ] Run `scripts/pull-models.sh` to pull chat and embedding models
-- [ ] Verify models: `docker compose exec ollama curl http://localhost:11434/api/tags`
-- [ ] Set `OLLAMA_NUM_PARALLEL=2` and `OLLAMA_MAX_LOADED_MODELS=2` in `docker-compose.yaml`
+- [ ] Verify models: `curl http://localhost:11434/api/tags`
+- [ ] Set `OLLAMA_NUM_PARALLEL=2` and `OLLAMA_MAX_LOADED_MODELS=2` on the Ollama host (or in its container environment)
 - [ ] Monitor VRAM usage under load
 
 ### Secrets
@@ -991,7 +984,7 @@ From overview-v2 §14 risk register with practical mitigations:
 ```
 Phase 1: One Agent Talks
     │
-    ├── Docker Compose (PostgreSQL, Redis, NATS, Ollama) ─┐
+    ├── Docker Compose (PostgreSQL, Redis, NATS) ─────────┐
     ├── Database schema + RLS ────────────────────────────┤  Can be parallelized
     ├── Discord adapter ─────────────────────────────────┤
     ├── PydanticAI brain ────────────────────────────────┤
@@ -1040,7 +1033,7 @@ Phase 6: Hardening
 ```
 
 **Key parallelization opportunities**:
-- Infrastructure (PostgreSQL, Redis, NATS, Ollama) can all be started with `docker compose up` simultaneously
+- Infrastructure (PostgreSQL, Redis, NATS) can be started with `docker compose up` simultaneously. Ollama runs externally.
 - Channel adapters (once BaseAdapter is stable) can be developed in parallel by different developers
 - Skill sandbox, registry, and builder are independent and can be developed in parallel
 - APScheduler integration is independent of NATS bus work
