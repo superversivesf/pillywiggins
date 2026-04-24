@@ -8,6 +8,7 @@ services:
     volumes:
     - pgdata:/var/lib/postgresql/data
     - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    restart: unless-stopped
     healthcheck:
       test:
       - CMD-SHELL
@@ -19,17 +20,37 @@ services:
     - 5432:5432
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     command: redis-server --appendonly yes
     volumes:
     - redisdata:/data
     ports:
     - 6379:6379
+    healthcheck:
+      test:
+      - CMD
+      - redis-cli
+      - ping
+      interval: 5s
+      timeout: 3s
+      retries: 5
   nats:
     image: nats:2-alpine
-    command: nats-server -js
+    restart: unless-stopped
+    command: nats-server -js -m 8222
     ports:
     - 4222:4222
     - 8222:8222
+    healthcheck:
+      test:
+      - CMD
+      - wget
+      - --spider
+      - -q
+      - http://localhost:8222/healthz
+      interval: 10s
+      timeout: 3s
+      retries: 5
   searxng:
     image: searxng/searxng:latest
     restart: unless-stopped
@@ -53,6 +74,7 @@ services:
       retries: 10
   puck:
     build: .
+    restart: unless-stopped
     command: python -m pillywiggins --agent-id puck
     env_file: .env
     extra_hosts:
@@ -61,21 +83,31 @@ services:
       AGENT_ID: puck
       TELEGRAM_BOT_TOKEN: ${PUCK_TELEGRAM_TOKEN}
       PERSONALITY_FILE: /config/puck.yaml
+      HEALTH_PORT: 8080
     volumes:
     - ./personalities:/config:ro
     - ./agents.yaml:/app/agents.yaml:ro
     - skills:/app/skills
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - wget --spider -q http://localhost:8080/healthz || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
       nats:
-        condition: service_started
+        condition: service_healthy
       searxng:
         condition: service_healthy
   puck-discord:
     build: .
+    restart: unless-stopped
     command: python -m pillywiggins --agent-id puck-discord
     env_file: .env
     extra_hosts:
@@ -83,17 +115,26 @@ services:
     environment:
       AGENT_ID: puck-discord
       DISCORD_BOT_TOKEN: ${PUCK_DISCORD_TOKEN}
+      HEALTH_PORT: 8080
     volumes:
     - ./personalities:/config:ro
     - ./agents.yaml:/app/agents.yaml:ro
     - skills:/app/skills
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - wget --spider -q http://localhost:8080/healthz || exit 1
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
       nats:
-        condition: service_started
+        condition: service_healthy
 volumes:
   pgdata: null
   redisdata: null
