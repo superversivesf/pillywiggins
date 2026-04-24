@@ -265,3 +265,30 @@ async def test_load_null_messages_column_returns_none(store):
 
     assert result is None
     await store.close()
+
+
+@pytest.mark.asyncio
+async def test_connect_passes_init_callback_to_set_agent_id(store):
+    mock_pool = MagicMock()
+    mock_pool.close = AsyncMock()
+    captured_init = None
+
+    async def fake_create_pool(*args, init=None, **kwargs):
+        nonlocal captured_init
+        captured_init = init
+        return mock_pool
+
+    with patch("pillywiggins.memory.store.asyncpg.create_pool", side_effect=fake_create_pool):
+        await store.connect()
+
+    assert captured_init is not None, "create_pool should receive an init callback"
+
+    mock_conn = AsyncMock()
+    await captured_init(mock_conn)
+
+    mock_conn.execute.assert_called_once()
+    call_args = mock_conn.execute.call_args
+    assert "SET app.agent_id" in call_args[0][0]
+    assert call_args[0][1] == "puck"
+
+    await store.close()

@@ -15,8 +15,12 @@ class ConversationStore:
         self._pool: Optional[asyncpg.Pool] = None
 
     async def connect(self) -> None:
+        async def _init_connection(conn):
+            await conn.execute("SET app.agent_id = $1", self._agent_id)
+
         self._pool = await asyncpg.create_pool(
             self._database_url,
+            init=_init_connection,
             min_size=1,
             max_size=3,
         )
