@@ -77,6 +77,13 @@ CREATE TABLE IF NOT EXISTS conversation_cache (
 CREATE INDEX IF NOT EXISTS idx_conversation_cache_agent_id
     ON conversation_cache (agent_id);
 
+ALTER TABLE conversation_cache ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY conversation_cache_isolation ON conversation_cache
+    USING (agent_id = current_setting('app.agent_id')::text);
+
+SQL
+
 SQL
 
 echo "Done. Schema created successfully."
