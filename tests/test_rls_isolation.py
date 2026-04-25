@@ -489,3 +489,156 @@ async def test_rls_set_before_every_acquire_operation(puck_memory):
     assert mock_conn.execute.call_count == 2
     mock_conn.fetch.assert_called_once()
     await puck_memory.close()
+
+
+# ---------------------------------------------------------------------------
+# Real PostgreSQL integration tests (pytest-postgresql)
+# ---------------------------------------------------------------------------
+
+SCHEMA_SQL = """
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS private_memory (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id    TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    embedding   vector(768),
+    metadata    JSONB DEFAULT '{}',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE private_memory ENABLE ROW LEVEL SECURITY;
+ALTER TABLE private_memory FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS private_memory_isolation ON private_memory;
+CREATE POLICY private_memory_isolation ON private_memory
+    USING (agent_id = current_setting('app.agent_id')::text);
+
+CREATE TABLE IF NOT EXISTS conversation_cache (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id         TEXT NOT NULL,
+    channel          TEXT NOT NULL,
+    conversation_key TEXT NOT NULL,
+    messages         JSONB DEFAULT '[]',
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (agent_id, channel, conversation_key)
+);
+
+ALTER TABLE conversation_cache ENABLE ROW LEVEL SECURITY;
+ALTER TABLE conversation_cache FORCE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS conversation_cache_isolation ON conversation_cache;
+CREATE POLICY conversation_cache_isolation ON conversation_cache
+    USING (agent_id = current_setting('app.agent_id')::text);
+"""
+
+
+async def _init_conn_with_agent(conn, agent_id):
+    # asyncpg cannot parameterise SET; use a simple query.
+    await conn.execute(f"SET app.agent_id = '{agent_id}'")
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore::ResourceWarning")
+async def test_rls_isolation_real_postgres(postgresql_proc):
+    host = postgresql_proc.host
+    port = postgresql_proc.port
+    user = postgresql_proc.user
+    dsn = f"postgresql://{user}@{host}:{port}/postgres"
+
+    import asyncpg
+
+    admin_pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2)
+    async with admin_pool.acquire() as conn:
+        await conn.execute(SCHEMA_SQL)
+    await admin_pool.close()
+
+    puck_pool = await asyncpg.create_pool(
+        dsn,
+        init=lambda conn: _init_conn_with_agent(conn, "puck"),
+        min_size=1,
+        max_size=2,
+    )
+    oberon_pool = await asyncpg.create_pool(
+        dsn,
+        init=lambda conn: _init_conn_with_agent(conn, "oberon"),
+        min_size=1,
+        max_size=2,
+    )
+
+    async with puck_pool.acquire() as conn:
+        await conn.execute(
+            """INSERT INTO private_memory (agent_id, content, embedding, metadata)
+               VALUES ($1, $2, NULL, $3::jsonb)""",
+            "puck",
+            "puck secret",
+            '{"tag": "test"}',
+        )
+
+    async with puck_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM private_memory")
+    assert len(rows) == 1
+    assert rows[0]["agent_id"] == "puck"
+
+    async with oberon_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM private_memory")
+    assert len(rows) == 0
+
+    await puck_pool.close()
+    await oberon_pool.close()
+
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore::ResourceWarning")
+async def test_conversation_store_rls_real_postgres(postgresql_proc):
+    host = postgresql_proc.host
+    port = postgresql_proc.port
+    user = postgresql_proc.user
+    dsn = f"postgresql://{user}@{host}:{port}/postgres"
+
+    import asyncpg
+
+    admin_pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2)
+    async with admin_pool.acquire() as conn:
+        await conn.execute(SCHEMA_SQL)
+    await admin_pool.close()
+
+    puck_pool = await asyncpg.create_pool(
+        dsn,
+        init=lambda conn: _init_conn_with_agent(conn, "puck"),
+        min_size=1,
+        max_size=2,
+    )
+    oberon_pool = await asyncpg.create_pool(
+        dsn,
+        init=lambda conn: _init_conn_with_agent(conn, "oberon"),
+        min_size=1,
+        max_size=2,
+    )
+
+    async with puck_pool.acquire() as conn:
+        await conn.execute(
+            """INSERT INTO conversation_cache
+               (agent_id, channel, conversation_key, messages, updated_at)
+               VALUES ($1, $2, $3, $4::jsonb, now())
+               ON CONFLICT (agent_id, channel, conversation_key)
+               DO UPDATE SET messages = $4::jsonb, updated_at = now()""",
+            "puck",
+            "discord",
+            "general",
+            "[]",
+        )
+
+    async with puck_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM conversation_cache")
+    assert len(rows) == 1
+    assert rows[0]["agent_id"] == "puck"
+
+    async with oberon_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM conversation_cache")
+    assert len(rows) == 0
+
+    await puck_pool.close()
+    await oberon_pool.close()
