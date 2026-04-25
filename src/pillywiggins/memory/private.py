@@ -2,6 +2,7 @@ import logging
 from typing import Optional
 
 import asyncpg
+from pgvector.asyncpg import register_vector
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +15,11 @@ class PrivateMemory:
 
     async def connect(self) -> None:
         async def _init_connection(conn):
-            await conn.execute("SET app.agent_id = $1", self._agent_id)
+            await register_vector(conn)
+            await conn.execute(
+                "SELECT set_config('app.agent_id', $1, false)",
+                self._agent_id,
+            )
 
         self._pool = await asyncpg.create_pool(
             self._database_url,

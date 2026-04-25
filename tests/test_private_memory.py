@@ -62,7 +62,9 @@ async def test_connect_sets_agent_id(memory):
     assert init_callback is not None
     mock_conn = AsyncMock()
     await init_callback(mock_conn)
-    mock_conn.execute.assert_called_once_with("SET app.agent_id = $1", "puck")
+    mock_conn.execute.assert_called_once_with(
+        "SELECT set_config('app.agent_id', $1, false)", "puck"
+    )
     await memory.close()
 
 
@@ -295,3 +297,53 @@ async def test_close_does_nothing_if_no_pool(memory):
     assert memory._pool is None
     await memory.close()
     assert memory._pool is None
+
+
+# ---------------------------------------------------------------------------
+# Real PostgreSQL integration tests (pytest-postgresql)
+# ---------------------------------------------------------------------------
+
+SCHEMA_SQL = """
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS private_memory (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id    TEXT NOT NULL,
+    content     TEXT NOT NULL,
+    embedding   vector(768),
+    metadata    JSONB DEFAULT '{}',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+"""
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore::ResourceWarning")
+async def test_private_memory_real_postgres(postgresql_proc):
+    host = postgresql_proc.host
+    port = postgresql_proc.port
+    user = postgresql_proc.user
+    dsn = f"postgresql://{user}@{host}:{port}/postgres"
+
+    import asyncpg
+
+    temp_pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2)
+    async with temp_pool.acquire() as conn:
+        await conn.execute(SCHEMA_SQL)
+    await temp_pool.close()
+
+    mem = PrivateMemory(database_url=dsn, agent_id="puck")
+    await mem.connect()
+
+    await mem.save("integration memory", [0.1, 0.2, 0.3], {"source": "test"})
+    results = await mem.search([0.1, 0.2, 0.3], limit=5)
+    assert len(results) == 1
+    assert results[0]["content"] == "integration memory"
+    assert results[0]["metadata"] == {"source": "test"}
+
+    memory_id = results[0]["id"]
+    assert await mem.delete(memory_id) is True
+    assert len(await mem.search([0.1, 0.2, 0.3], limit=5)) == 0
+
+    await mem.close()

@@ -84,6 +84,4 @@ CREATE POLICY conversation_cache_isolation ON conversation_cache
 
 SQL
 
-SQL
-
 echo "Done. Schema created successfully."

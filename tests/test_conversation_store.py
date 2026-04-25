@@ -288,7 +288,65 @@ async def test_connect_passes_init_callback_to_set_agent_id(store):
 
     mock_conn.execute.assert_called_once()
     call_args = mock_conn.execute.call_args
-    assert "SET app.agent_id" in call_args[0][0]
+    assert "set_config('app.agent_id'" in call_args[0][0]
     assert call_args[0][1] == "puck"
+
+    await store.close()
+
+
+# ---------------------------------------------------------------------------
+# Real PostgreSQL integration tests (pytest-postgresql)
+# ---------------------------------------------------------------------------
+
+SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS conversation_cache (
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id         TEXT NOT NULL,
+    channel          TEXT NOT NULL,
+    conversation_key TEXT NOT NULL,
+    messages         JSONB DEFAULT '[]',
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (agent_id, channel, conversation_key)
+);
+"""
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore::ResourceWarning")
+async def test_conversation_store_real_postgres(postgresql_proc):
+    host = postgresql_proc.host
+    port = postgresql_proc.port
+    user = postgresql_proc.user
+    dsn = f"postgresql://{user}@{host}:{port}/postgres"
+
+    import asyncpg
+
+    temp_pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2)
+    async with temp_pool.acquire() as conn:
+        await conn.execute(SCHEMA_SQL)
+    await temp_pool.close()
+
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+    store = ConversationStore(database_url=dsn, agent_id="puck", channel="telegram")
+    await store.connect()
+
+    messages = [ModelRequest(parts=[UserPromptPart(content="hello")])]
+    await store.save("chat123", messages)
+
+    result = await store.load("chat123")
+    assert result is not None
+    assert len(result) == 1
+
+    messages2 = [ModelRequest(parts=[UserPromptPart(content="updated")])]
+    await store.save("chat123", messages2)
+
+    result2 = await store.load("chat123")
+    assert result2 is not None
+    assert len(result2) == 1
+    assert result2[0].parts[0].content == "updated"
+
+    result_missing = await store.load("nonexistent")
+    assert result_missing is None
 
     await store.close()

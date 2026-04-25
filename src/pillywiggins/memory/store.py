@@ -16,7 +16,12 @@ class ConversationStore:
 
     async def connect(self) -> None:
         async def _init_connection(conn):
-            await conn.execute("SET app.agent_id = $1", self._agent_id)
+            # set_config is the only safe, parameterised way to
+            # change a GUC variable via asyncpg.
+            await conn.execute(
+                "SELECT set_config('app.agent_id', $1, false)",
+                self._agent_id,
+            )
 
         self._pool = await asyncpg.create_pool(
             self._database_url,

@@ -64,12 +64,14 @@ async def test_init_connection_sets_agent_id(puck_memory):
     assert captured_init is not None
     mock_conn = AsyncMock()
     await captured_init(mock_conn)
-    mock_conn.execute.assert_called_once_with("SET app.agent_id = $1", "puck")
+    mock_conn.execute.assert_called_once_with(
+        "SELECT set_config('app.agent_id', $1, false)", "puck"
+    )
     await puck_memory.close()
 
 
 @pytest.mark.asyncio
-async def test_init_uses_fstring_not_parameterized(puck_memory):
+async def test_init_uses_parameterised_set_config(puck_memory):
     captured_init = None
     mock_pool = _make_pool_mock()
 
@@ -87,7 +89,7 @@ async def test_init_uses_fstring_not_parameterized(puck_memory):
     set_call = mock_conn.execute.call_args
     sql = set_call[0][0]
     assert "$1" in sql
-    assert sql == "SET app.agent_id = $1"
+    assert sql == "SELECT set_config('app.agent_id', $1, false)"
     assert set_call[0][1] == "puck"
     await puck_memory.close()
 
@@ -121,8 +123,12 @@ async def test_different_agents_set_different_ids(puck_memory, oberon_memory):
     oberon_conn = AsyncMock()
     await oberon_init(oberon_conn)
 
-    puck_conn.execute.assert_called_with("SET app.agent_id = $1", "puck")
-    oberon_conn.execute.assert_called_with("SET app.agent_id = $1", "oberon")
+    puck_conn.execute.assert_called_with(
+        "SELECT set_config('app.agent_id', $1, false)", "puck"
+    )
+    oberon_conn.execute.assert_called_with(
+        "SELECT set_config('app.agent_id', $1, false)", "oberon"
+    )
     await puck_memory.close()
     await oberon_memory.close()
 
@@ -286,7 +292,10 @@ async def test_cross_agent_isolation_search_returns_no_rows(puck_memory):
 
     puck_conn = AsyncMock()
     await init_callback(puck_conn)
-    puck_conn.execute.assert_called_with("SET app.agent_id = $1", "oberon")
+    puck_conn.execute.assert_called_with(
+        "SELECT set_config('app.agent_id', $1, false)",
+        "oberon",
+    )
 
     await wrong_agent_mem.close()
 
@@ -425,7 +434,7 @@ async def test_init_callback_called_per_connection():
 
     assert len(init_calls) == 3
     for sql in init_calls:
-        assert sql == "SET app.agent_id = $1"
+        assert sql == "SELECT set_config('app.agent_id', $1, false)"
 
     await memory.close()
 
@@ -452,8 +461,8 @@ async def test_agent_id_sql_injection_safety():
     await init_callback(mock_conn)
 
     set_sql = mock_conn.execute.call_args[0][0]
-    assert "SET app.agent_id" in set_sql
-    assert set_sql == "SET app.agent_id = $1"
+    assert "set_config('app.agent_id'" in set_sql
+    assert set_sql == "SELECT set_config('app.agent_id', $1, false)"
     assert mock_conn.execute.call_args[0][1] == "puck'; DROP TABLE private_memory; --"
 
     await memory.close()
@@ -531,11 +540,23 @@ ALTER TABLE conversation_cache FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS conversation_cache_isolation ON conversation_cache;
 CREATE POLICY conversation_cache_isolation ON conversation_cache
     USING (agent_id = current_setting('app.agent_id')::text);
+
+-- Prepare a non-superuser role so RLS is enforced.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'testagent') THEN
+        CREATE ROLE testagent LOGIN;
+    END IF;
+END $$;
+GRANT USAGE ON SCHEMA public TO testagent;
+GRANT ALL PRIVILEGES ON TABLE private_memory TO testagent;
+GRANT ALL PRIVILEGES ON TABLE conversation_cache TO testagent;
 """
 
 
-async def _init_conn_with_agent(conn, agent_id):
-    # asyncpg cannot parameterise SET; use a simple query.
+async def _set_agent_id(conn, agent_id: str) -> None:
+    # asyncpg cannot parameterise SET; use an f-string.  This is safe here
+    # because agent_id is a known test fixture value.
     await conn.execute(f"SET app.agent_id = '{agent_id}'")
 
 
@@ -545,29 +566,20 @@ async def test_rls_isolation_real_postgres(postgresql_proc):
     host = postgresql_proc.host
     port = postgresql_proc.port
     user = postgresql_proc.user
-    dsn = f"postgresql://{user}@{host}:{port}/postgres"
+    admin_dsn = f"postgresql://{user}@{host}:{port}/postgres"
 
     import asyncpg
 
-    admin_pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2)
+    admin_pool = await asyncpg.create_pool(admin_dsn, min_size=1, max_size=2)
     async with admin_pool.acquire() as conn:
         await conn.execute(SCHEMA_SQL)
     await admin_pool.close()
 
-    puck_pool = await asyncpg.create_pool(
-        dsn,
-        init=lambda conn: _init_conn_with_agent(conn, "puck"),
-        min_size=1,
-        max_size=2,
-    )
-    oberon_pool = await asyncpg.create_pool(
-        dsn,
-        init=lambda conn: _init_conn_with_agent(conn, "oberon"),
-        min_size=1,
-        max_size=2,
-    )
+    test_dsn = f"postgresql://testagent@{host}:{port}/postgres"
+    pool = await asyncpg.create_pool(test_dsn, min_size=1, max_size=2)
 
-    async with puck_pool.acquire() as conn:
+    async with pool.acquire() as conn:
+        await _set_agent_id(conn, "puck")
         await conn.execute(
             """INSERT INTO private_memory (agent_id, content, embedding, metadata)
                VALUES ($1, $2, NULL, $3::jsonb)""",
@@ -576,18 +588,18 @@ async def test_rls_isolation_real_postgres(postgresql_proc):
             '{"tag": "test"}',
         )
 
-    async with puck_pool.acquire() as conn:
+    async with pool.acquire() as conn:
+        await _set_agent_id(conn, "puck")
         rows = await conn.fetch("SELECT * FROM private_memory")
     assert len(rows) == 1
     assert rows[0]["agent_id"] == "puck"
 
-    async with oberon_pool.acquire() as conn:
+    async with pool.acquire() as conn:
+        await _set_agent_id(conn, "oberon")
         rows = await conn.fetch("SELECT * FROM private_memory")
     assert len(rows) == 0
 
-    await puck_pool.close()
-    await oberon_pool.close()
-
+    await pool.close()
 
 
 @pytest.mark.asyncio
@@ -596,29 +608,20 @@ async def test_conversation_store_rls_real_postgres(postgresql_proc):
     host = postgresql_proc.host
     port = postgresql_proc.port
     user = postgresql_proc.user
-    dsn = f"postgresql://{user}@{host}:{port}/postgres"
+    admin_dsn = f"postgresql://{user}@{host}:{port}/postgres"
 
     import asyncpg
 
-    admin_pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2)
+    admin_pool = await asyncpg.create_pool(admin_dsn, min_size=1, max_size=2)
     async with admin_pool.acquire() as conn:
         await conn.execute(SCHEMA_SQL)
     await admin_pool.close()
 
-    puck_pool = await asyncpg.create_pool(
-        dsn,
-        init=lambda conn: _init_conn_with_agent(conn, "puck"),
-        min_size=1,
-        max_size=2,
-    )
-    oberon_pool = await asyncpg.create_pool(
-        dsn,
-        init=lambda conn: _init_conn_with_agent(conn, "oberon"),
-        min_size=1,
-        max_size=2,
-    )
+    test_dsn = f"postgresql://testagent@{host}:{port}/postgres"
+    pool = await asyncpg.create_pool(test_dsn, min_size=1, max_size=2)
 
-    async with puck_pool.acquire() as conn:
+    async with pool.acquire() as conn:
+        await _set_agent_id(conn, "puck")
         await conn.execute(
             """INSERT INTO conversation_cache
                (agent_id, channel, conversation_key, messages, updated_at)
@@ -631,14 +634,15 @@ async def test_conversation_store_rls_real_postgres(postgresql_proc):
             "[]",
         )
 
-    async with puck_pool.acquire() as conn:
+    async with pool.acquire() as conn:
+        await _set_agent_id(conn, "puck")
         rows = await conn.fetch("SELECT * FROM conversation_cache")
     assert len(rows) == 1
     assert rows[0]["agent_id"] == "puck"
 
-    async with oberon_pool.acquire() as conn:
+    async with pool.acquire() as conn:
+        await _set_agent_id(conn, "oberon")
         rows = await conn.fetch("SELECT * FROM conversation_cache")
     assert len(rows) == 0
 
-    await puck_pool.close()
-    await oberon_pool.close()
+    await pool.close()

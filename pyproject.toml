@@ -17,6 +17,7 @@ dependencies = [
     "aiohttp",
     "watchfiles",
     "questionary>=2.0",
+    "pgvector>=0.2.4",
 ]
 
 [project.scripts]
