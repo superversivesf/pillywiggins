@@ -1,10 +1,13 @@
 import ast
 import enum
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from pillywiggins.skills.sandbox import SandboxResult, run_sandboxed
+from pillywiggins.skills.sandbox import SandboxResult, run_sandboxed, run_test_driven
+
+logger = logging.getLogger(__name__)
 
 
 class DraftStatus(enum.Enum):
@@ -13,6 +16,7 @@ class DraftStatus(enum.Enum):
     REVIEWED = "reviewed"
     APPROVED = "approved"
     REJECTED = "rejected"
+    ERROR = "error"
 
 
 DANGEROUS_PATTERNS = {
@@ -22,6 +26,37 @@ DANGEROUS_PATTERNS = {
     "exec": r"\bexec\s*\(",
     "__import__": r"__import__\s*\(",
 }
+
+
+def _sanitize_code(code: str) -> str:
+    r"""Attempt to fix common LLM mis-escaping patterns.
+
+    Common issues:
+    - Literal ``\n`` instead of actual newlines.
+    - Literal ``\t`` instead of actual tabs.
+    - Backslash-escaped triple quotes ``\"""``.
+    """
+    # Replace literal backslash-newline with actual newline
+    # But be careful not to break valid escape sequences like \"
+    sanitized = code
+
+    # Fix literal \\n (two chars: backslash, n) -> newline
+    sanitized = re.sub(r"(?<!\\)\\n", "\n", sanitized)
+
+    # Fix literal \\t -> tab
+    sanitized = re.sub(r"(?<!\\)\\t", "\t", sanitized)
+
+    # Fix backslash before triple quotes (common in docstrings)
+    sanitized = sanitized.replace('\\"""', '"""')
+
+    # Fix backslash before single quotes
+    sanitized = sanitized.replace("\\'", "'")
+
+    # Remove trailing backslashes at end of lines that are line-continuation characters
+    # when they appear before a quote. This is a heuristic.
+    sanitized = re.sub(r'\\("""|\'\'\'|"|\')', r'\1', sanitized)
+
+    return sanitized
 
 
 def validate_skill_code(
@@ -51,7 +86,10 @@ def validate_skill_code(
 
 
 def _extract_meta(code: str) -> dict:
-    tree = ast.parse(code)
+    try:
+        tree = ast.parse(code)
+    except SyntaxError as e:
+        return {"error": f"Syntax error in skill code: {e}"}
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
@@ -85,21 +123,75 @@ class SkillDraft:
 
 
 def draft_skill(name: str, code: str) -> SkillDraft:
-    meta = _extract_meta(code)
+    # Try sanitization first for common LLM mis-escaping
+    sanitized = _sanitize_code(code)
+    meta = _extract_meta(sanitized)
+    if "error" in meta:
+        # Sanitization didn't help; try raw code as fallback
+        meta_raw = _extract_meta(code)
+        if "error" not in meta_raw:
+            # Raw code parses, use it
+            sanitized = code
+            meta = meta_raw
+        else:
+            # Both sanitized and raw have syntax errors; prefer the original for reporting
+            sanitized = code
+            meta = meta_raw
+            return SkillDraft(
+                name=name,
+                code=sanitized,
+                meta=meta,
+                status=DraftStatus.ERROR,
+                test_results=[
+                    {
+                        "passed": False,
+                        "error": meta["error"],
+                    }
+                ],
+            )
+
     permissions = {
         "network": meta.get("permissions", {}).get("network", False)
         or meta.get("network_access", False),
         "subprocess": meta.get("permissions", {}).get("subprocess", False),
         "file_write": meta.get("permissions", {}).get("file_write", False),
     }
-    valid, error = validate_skill_code(code, permissions)
+    valid, error = validate_skill_code(sanitized, permissions)
     if not valid:
-        raise ValueError(f"Skill code validation failed: {error}")
+        return SkillDraft(
+            name=name,
+            code=sanitized,
+            meta=meta,
+            status=DraftStatus.ERROR,
+            test_results=[
+                {
+                    "passed": False,
+                    "error": f"Skill code validation failed: {error}",
+                }
+            ],
+        )
 
-    return SkillDraft(name=name, code=code, meta=meta, status=DraftStatus.DRAFT)
+    return SkillDraft(name=name, code=sanitized, meta=meta, status=DraftStatus.DRAFT)
 
 
 async def test_skill(draft: SkillDraft, test_cases: list[dict[str, Any]]) -> SkillDraft:
+    # If draft already has a syntax/validation error, surface it immediately
+    if "error" in draft.meta:
+        draft.status = DraftStatus.TESTED
+        if not draft.test_results:
+            draft.test_results = [
+                {
+                    "args": {},
+                    "expected": None,
+                    "passed": False,
+                    "actual": None,
+                    "error": draft.meta["error"],
+                    "timed_out": False,
+                    "execution_time_ms": 0.0,
+                }
+            ]
+        return draft
+
     results = []
     for case in test_cases:
         args = case.get("args", {})
@@ -158,6 +250,111 @@ async def test_skill(draft: SkillDraft, test_cases: list[dict[str, Any]]) -> Ski
     return draft
 
 
+def validate_tests(test_code: str) -> tuple[bool, str]:
+    """Check whether *test_code* is syntactically valid Python.
+
+    Returns:
+        (True, "") if the code parses cleanly, otherwise (False, error_msg).
+    """
+    try:
+        ast.parse(test_code)
+    except SyntaxError as e:
+        return False, f"Syntax error in test code: {e}"
+    return True, ""
+
+
+async def test_driven_skill(name: str, code: str, test_code: str) -> SkillDraft:
+    """Validate both skill code and test code, then run tests via sandbox.
+
+    This is the TDD path: the user (or agent) provides both the skill
+    implementation and the test assertions.  We verify that both parse,
+    then inject the test code into a sandbox alongside the skill code.
+
+    Args:
+        name: Skill name.
+        code: Skill source code (must contain SKILL_META and run()).
+        test_code: Python test source.  It executes in the same module
+            scope as the skill code, so it can call ``run()`` directly.
+
+    Returns:
+        A SkillDraft with status DRAFT (both valid, tests passed) or
+        ERROR (validation failure or test failure).  Results are stored in
+        ``test_results``.
+    """
+    # Step 1: validate skill code
+    draft = draft_skill(name, code)
+    if draft.status == DraftStatus.ERROR:
+        return draft
+
+    # Step 2: validate test code parses
+    valid_test, test_error = validate_tests(test_code)
+    if not valid_test:
+        return SkillDraft(
+            name=name,
+            code=code,
+            meta=draft.meta,
+            status=DraftStatus.ERROR,
+            test_results=[
+                {
+                    "passed": False,
+                    "error": f"Test code validation failed: {test_error}",
+                }
+            ],
+        )
+
+    # Step 3: run the combined test in the sandbox
+    try:
+        sandbox_result: SandboxResult = await run_test_driven(
+            draft.code,
+            test_code,
+            draft.permissions,
+        )
+    except Exception as exc:
+        return SkillDraft(
+            name=name,
+            code=code,
+            meta=draft.meta,
+            status=DraftStatus.ERROR,
+            test_results=[
+                {
+                    "passed": False,
+                    "error": f"Test execution error: {exc}",
+                }
+            ],
+        )
+
+    if not sandbox_result.success:
+        return SkillDraft(
+            name=name,
+            code=code,
+            meta=draft.meta,
+            status=DraftStatus.ERROR,
+            test_results=[
+                {
+                    "passed": False,
+                    "error": sandbox_result.error,
+                    "execution_time_ms": sandbox_result.execution_time_ms,
+                }
+            ],
+        )
+
+    # All good
+    return SkillDraft(
+        name=name,
+        code=code,
+        meta=draft.meta,
+        status=DraftStatus.DRAFT,
+        test_results=[
+            {
+                "passed": True,
+                "error": None,
+                "result": sandbox_result.result,
+                "execution_time_ms": sandbox_result.execution_time_ms,
+            }
+        ],
+    )
+
+
 def review_skill(draft: SkillDraft) -> str:
     lines = []
     lines.append(f"=== Skill Review: {draft.name} ===")
@@ -188,11 +385,11 @@ def review_skill(draft: SkillDraft) -> str:
             lines.append(f"    Time: {result.get('execution_time_ms', 0):.1f}ms")
 
     lines.append("")
-    lines.append(f"⚠ User approval is required to deploy this skill.")
+    lines.append(f"⚠ User approval is required to publish this skill.")
     return "\n".join(lines)
 
 
-async def deploy_skill(
+async def publish_skill(
     draft: SkillDraft,
     approved: bool,
     skills_dir: str,
@@ -200,22 +397,25 @@ async def deploy_skill(
     nats_bus: Any = None,
 ) -> str:
     if not approved:
-        return f"Skill '{draft.name}' deployment was not approved."
+        return f"Skill '{draft.name}' publication was not approved."
+
+    if draft.status == DraftStatus.ERROR:
+        return f"Skill '{draft.name}' cannot be published: status is 'error', fix errors before publishing."
 
     if draft.status not in (DraftStatus.TESTED, DraftStatus.REVIEWED, DraftStatus.APPROVED):
-        return f"Skill '{draft.name}' cannot be deployed: status is '{draft.status.value}', must be 'tested', 'reviewed', or 'approved'."
+        return f"Skill '{draft.name}' cannot be published: status is '{draft.status.value}', must be 'tested', 'reviewed', or 'approved'."
 
     if draft.test_results:
         failed = [r for r in draft.test_results if not r["passed"]]
         if failed:
-            return f"Skill '{draft.name}' has {len(failed)} failing test(s). Fix before deploying."
+            return f"Skill '{draft.name}' has {len(failed)} failing test(s). Fix before publishing."
 
     registry.register_skill(draft.name, draft.code, draft.meta)
 
     if nats_bus is not None:
         try:
             await nats_bus.publish_broadcast(
-                "skill_deployed",
+                "skill_published",
                 {
                     "skill_name": draft.name,
                     "meta": draft.meta,
@@ -224,4 +424,4 @@ async def deploy_skill(
         except Exception:
             pass
 
-    return f"Skill '{draft.name}' deployed successfully."
+    return f"Skill '{draft.name}' published successfully."

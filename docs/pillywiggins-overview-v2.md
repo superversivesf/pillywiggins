@@ -257,6 +257,40 @@ No Kubernetes. No sidecars. No control planes. Just containers talking to each o
 
 ---
 
+## Monitoring and Logs
+
+Docker Compose v2 provides unified log viewing out of the box — similar to how Kubernetes aggregates container logs within a pod. All services' output streams to one terminal, interleaved and color-coded by service.
+
+```bash
+# Follow all services (the Pillywiggins equivalent of kubectl logs -f)
+docker compose logs -f
+
+# Specific services only
+docker compose logs -f puck wormwood nats
+
+# Last 100 lines, then follow
+docker compose logs -f --tail=100
+
+# With timestamps
+docker compose logs -f -t
+```
+
+For filtering, pipe through grep:
+
+```bash
+# Errors across all services
+docker compose logs --tail=500 | grep -i error
+
+# A specific agent's LLM calls
+docker compose logs --tail=1000 wormwood | grep -i "llm\|completion"
+```
+
+Docker Compose v2 color-codes each service automatically, so you can visually distinguish agent output from infrastructure logs at a glance. When piped to grep or redirected to a file, the color codes are stripped and each line carries a plain-text service prefix instead.
+
+For the full command reference, see the **View Logs** section in the project [README](../README.md).
+
+---
+
 ## The Technology Stack (and Why Each Piece)
 
 | What | Technology | Why This One |

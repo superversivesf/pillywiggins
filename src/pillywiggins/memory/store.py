@@ -14,6 +14,20 @@ class ConversationStore:
         self._channel = channel
         self._pool: Optional[asyncpg.Pool] = None
 
+    async def _ensure_agent_id(self, conn: asyncpg.Connection) -> None:
+        """Re-apply the agent_id GUC on every connection checkout.
+
+        asyncpg's `init` callback only runs when a connection is first
+        created inside the pool.  If a connection is returned to the pool
+        and later re-used by a different coroutine, the GUC may have been
+        reset.  Calling this before every operation guarantees RLS sees the
+        correct agent_id.
+        """
+        await conn.execute(
+            "SELECT set_config('app.agent_id', $1, false)",
+            self._agent_id,
+        )
+
     async def connect(self) -> None:
         async def _init_connection(conn):
             # set_config is the only safe, parameterised way to
@@ -37,6 +51,7 @@ class ConversationStore:
         try:
             data = ModelMessagesTypeAdapter.dump_json(messages).decode()
             async with self._pool.acquire() as conn:
+                await self._ensure_agent_id(conn)
                 await conn.execute(
                     """INSERT INTO conversation_cache (agent_id, channel, conversation_key, messages, updated_at)
                        VALUES ($1, $2, $3, $4::jsonb, now())
@@ -55,6 +70,7 @@ class ConversationStore:
             return None
         try:
             async with self._pool.acquire() as conn:
+                await self._ensure_agent_id(conn)
                 row = await conn.fetchrow(
                     """SELECT messages FROM conversation_cache
                        WHERE agent_id = $1 AND channel = $2 AND conversation_key = $3""",

@@ -55,12 +55,13 @@ async def test_save_upserts_conversation(store):
         messages = [ModelRequest(parts=[UserPromptPart(content="hello")])]
         await store.save("chat123", messages)
 
-    mock_conn.execute.assert_called_once()
-    call_args = mock_conn.execute.call_args
-    assert "INSERT INTO conversation_cache" in call_args[0][0]
-    assert call_args[0][1] == "puck"
-    assert call_args[0][2] == "telegram"
-    assert call_args[0][3] == "chat123"
+    assert mock_conn.execute.call_count == 2
+    # Second call is the INSERT; verify its arguments
+    insert_call = mock_conn.execute.call_args_list[1]
+    assert "INSERT INTO conversation_cache" in insert_call[0][0]
+    assert insert_call[0][1] == "puck"
+    assert insert_call[0][2] == "telegram"
+    assert insert_call[0][3] == "chat123"
     await store.close()
 
 
@@ -248,7 +249,9 @@ async def test_save_empty_messages_list(store):
         await store.connect()
         await store.save("chat_empty", [])
 
-    mock_conn.execute.assert_called_once()
+    assert mock_conn.execute.call_count == 2
+    insert_call = mock_conn.execute.call_args_list[1]
+    assert "INSERT INTO conversation_cache" in insert_call[0][0]
     await store.close()
 
 

@@ -10,11 +10,14 @@ DANGEROUS_PATTERNS = _builder.DANGEROUS_PATTERNS
 DraftStatus = _builder.DraftStatus
 SkillDraft = _builder.SkillDraft
 _extract_meta = _builder._extract_meta
-deploy_skill = _builder.deploy_skill
+_sanitize_code = _builder._sanitize_code
+publish_skill = _builder.publish_skill
 draft_skill = _builder.draft_skill
 review_skill = _builder.review_skill
 run_skill_tests = _builder.test_skill
 validate_skill_code = _builder.validate_skill_code
+validate_tests = _builder.validate_tests
+_test_driven_skill = _builder.test_driven_skill
 
 
 VALID_SKILL_CODE = """\
@@ -98,6 +101,19 @@ def run(mod: str = "") -> dict:
     m = __import__(mod)
     return {"module": str(m)}
 """
+
+# Model-quality escape issues — these strings are deliberately malformed to
+# reproduce common LLM mis-escaping patterns observed in tool-call arguments.
+CODE_WITH_ESCAPED_TRIPLE_QUOTES = 'x = \\"""Get weather"""\n'
+# The raw Python string contains a backslash followed by """.
+# Python sees \ as a line-continuation character and then """ as a string
+# delimiter, producing: SyntaxError: unexpected character after line
+# continuation character.
+
+CODE_WITH_ESCAPED_NEWLINE_LITERAL = 'def run():\\n    return 1\n'
+# A literal "\\n" in the code instead of an actual newline character.
+# After JSON parsing this is still "\\n" in the string, which ast.parse
+# rejects because \\n is a line-continuation + "n".
 
 
 class TestDraftStatus:
@@ -330,16 +346,19 @@ class TestDraftSkill:
         assert draft.meta["description"] == "Double a number"
 
     def test_validates_code_on_creation(self):
-        with pytest.raises(ValueError, match="validation failed"):
-            draft_skill("broken", CODE_MISSING_META)
+        draft = draft_skill("broken", CODE_MISSING_META)
+        assert draft.status == DraftStatus.ERROR
+        assert "validation failed" in draft.test_results[0].get("error", "")
 
     def test_validates_syntax_on_creation(self):
-        with pytest.raises(SyntaxError):
-            draft_skill("bad", CODE_SYNTAX_ERROR)
+        draft = draft_skill("bad", CODE_SYNTAX_ERROR)
+        assert draft.status == DraftStatus.ERROR
+        assert "Syntax error" in draft.meta.get("error", "")
 
     def test_validates_dangerous_patterns_on_creation(self):
-        with pytest.raises(ValueError, match="dangerous pattern"):
-            draft_skill("evil", CODE_WITH_EVAL)
+        draft = draft_skill("evil", CODE_WITH_EVAL)
+        assert draft.status == DraftStatus.ERROR
+        assert "dangerous pattern" in draft.test_results[0].get("error", "")
 
     def test_stores_code(self):
         draft = draft_skill("double", VALID_SKILL_CODE)
@@ -479,6 +498,123 @@ def run() -> dict:
         result = await run_skill_tests(draft, test_cases)
         assert result.test_results[0]["passed"] is True
         assert result.test_results[1]["passed"] is False
+
+
+class TestValidateTests:
+    def test_valid_test_code(self):
+        valid, error = validate_tests("assert 1 + 1 == 2")
+        assert valid is True
+        assert error == ""
+
+    def test_syntax_error_caught(self):
+        valid, error = validate_tests(
+            'assert 1 +\n        assert 2\n'
+        )
+        assert valid is False
+        assert "Syntax error" in error
+
+    def test_empty_string_is_valid(self):
+        # ast.parse accepts the empty string too
+        valid, error = validate_tests("")
+        assert valid is True
+
+
+class TestTestDrivenSkill:
+    async def test_valid_skill_and_tests_pass(self):
+        code = """\
+SKILL_META = {
+    "name": "double",
+    "description": "Double a number",
+    "parameters": {"x": {"type": "number", "description": "Number to double"}},
+    "returns": "dict with result",
+    "permissions": {"network": False, "subprocess": False, "file_write": False},
+}
+
+def run(x: int = 0) -> dict:
+    return {"result": x * 2}
+"""
+        test_code = "assert run(5) == {'result': 10}\nassert run(0) == {'result': 0}"
+        draft = await _test_driven_skill("double", code, test_code)
+        assert draft.status == DraftStatus.DRAFT
+        assert draft.test_results[0]["passed"] is True
+
+    async def test_assertion_error_caught(self):
+        code = """\
+SKILL_META = {
+    "name": "double",
+    "description": "Double a number",
+    "permissions": {"network": False, "subprocess": False, "file_write": False},
+}
+
+def run(x: int = 0) -> dict:
+    return {"result": x * 2}
+"""
+        test_code = "assert run(5) == {'result': 999}"
+        draft = await _test_driven_skill("double", code, test_code)
+        assert draft.status == DraftStatus.ERROR
+        assert "Assertion failed" in draft.test_results[0]["error"]
+
+    async def test_invalid_skill_code_returns_error(self):
+        code = "invalid python {{"
+        test_code = "assert True"
+        draft = await _test_driven_skill("bad", code, test_code)
+        assert draft.status == DraftStatus.ERROR
+        assert "syntax error" in draft.test_results[0]["error"].lower()
+
+    async def test_invalid_test_code_returns_error(self):
+        code = """\
+SKILL_META = {
+    "name": "double",
+    "description": "Double a number",
+    "permissions": {"network": False, "subprocess": False, "file_write": False},
+}
+
+def run(x: int = 0) -> dict:
+    return {"result": x * 2}
+"""
+        test_code = "assert 5 +\n"
+        draft = await _test_driven_skill("double", code, test_code)
+        assert draft.status == DraftStatus.ERROR
+        assert "Test code validation failed" in draft.test_results[0]["error"]
+
+    async def test_exception_in_test_code_recorded(self):
+        code = """\
+SKILL_META = {
+    "name": "double",
+    "description": "Double a number",
+    "permissions": {"network": False, "subprocess": False, "file_write": False},
+}
+
+def run(x: int = 0) -> dict:
+    return {"result": x * 2}
+"""
+        test_code = "run('string')['missing_key']"
+        draft = await _test_driven_skill("double", code, test_code)
+        assert draft.status == DraftStatus.ERROR
+        assert "missing_key" in draft.test_results[0]["error"]
+
+    async def test_execution_time_recorded(self):
+        code = """\
+SKILL_META = {
+    "name": "double",
+    "description": "Double a number",
+    "permissions": {"network": False, "subprocess": False, "file_write": False},
+}
+
+def run(x: int = 0) -> dict:
+    return {"result": x * 2}
+"""
+        test_code = "assert run(5) == {'result': 10}"
+        draft = await _test_driven_skill("double", code, test_code)
+        assert draft.status == DraftStatus.DRAFT
+        assert draft.test_results[0]["execution_time_ms"] > 0
+
+    async def test_preserves_meta(self):
+        code = VALID_SKILL_CODE
+        test_code = "assert run(5) == {'result': 10}"
+        draft = await _test_driven_skill("double", code, test_code)
+        assert draft.meta["name"] == "double"
+        assert draft.meta["description"] == "Double a number"
 
 
 class TestReviewSkill:
@@ -628,23 +764,23 @@ class TestReviewSkill:
         assert "2/3 tests passed" in output
 
 
-class TestDeploySkill:
-    async def test_deploy_without_approval_rejected(self):
+class TestPublishSkill:
+    async def test_publish_without_approval_rejected(self):
         draft = SkillDraft(name="test", code="pass", status=DraftStatus.TESTED)
         registry = MagicMock()
-        result = await deploy_skill(draft, approved=False, skills_dir="/tmp", registry=registry)
+        result = await publish_skill(draft, approved=False, skills_dir="/tmp", registry=registry)
         assert "not approved" in result
         registry.register_skill.assert_not_called()
 
-    async def test_deploy_with_draft_status_rejected(self):
+    async def test_publish_with_draft_status_rejected(self):
         draft = SkillDraft(name="test", code="pass", status=DraftStatus.DRAFT)
         registry = MagicMock()
-        result = await deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
-        assert "cannot be deployed" in result
+        result = await publish_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
+        assert "cannot be published" in result
         assert "draft" in result
         registry.register_skill.assert_not_called()
 
-    async def test_deploy_with_reviewed_status_succeeds(self):
+    async def test_publish_with_reviewed_status_succeeds(self):
         draft = SkillDraft(
             name="test",
             code=VALID_SKILL_CODE,
@@ -652,11 +788,11 @@ class TestDeploySkill:
             meta={"name": "test"},
         )
         registry = MagicMock()
-        result = await deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
-        assert "deployed successfully" in result
+        result = await publish_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
+        assert "published successfully" in result
         registry.register_skill.assert_called_once_with("test", VALID_SKILL_CODE, {"name": "test"})
 
-    async def test_deploy_with_approved_status_succeeds(self):
+    async def test_publish_with_approved_status_succeeds(self):
         draft = SkillDraft(
             name="test",
             code=VALID_SKILL_CODE,
@@ -664,11 +800,11 @@ class TestDeploySkill:
             meta={"name": "test"},
         )
         registry = MagicMock()
-        result = await deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
-        assert "deployed successfully" in result
+        result = await publish_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
+        assert "published successfully" in result
         registry.register_skill.assert_called_once()
 
-    async def test_deploy_with_tested_status_succeeds(self):
+    async def test_publish_with_tested_status_succeeds(self):
         draft = SkillDraft(
             name="test",
             code=VALID_SKILL_CODE,
@@ -687,18 +823,18 @@ class TestDeploySkill:
             ],
         )
         registry = MagicMock()
-        result = await deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
-        assert "deployed successfully" in result
+        result = await publish_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
+        assert "published successfully" in result
         registry.register_skill.assert_called_once()
 
-    async def test_deploy_with_rejected_status_blocked(self):
+    async def test_publish_with_rejected_status_blocked(self):
         draft = SkillDraft(name="test", code="pass", status=DraftStatus.REJECTED)
         registry = MagicMock()
-        result = await deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
-        assert "cannot be deployed" in result
+        result = await publish_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
+        assert "cannot be published" in result
         registry.register_skill.assert_not_called()
 
-    async def test_deploy_with_failing_tests_blocked(self):
+    async def test_publish_with_failing_tests_blocked(self):
         draft = SkillDraft(
             name="test",
             code="pass",
@@ -725,11 +861,11 @@ class TestDeploySkill:
             ],
         )
         registry = MagicMock()
-        result = await deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
+        result = await publish_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
         assert "failing test" in result
         registry.register_skill.assert_not_called()
 
-    async def test_deploy_calls_registry_with_correct_args(self):
+    async def test_publish_calls_registry_with_correct_args(self):
         draft = SkillDraft(
             name="my_skill",
             code=VALID_SKILL_CODE,
@@ -748,15 +884,110 @@ class TestDeploySkill:
             ],
         )
         registry = MagicMock()
-        await deploy_skill(draft, approved=True, skills_dir="/tmp/skills", registry=registry)
+        await publish_skill(draft, approved=True, skills_dir="/tmp/skills", registry=registry)
         registry.register_skill.assert_called_once_with(
             "my_skill",
             VALID_SKILL_CODE,
             {"name": "my_skill", "description": "A test skill"},
         )
 
-    async def test_deploy_with_empty_test_results_passes(self):
+    async def test_publish_with_empty_test_results_passes(self):
         draft = SkillDraft(name="test", code="pass", status=DraftStatus.TESTED, test_results=[])
         registry = MagicMock()
-        result = await deploy_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
-        assert "deployed successfully" in result
+        result = await publish_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
+        assert "published successfully" in result
+
+
+class TestEscapedSkillCode:
+    """Reproduce model-quality escaping issues in build_skill tool-call arguments.
+
+    When a model emits Python source code inside a JSON tool-call argument,
+    the JSON parser (json.loads) correctly unescapes standard JSON escapes.
+    These tests verify that *after* JSON parsing --- i.e. the string that
+    actually reaches ``draft_skill()`` --- certain malformed patterns are
+    caught gracefully and returned as structured error drafts instead of
+    crashing with an unhandled SyntaxError.
+    """
+
+    def test_escaped_triple_quotes_caught_gracefully(self):
+        """Backslash before triple quotes -> no crash, returns error draft."""
+        code = 'x = \\"""Get weather"""\n'
+        draft = draft_skill("bad_escape", code)
+        assert draft.status == DraftStatus.ERROR
+        assert "validation failed" in draft.test_results[0].get("error", "")
+
+    def test_escaped_newline_literal_caught_gracefully(self):
+        """Literal \\n in code instead of real newline -> no crash, returns error draft."""
+        code = 'def run():\\n    return 1\n'
+        draft = draft_skill("bad_escape", code)
+        assert draft.status == DraftStatus.ERROR
+        assert "validation failed" in draft.test_results[0].get("error", "")
+
+    def test_escaped_newline_literal_caught_gracefully(self):
+        """Literal \\n in code instead of real newline -> structured error, no crash."""
+        code = 'def run():\\n    return 1\n'
+        draft = draft_skill("bad_escape", code)
+        assert draft.status == DraftStatus.ERROR
+        assert "validation failed" in draft.test_results[0].get("error", "")
+
+    def test_sanitization_fixes_escaped_newlines(self):
+        """Sanitization should turn literal \\n into real newlines so valid code parses."""
+        code = 'SKILL_META = {"name": "sanitized", "permissions": {"network": False, "subprocess": False, "file_write": False}}\ndef run():\\n    return {"result": 1}\n'
+        draft = draft_skill("sanitized", code)
+        assert draft.status == DraftStatus.DRAFT
+        assert draft.meta["name"] == "sanitized"
+
+    def test_sanitization_fixes_escaped_triple_quotes(self):
+        """Sanitization should remove backslashes before triple quotes."""
+        code = 'SKILL_META = {"name": "doc_skill", "permissions": {"network": False, "subprocess": False, "file_write": False}}\ndef run():\\n    \\"""Get weather"""\\n    return {"result": 1}\n'
+        draft = draft_skill("doc_skill", code)
+        assert draft.status == DraftStatus.DRAFT
+        assert draft.meta["name"] == "doc_skill"
+
+    def test_well_formed_code_still_works(self):
+        """A correctly formatted skill should pass as before."""
+        draft = draft_skill("double", VALID_SKILL_CODE)
+        assert draft.status == DraftStatus.DRAFT
+        assert draft.meta["name"] == "double"
+
+    def test_json_roundtrip_does_not_introduce_backslash(self):
+        """PydanticAI receives JSON-encoded strings; json.loads turns \" into "
+        and \\n into a real newline.  A correctly‑formatted triple‑quoted
+        docstring survives round-trip intact."""
+        import json
+        original = (
+            'SKILL_META = {"name": "good_docstring", "description": "A skill", '
+            '"permissions": {"network": False, "subprocess": False, "file_write": False}}\n'
+            'def run():\n    """Get weather"""\n    return 1\n'
+        )
+        json_encoded = json.dumps(original)
+        decoded = json.loads(json_encoded)
+        # Should parse cleanly --- *this* is what a well‑behaved model passes.
+        draft = draft_skill("good_docstring", decoded)
+        assert draft.code == original
+        assert draft.status == DraftStatus.DRAFT
+
+
+class TestSanitizeCode:
+    def test_fixes_literal_newlines(self):
+        raw = 'line1\\nline2'
+        assert _sanitize_code(raw) == 'line1\nline2'
+
+    def test_fixes_literal_tabs(self):
+        raw = 'col1\\tcol2'
+        assert _sanitize_code(raw) == 'col1\tcol2'
+
+    def test_fixes_escaped_triple_quotes(self):
+        raw = '\\"""docstring"""'
+        assert _sanitize_code(raw) == '"""docstring"""'
+
+    def test_does_not_break_valid_backslash_newline(self):
+        raw = 'x = \\\n    1'
+        assert _sanitize_code(raw) == 'x = \\\n    1'
+
+    def test_does_not_alter_well_formed_code(self):
+        assert _sanitize_code(VALID_SKILL_CODE) == VALID_SKILL_CODE
+
+    def test_leaves_backslash_escaped_quote(self):
+        raw = 'x = \\"hello\\"'
+        assert _sanitize_code(raw) == 'x = "hello"'

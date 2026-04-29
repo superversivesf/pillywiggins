@@ -17,17 +17,22 @@ def _should_sandbox(skill_name: str) -> bool:
     return skill_name in settings.get_sandbox_skill_names()
 
 
-async def _run_sandboxed_skill(skill, kwargs: dict) -> str:
+async def _run_sandboxed_skill(skill, kwargs: dict, agent_id: str, channel: str, council_memory=None) -> str:
     import json
     from pillywiggins.skills.sandbox import run_sandboxed
+    from pillywiggins.skills.logger import log_skill_execution
 
     if skill.file_path is None:
-        return f"Error: skill {skill.name} has no source file for sandbox execution"
+        err = f"Error: skill {skill.name} has no source file for sandbox execution"
+        log_skill_execution(agent_id, channel, skill.name, kwargs, error=err, council_memory=council_memory)
+        return err
 
     try:
         code = skill.file_path.read_text()
     except Exception as e:
-        return f"Error reading skill source for {skill.name}: {e}"
+        err = f"Error reading skill source for {skill.name}: {e}"
+        log_skill_execution(agent_id, channel, skill.name, kwargs, error=err, council_memory=council_memory)
+        return err
 
     sandbox_result = await run_sandboxed(
         code=code,
@@ -36,9 +41,16 @@ async def _run_sandboxed_skill(skill, kwargs: dict) -> str:
     )
 
     if not sandbox_result.success:
-        return f"Sandbox error in {skill.name}: {sandbox_result.error}"
+        err = f"Sandbox error in {skill.name}: {sandbox_result.error}"
+        log_skill_execution(
+            agent_id, channel, skill.name, kwargs, error=err, council_memory=council_memory
+        )
+        return err
 
     result = sandbox_result.result
+    log_skill_execution(
+        agent_id, channel, skill.name, kwargs, result=result, council_memory=council_memory
+    )
     if isinstance(result, str):
         return result
     return json.dumps(result)
@@ -65,6 +77,7 @@ async def query_council_memory(ctx: RunContext[AgentDeps], query: str) -> str:
         api_key=settings.llm_api_key,
         provider=settings.llm_provider,
         model=settings.embedding_model,
+        expected_dimension=settings.embedding_dimension,
     )
     if query_embedding is None:
         return "Could not generate embedding for council search."
@@ -105,6 +118,7 @@ async def share_to_council(
         api_key=settings.llm_api_key,
         provider=settings.llm_provider,
         model=settings.embedding_model,
+        expected_dimension=settings.embedding_dimension,
     )
     if embedding is None:
         return "Could not generate embedding — council insight not shared."
@@ -148,6 +162,7 @@ async def recall_private_memory(ctx: RunContext[AgentDeps], query: str) -> str:
         api_key=settings.llm_api_key,
         provider=settings.llm_provider,
         model=settings.embedding_model,
+        expected_dimension=settings.embedding_dimension,
     )
     if query_embedding is None:
         return "Could not generate embedding for search."
@@ -184,11 +199,55 @@ async def save_to_private_memory(ctx: RunContext[AgentDeps], content: str) -> st
         api_key=settings.llm_api_key,
         provider=settings.llm_provider,
         model=settings.embedding_model,
+        expected_dimension=settings.embedding_dimension,
     )
     if embedding is None:
         return "Could not generate embedding — memory not saved."
     await ctx.deps.private_memory.save(content, embedding)
     return f"Remembered: {content}"
+
+
+async def test_driven_skill(
+    ctx: RunContext[AgentDeps], name: str, code: str, test_code: str
+) -> str:
+    """Validate both skill code and test code, then run tests in the sandbox.
+
+    This is the TDD (test-driven development) path: the user provides both
+    the skill implementation and the test assertions.  The system validates that
+    both parse cleanly, then injects the test code into a sandbox alongside
+    the skill code and reports pass / fail results.
+
+    Args:
+        name: The skill name.
+        code: The Python source code for the skill. Must contain SKILL_META
+            and a run() function.
+        test_code: Python test code.  It runs in the same module scope as the
+            skill code, so it can call ``run()`` directly.  Use standard
+            Python ``assert`` statements for checks.
+
+    Returns:
+        Pass / fail results, including any validation or execution errors.
+    """
+    from pillywiggins.skills.builder import test_driven_skill as _test_driven, DraftStatus
+
+    try:
+        draft = await _test_driven(name, code, test_code)
+    except Exception as e:
+        return f"TDD skill validation failed: {type(e).__name__}: {e}. Please fix and try again."
+
+    if draft.status == DraftStatus.ERROR:
+        error_msg = draft.test_results[0].get("error") if draft.test_results else "Unknown error"
+        return f"TDD skill validation failed: {error_msg}. Please fix and try again."
+
+    lines = []
+    lines.append(f"TDD skill '{draft.name}' passed validation")
+    if draft.test_results:
+        elapsed = draft.test_results[0].get("execution_time_ms", 0.0)
+        lines.append(f"Tests completed in {elapsed:.1f}ms")
+    lines.append("Status: draft (ready for review and publish)")
+    lines.append("")
+    lines.append("Use review_skill_code to review, then publish_skill_code to publish.")
+    return "\n".join(lines)
 
 
 async def build_skill(ctx: RunContext[AgentDeps], name: str, code: str) -> str:
@@ -201,12 +260,16 @@ async def build_skill(ctx: RunContext[AgentDeps], name: str, code: str) -> str:
     Returns:
         Draft info including name and meta, or a validation error message.
     """
-    from pillywiggins.skills.builder import draft_skill
+    from pillywiggins.skills.builder import draft_skill, DraftStatus
 
     try:
         draft = draft_skill(name, code)
-    except ValueError as e:
-        return f"Skill code validation failed: {e}"
+    except Exception as e:
+        return f"Skill generation failed: {type(e).__name__}: {e}. Please fix and try again."
+
+    if draft.status == DraftStatus.ERROR:
+        error_msg = draft.test_results[0].get("error") if draft.test_results else "Unknown error"
+        return f"Skill generation failed: {error_msg}. Please fix and try again."
 
     lines = []
     lines.append(f"Draft created: {draft.name}")
@@ -237,7 +300,7 @@ async def test_skill_code(
         Pass/fail results for each test case.
     """
     import json
-    from pillywiggins.skills.builder import draft_skill, test_skill
+    from pillywiggins.skills.builder import draft_skill, test_skill, DraftStatus
 
     try:
         test_cases = json.loads(test_cases_json)
@@ -249,10 +312,23 @@ async def test_skill_code(
 
     try:
         draft = draft_skill(name, code)
-    except ValueError as e:
-        return f"Skill code validation failed: {e}"
+    except Exception as e:
+        return f"Skill generation failed: {type(e).__name__}: {e}. Please fix and try again."
 
-    draft = await test_skill(draft, test_cases)
+    if draft.status == DraftStatus.ERROR:
+        error_msg = draft.test_results[0].get("error") if draft.test_results else "Unknown error"
+        return f"Skill generation failed: {error_msg}. Please fix and try again."
+
+    try:
+        draft = await test_skill(draft, test_cases)
+    except Exception as e:
+        return f"Skill '{name}' has test failures: {type(e).__name__}: {e}. Please fix the code and try again."
+
+    if draft.test_results:
+        failed = [r for r in draft.test_results if not r["passed"]]
+        if failed:
+            errors = "; ".join(str(r.get("error")) for r in failed if r.get("error"))
+            return f"Skill '{name}' has test failures: {errors}. Please fix the code and try again."
 
     passed_count = sum(1 for r in draft.test_results if r["passed"])
     total_count = len(draft.test_results)
@@ -288,7 +364,7 @@ async def review_skill_code(
         Formatted review output with code, test results, and an approval request.
     """
     import json
-    from pillywiggins.skills.builder import draft_skill, test_skill, review_skill
+    from pillywiggins.skills.builder import draft_skill, test_skill, review_skill, DraftStatus
 
     try:
         test_cases = json.loads(test_cases_json)
@@ -300,29 +376,43 @@ async def review_skill_code(
 
     try:
         draft = draft_skill(name, code)
-    except ValueError as e:
-        return f"Skill code validation failed: {e}"
+    except Exception as e:
+        return f"Skill generation failed: {type(e).__name__}: {e}. Please fix and try again."
 
-    draft = await test_skill(draft, test_cases)
+    if draft.status == DraftStatus.ERROR:
+        error_msg = draft.test_results[0].get("error") if draft.test_results else "Unknown error"
+        return f"Skill generation failed: {error_msg}. Please fix and try again."
+
+    try:
+        draft = await test_skill(draft, test_cases)
+    except Exception as e:
+        return f"Skill '{name}' has test failures: {type(e).__name__}: {e}. Please fix the code and try again."
+
+    if draft.test_results:
+        failed = [r for r in draft.test_results if not r["passed"]]
+        if failed:
+            errors = "; ".join(str(r.get("error")) for r in failed if r.get("error"))
+            return f"Skill '{name}' has test failures: {errors}. Please fix the code and try again."
+
     return review_skill(draft)
 
 
-async def deploy_skill_code(
+async def publish_skill_code(
     ctx: RunContext[AgentDeps], name: str, code: str, test_cases_json: str, approved: bool
 ) -> str:
-    """Deploy an approved skill. The user must explicitly set approved=True to confirm deployment.
+    """Publish an approved skill. The user must explicitly set approved=True to confirm publication.
 
     Args:
         name: The skill name.
         code: The Python source code for the skill.
         test_cases_json: A JSON array of test cases (same format as test_skill_code).
-        approved: Must be True for the skill to be deployed. Set to True only after user review.
+        approved: Must be True for the skill to be published. Set to True only after user review.
 
     Returns:
-        Deployment confirmation or an error/rejection message.
+        Publication confirmation or an error/rejection message.
     """
     import json
-    from pillywiggins.skills.builder import draft_skill, test_skill, deploy_skill
+    from pillywiggins.skills.builder import draft_skill, test_skill, publish_skill, DraftStatus
     from pillywiggins.config import Settings
 
     try:
@@ -335,13 +425,26 @@ async def deploy_skill_code(
 
     try:
         draft = draft_skill(name, code)
-    except ValueError as e:
-        return f"Skill code validation failed: {e}"
+    except Exception as e:
+        return f"Skill generation failed: {type(e).__name__}: {e}. Please fix and try again."
 
-    draft = await test_skill(draft, test_cases)
+    if draft.status == DraftStatus.ERROR:
+        error_msg = draft.test_results[0].get("error") if draft.test_results else "Unknown error"
+        return f"Skill generation failed: {error_msg}. Please fix and try again."
+
+    try:
+        draft = await test_skill(draft, test_cases)
+    except Exception as e:
+        return f"Skill '{name}' has test failures: {type(e).__name__}: {e}. Please fix the code and try again."
+
+    if draft.test_results:
+        failed = [r for r in draft.test_results if not r["passed"]]
+        if failed:
+            errors = "; ".join(str(r.get("error")) for r in failed if r.get("error"))
+            return f"Skill '{name}' has test failures: {errors}. Please fix the code and try again."
 
     settings = Settings()
-    return await deploy_skill(
+    return await publish_skill(
         draft,
         approved=approved,
         skills_dir=settings.skills_dir,
@@ -557,14 +660,26 @@ def _make_skill_tool(skill):
 
     async def skill_tool(ctx: RunContext[AgentDeps], **kwargs) -> str:
         import json
+        from pillywiggins.skills.logger import log_skill_execution
+
+        agent_id = ctx.deps.agent_id
+        channel = ctx.deps.channel
+        council_memory = ctx.deps.council_memory
 
         if _should_sandbox(skill.name):
-            return await _run_sandboxed_skill(skill, kwargs)
+            return await _run_sandboxed_skill(skill, kwargs, agent_id, channel, council_memory)
         try:
             result = await skill.execute(**kwargs)
         except TypeError as e:
             available = ", ".join(skill.meta.get("parameters", {}).keys())
-            return f"Error calling skill {skill.name}: {e}. Available parameters: {available}"
+            err = f"Error calling skill {skill.name}: {e}. Available parameters: {available}"
+            log_skill_execution(agent_id, channel, skill.name, kwargs, error=err, council_memory=council_memory)
+            return err
+        except Exception as e:
+            err = f"Error calling skill {skill.name}: {e}"
+            log_skill_execution(agent_id, channel, skill.name, kwargs, error=err, council_memory=council_memory)
+            return err
+        log_skill_execution(agent_id, channel, skill.name, kwargs, result=result, council_memory=council_memory)
         if isinstance(result, str):
             return result
         return json.dumps(result)
@@ -631,9 +746,10 @@ def create_brain(
     agent.tool(query_council_memory)
     agent.tool(share_to_council)
     agent.tool(build_skill)
+    agent.tool(test_driven_skill)
     agent.tool(test_skill_code)
     agent.tool(review_skill_code)
-    agent.tool(deploy_skill_code)
+    agent.tool(publish_skill_code)
     agent.tool(schedule_task)
     agent.tool(unschedule_task)
     agent.tool(list_scheduled_tasks)

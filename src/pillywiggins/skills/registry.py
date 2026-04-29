@@ -49,7 +49,28 @@ class SkillRegistry:
             except Exception:
                 logger.exception("Failed to load skill from %s", skill_file)
 
+        # Ensure registry.json reflects the filesystem truth
+        self._sync_registry_json()
+
         return list(self._skills.values())
+
+    def _sync_registry_json(self) -> None:
+        """Rebuild registry.json from the in-memory skills dict.
+
+        This makes the filesystem the primary source of truth and
+        keeps registry.json consistent for any external consumers."""
+        registry_path = self._skills_dir / "registry.json"
+        registry = {
+            "skills": [
+                {
+                    "name": name,
+                    "description": skill.description,
+                    "file": f"{name}.py",
+                }
+                for name, skill in sorted(self._skills.items())
+            ]
+        }
+        registry_path.write_text(json.dumps(registry, indent=2))
 
     def _load_skill_file(self, path: Path) -> Optional[Skill]:
         spec = importlib.util.spec_from_file_location(path.stem, path)

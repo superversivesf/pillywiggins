@@ -102,6 +102,7 @@ class TelegramAdapter(BaseAdapter):
             or message.from_user.first_name
             or str(message.from_user.id),
             "is_bot": message.from_user.is_bot,
+            "is_group": is_group,
         }
         if is_group:
             metadata["chat_id"] = chat_id
@@ -210,6 +211,8 @@ class TelegramAdapter(BaseAdapter):
             await update.message.reply_text("You are not authorized to use this bot.")
             return
         unified = self.normalize(update)
+        if not self.agent.should_process_message(unified):
+            return
         is_bot = unified.metadata.get("is_bot", False)
         chat_id = unified.metadata.get("chat_id", unified.conversation_key)
         if not self._should_respond_to_bot(chat_id, is_bot):

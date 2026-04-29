@@ -6,7 +6,7 @@ import asyncpg
 
 logger = logging.getLogger(__name__)
 
-VALID_MESSAGE_TYPES = {"insight", "skill_announcement", "question", "proposal"}
+VALID_MESSAGE_TYPES = {"insight", "skill_announcement", "question", "proposal", "skill_execution"}
 
 TAG_WHITELIST = {
     "general",
@@ -25,9 +25,10 @@ DEDUP_SIMILARITY_THRESHOLD = 0.95
 
 
 class CouncilMemory:
-    def __init__(self, database_url: str, agent_id: str):
+    def __init__(self, database_url: str, agent_id: str, embedding_dimension: int | None = None):
         self._database_url = database_url
         self._agent_id = agent_id
+        self._embedding_dimension = embedding_dimension or 768
         self._pool: Optional[asyncpg.Pool] = None
 
     async def connect(self) -> None:
@@ -76,6 +77,13 @@ class CouncilMemory:
 
         if self._pool is None:
             return {"success": False, "error": "Not connected", "id": None}
+
+        if len(embedding) != self._embedding_dimension:
+            return {
+                "success": False,
+                "error": f"Embedding dimension {len(embedding)} does not match council_memory column dimension {self._embedding_dimension}",
+                "id": None,
+            }
 
         async with self._pool.acquire() as conn:
             count = await conn.fetchval(

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -11,35 +12,139 @@ COUNCIL_STREAM = "COUNCIL"
 BROADCAST_SUBJECT = "council.broadcast"
 DIRECT_SUBJECT_PREFIX = "council.direct"
 
+DEFAULT_CONNECT_TIMEOUT = 5  # seconds
+DEFAULT_RECONNECT_ATTEMPTS = 5
+DEFAULT_RETRY_DELAY = 1.0  # seconds (initial)
+DEFAULT_RETRY_MAX_DELAY = 60.0  # seconds
+
+
+class NatsConnectError(Exception):
+    """Raised when NATS connection fails after all retry attempts."""
+
+    def __init__(self, url: str, attempts: int, last_error: Exception | None = None):
+        self.url = url
+        self.attempts = attempts
+        self.last_error = last_error
+        msg = f"Failed to connect to NATS at {url} after {attempts} attempts"
+        if last_error:
+            msg += f": {last_error}"
+        super().__init__(msg)
+
 
 class NatsBus:
-    def __init__(self, nats_url: str, agent_id: str):
+    def __init__(
+        self,
+        nats_url: str,
+        agent_id: str,
+        connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
+        reconnect_attempts: int = DEFAULT_RECONNECT_ATTEMPTS,
+        retry_delay: float = DEFAULT_RETRY_DELAY,
+        retry_max_delay: float = DEFAULT_RETRY_MAX_DELAY,
+    ):
         self._nats_url = nats_url
         self._agent_id = agent_id
+        self._connect_timeout = connect_timeout
+        self._reconnect_attempts = reconnect_attempts
+        self._retry_delay = retry_delay
+        self._retry_max_delay = retry_max_delay
         self._nc: nats.NATS | None = None
         self._js = None
         self._subs = []
+        self._connected = False
 
-    async def connect(self):
-        try:
-            self._nc = await nats.connect(servers=[self._nats_url])
-            self._js = self._nc.jetstream()
+    @property
+    def is_connected(self) -> bool:
+        """Check whether the NATS connection is currently active."""
+        return self._connected and self._nc is not None
+
+    async def connect(self) -> None:
+        """Connect to NATS with retry logic and exponential backoff.
+
+        Raises NatsConnectError if all retry attempts are exhausted.
+        The caller can catch this to decide whether to continue
+        without messaging or abort.
+        """
+        last_error: Exception | None = None
+        for attempt in range(1, self._reconnect_attempts + 1):
             try:
-                await self._js.add_stream(
+                logger.info(
+                    "NATS connect attempt %d/%d for %s at %s",
+                    attempt, self._reconnect_attempts, self._agent_id, self._nats_url,
+                )
+                nc = await nats.connect(
+                    servers=[self._nats_url],
+                    connect_timeout=self._connect_timeout,
+                )
+                js = nc.jetstream()
+                await self._ensure_stream(js)
+                self._nc = nc
+                self._js = js
+                self._connected = True
+                logger.info("NATS connected for agent %s at %s", self._agent_id, self._nats_url)
+                return
+            except Exception as e:
+                last_error = e
+                self._connected = False
+                self._nc = None
+                self._js = None
+                if attempt < self._reconnect_attempts:
+                    delay = min(self._retry_delay * (2 ** (attempt - 1)), self._retry_max_delay)
+                    logger.warning(
+                        "NATS connect attempt %d/%d failed for %s: %s — retrying in %.1fs",
+                        attempt, self._reconnect_attempts, self._agent_id, e, delay,
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(
+                        "NATS connect failed after %d attempts for %s: %s",
+                        self._reconnect_attempts, self._agent_id, e, exc_info=True,
+                    )
+
+        raise NatsConnectError(self._nats_url, self._reconnect_attempts, last_error)
+
+    async def _ensure_stream(self, js) -> None:
+        """Ensure the COUNCIL JetStream stream exists."""
+        try:
+            await js.add_stream(
+                name=COUNCIL_STREAM,
+                subjects=[BROADCAST_SUBJECT, f"{DIRECT_SUBJECT_PREFIX}.>"],
+                config=StreamConfig(
                     name=COUNCIL_STREAM,
                     subjects=[BROADCAST_SUBJECT, f"{DIRECT_SUBJECT_PREFIX}.>"],
-                    config=StreamConfig(
-                        name=COUNCIL_STREAM,
-                        subjects=[BROADCAST_SUBJECT, f"{DIRECT_SUBJECT_PREFIX}.>"],
-                    ),
-                )
-            except Exception:
-                pass
-            logger.info("NATS connected for agent %s", self._agent_id)
-        except Exception:
-            logger.warning("Failed to connect to NATS at %s, continuing without messaging", self._nats_url, exc_info=True)
-            self._nc = None
-            self._js = None
+                ),
+            )
+            logger.info("JetStream stream %s created/verified for %s", COUNCIL_STREAM, self._agent_id)
+        except nats.js.errors.BadRequestError as e:
+            if "already in use" in str(e).lower() or "stream name already in use" in str(e).lower():
+                logger.info("JetStream stream %s already exists (OK)", COUNCIL_STREAM)
+            else:
+                logger.warning("JetStream add_stream failed for %s: %s", self._agent_id, e, exc_info=True)
+        except Exception as e:
+            logger.warning("JetStream add_stream failed for %s: %s", self._agent_id, e, exc_info=True)
+
+    async def connect_or_log(self) -> bool:
+        """Try to connect to NATS, logging a warning on failure.
+
+        Returns True if connected, False otherwise. Does NOT raise.
+        Use this from agent startup where you want graceful degradation.
+        """
+        try:
+            await self.connect()
+            return True
+        except NatsConnectError as e:
+            logger.warning(
+                "NATS unavailable for %s — continuing without messaging: %s",
+                self._agent_id, e,
+            )
+            return False
+
+    async def reconnect(self) -> None:
+        """Close existing connection (if any) and reconnect.
+
+        Raises NatsConnectError if all retry attempts fail.
+        """
+        await self.close()
+        await self.connect()
 
     def _make_payload(self, message_type: str, data: dict) -> bytes:
         payload = {
@@ -60,15 +165,37 @@ class NatsBus:
             logger.warning("NATS not connected, skipping broadcast publish for %s", message_type)
             return
         payload = self._make_payload(message_type, data)
-        await self._js.publish(BROADCAST_SUBJECT, payload)
+        try:
+            ack = await self._js.publish(BROADCAST_SUBJECT, payload)
+            logger.info(
+                "Broadcast %s sent from %s — ack: stream=%s seq=%s",
+                message_type,
+                self._agent_id,
+                ack.stream if ack else "(none)",
+                ack.seq if ack else "(none)",
+            )
+        except Exception:
+            logger.exception("Failed to publish broadcast %s from %s", message_type, self._agent_id)
 
     async def publish_direct(self, target_agent_id: str, message_type: str, data: dict):
         if self._js is None:
-            logger.warning("NATS not connected, skipping direct publish for %s", message_type)
+            logger.warning("NATS not connected, skipping direct publish for %s to %s", message_type, target_agent_id)
             return
         subject = f"{DIRECT_SUBJECT_PREFIX}.{target_agent_id}"
         payload = self._make_payload(message_type, data)
-        await self._js.publish(subject, payload)
+        try:
+            ack = await self._js.publish(subject, payload)
+            logger.info(
+                "Direct %s sent from %s to %s on %s — ack: stream=%s seq=%s",
+                message_type,
+                self._agent_id,
+                target_agent_id,
+                subject,
+                ack.stream if ack else "(none)",
+                ack.seq if ack else "(none)",
+            )
+        except Exception:
+            logger.exception("Failed to publish direct %s from %s to %s on %s", message_type, self._agent_id, target_agent_id, subject)
 
     async def subscribe_broadcast(self, handler):
         if self._js is None:
@@ -76,8 +203,19 @@ class NatsBus:
             return
 
         async def _cb(msg):
-            msg_type, data = self._parse_payload(msg)
-            await handler(msg_type, data)
+            try:
+                logger.debug("Broadcast message received on %s for %s", msg.subject, self._agent_id)
+                msg_type, data = self._parse_payload(msg)
+                logger.info("Broadcast %s received by %s from %s", msg_type, self._agent_id, data.get("from", "?"))
+                await handler(msg_type, data)
+                await msg.ack()
+                logger.debug("Broadcast message acked by %s", self._agent_id)
+            except Exception:
+                logger.exception("Error handling broadcast message for %s", self._agent_id)
+                try:
+                    await msg.nak()
+                except Exception:
+                    pass
 
         durable = f"pillywiggins-{self._agent_id}-broadcast"
         sub = await self._js.subscribe(
@@ -87,6 +225,7 @@ class NatsBus:
             cb=_cb,
         )
         self._subs.append(sub)
+        logger.info("Broadcast subscription created for %s (durable=%s)", self._agent_id, durable)
 
     async def subscribe_direct(self, handler):
         if self._js is None:
@@ -94,8 +233,19 @@ class NatsBus:
             return
 
         async def _cb(msg):
-            msg_type, data = self._parse_payload(msg)
-            await handler(msg_type, data)
+            try:
+                logger.debug("Direct message received on %s for %s", msg.subject, self._agent_id)
+                msg_type, data = self._parse_payload(msg)
+                logger.info("Direct %s received by %s from %s", msg_type, self._agent_id, data.get("from", "?"))
+                await handler(msg_type, data)
+                await msg.ack()
+                logger.debug("Direct message acked by %s", self._agent_id)
+            except Exception:
+                logger.exception("Error handling direct message for %s", self._agent_id)
+                try:
+                    await msg.nak()
+                except Exception:
+                    pass
 
         subject = f"{DIRECT_SUBJECT_PREFIX}.{self._agent_id}"
         durable = f"pillywiggins-{self._agent_id}-direct"
@@ -106,10 +256,18 @@ class NatsBus:
             cb=_cb,
         )
         self._subs.append(sub)
+        logger.info("Direct subscription created for %s on %s (durable=%s)", self._agent_id, subject, durable)
 
     async def close(self):
+        self._connected = False
         if self._nc is not None:
             try:
+                for sub in self._subs:
+                    try:
+                        await sub.unsubscribe()
+                    except Exception:
+                        pass
+                self._subs.clear()
                 await self._nc.drain()
                 await self._nc.close()
             except Exception:

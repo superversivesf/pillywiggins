@@ -171,7 +171,15 @@ async def test_check_health_all_services_ok(settings):
         from pillywiggins import health
 
         importlib.reload(health)
-        result = await health.check_health(settings)
+        with patch("pillywiggins.memory.embeddings.check_embedding_health", new_callable=AsyncMock, return_value={"healthy": True, "model": "test", "dimension": 768, "dimension_match": True, "expected_dimension": 768}), \
+             patch("nats.connect", new_callable=AsyncMock) as mock_nats_connect:
+            mock_nc = MagicMock()
+            mock_nc.close = AsyncMock()
+            mock_js = MagicMock()
+            mock_js.account_info = AsyncMock(return_value={"type": "account_info"})
+            mock_nc.jetstream = MagicMock(return_value=mock_js)
+            mock_nats_connect.return_value = mock_nc
+            result = await health.check_health(settings)
     finally:
         for key in ("asyncpg", "redis", "redis.asyncio", "aioredis", "aiohttp"):
             if key in sys.modules:
@@ -188,6 +196,7 @@ async def test_check_health_all_services_ok(settings):
     assert result["checks"]["postgres"] == "ok"
     assert result["checks"]["redis"] == "ok"
     assert result["checks"]["llm"] == "ok"
+    assert "nats" in result["checks"] or "embedding" in result["checks"]
 
 
 @pytest.mark.asyncio
@@ -528,9 +537,13 @@ async def test_check_health_includes_nats(settings):
     mock_redis = _make_mock_redis()
     mock_aiohttp = _make_mock_aiohttp_client(status=200)
 
-    mock_nats = MagicMock()
     mock_nc = AsyncMock()
     mock_nc.close = AsyncMock()
+    mock_js = MagicMock()
+    mock_js.account_info = AsyncMock(return_value={"type": "account_info"})
+    mock_nc.jetstream = MagicMock(return_value=mock_js)
+
+    mock_nats = MagicMock()
     mock_nats.connect = AsyncMock(return_value=mock_nc)
 
     saved = {}
@@ -570,6 +583,8 @@ async def test_check_health_includes_nats(settings):
     )
     assert result["checks"]["nats"] == "ok"
     mock_nats.connect.assert_awaited_once_with(settings.nats_url)
+    mock_nc.jetstream.assert_called_once()
+    mock_js.account_info.assert_awaited_once()
     mock_nc.close.assert_awaited_once()
 
 
@@ -619,3 +634,57 @@ async def test_check_health_nats_failure_is_degraded(settings):
     assert "nats" in result["checks"]
     assert "error" in result["checks"]["nats"]
     assert "nats connection refused" in result["checks"]["nats"]
+
+
+@pytest.mark.asyncio
+async def test_check_health_nats_jetstream_degraded(settings):
+    """When NATS connects but JetStream is unavailable, health should be degraded."""
+    mock_asyncpg = _make_mock_asyncpg()
+    mock_redis = _make_mock_redis()
+    mock_aiohttp = _make_mock_aiohttp_client(status=200)
+
+    mock_nc = AsyncMock()
+    mock_nc.close = AsyncMock()
+    mock_js = MagicMock()
+    mock_js.account_info = AsyncMock(side_effect=Exception("JetStream not available"))
+    mock_nc.jetstream = MagicMock(return_value=mock_js)
+
+    mock_nats = MagicMock()
+    mock_nats.connect = AsyncMock(return_value=mock_nc)
+
+    saved = {}
+    for key in ("asyncpg", "redis", "redis.asyncio", "aioredis"):
+        if key in sys.modules:
+            saved[key] = sys.modules.pop(key)
+
+    try:
+        sys.modules["asyncpg"] = mock_asyncpg
+        redis_mod = ModuleType("redis")
+        sys.modules["redis"] = redis_mod
+        sys.modules["redis.asyncio"] = mock_redis
+        sys.modules["aioredis"] = mock_redis
+
+        real_aiohttp = sys.modules.get("aiohttp")
+        sys.modules["aiohttp"] = mock_aiohttp
+        sys.modules["nats"] = mock_nats
+
+        from pillywiggins import health
+
+        importlib.reload(health)
+        result = await health.check_health(settings)
+    finally:
+        for key in ("asyncpg", "redis", "redis.asyncio", "aioredis", "aiohttp", "nats"):
+            if key in sys.modules:
+                del sys.modules[key]
+        for key, val in saved.items():
+            sys.modules[key] = val
+        if real_aiohttp:
+            sys.modules["aiohttp"] = real_aiohttp
+        from pillywiggins import health
+
+        importlib.reload(health)
+
+    assert result["status"] == "degraded"
+    assert "nats" in result["checks"]
+    assert "degraded" in result["checks"]["nats"]
+    assert "JetStream" in result["checks"]["nats"]

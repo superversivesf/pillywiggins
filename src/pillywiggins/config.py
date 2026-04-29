@@ -9,11 +9,14 @@ class Settings(BaseSettings):
     pg_password: str = "changeme"
     redis_url: str = "redis://redis:6379/0"
     nats_url: str = "nats://nats:4222"
+    nats_connect_timeout: float = 5.0
+    nats_reconnect_attempts: int = 5
     llm_provider: str = "ollama"
     llm_base_url: str = "http://host.docker.internal:11434/v1"
     llm_api_key: str = ""
     model_name: str = "qwen3.5:8b"
     embedding_model: str = "nomic-embed-text"
+    embedding_dimension: int = 768  # must match pgvector column width
     telegram_bot_token: str = ""
     discord_bot_token: str = ""
     compact_keep_messages: int = 6

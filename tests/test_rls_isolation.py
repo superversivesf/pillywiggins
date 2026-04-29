@@ -11,6 +11,7 @@ def puck_memory():
     return PrivateMemory(
         database_url="postgresql://test:test@localhost:5432/testdb",
         agent_id="puck",
+        embedding_dimension=3,
     )
 
 
@@ -19,6 +20,7 @@ def oberon_memory():
     return PrivateMemory(
         database_url="postgresql://test:test@localhost:5432/testdb",
         agent_id="oberon",
+        embedding_dimension=3,
     )
 
 
@@ -175,7 +177,7 @@ async def test_save_uses_correct_agent_id_in_values(puck_memory):
         return_value=mock_pool,
     ):
         await puck_memory.connect()
-        await puck_memory.save("secret thought", [0.5, 0.6], {"mood": "curious"})
+        await puck_memory.save("secret thought", [0.5, 0.6, 0.7], {"mood": "curious"})
 
     args = mock_conn.execute.call_args[0]
     assert "INSERT INTO private_memory" in args[0]
@@ -263,6 +265,7 @@ async def test_cross_agent_isolation_search_returns_no_rows(puck_memory):
     wrong_agent_mem = PrivateMemory(
         database_url="postgresql://test:test@localhost:5432/testdb",
         agent_id="oberon",
+        embedding_dimension=3,
     )
 
     mock_conn = AsyncMock()
@@ -330,7 +333,7 @@ async def test_cross_agent_save_cannot_inject_wrong_id(puck_memory):
         return_value=mock_pool,
     ):
         await puck_memory.connect()
-        await puck_memory.save("puck memory", [0.1], {"tag": "private"})
+        await puck_memory.save("puck memory", [0.1, 0.2, 0.3], {"tag": "private"})
 
     insert_args = mock_conn.execute.call_args[0]
     agent_id_in_insert = insert_args[1]
@@ -427,6 +430,7 @@ async def test_init_callback_called_per_connection():
     memory = PrivateMemory(
         database_url="postgresql://test:test@localhost:5432/testdb",
         agent_id="puck",
+        embedding_dimension=3,
     )
 
     with patch("pillywiggins.memory.private.asyncpg.create_pool", side_effect=create_and_capture):
@@ -444,6 +448,7 @@ async def test_agent_id_sql_injection_safety():
     memory = PrivateMemory(
         database_url="postgresql://test:test@localhost:5432/testdb",
         agent_id="puck'; DROP TABLE private_memory; --",
+        embedding_dimension=3,
     )
 
     init_callback = None
@@ -490,12 +495,16 @@ async def test_rls_set_before_every_acquire_operation(puck_memory):
         return_value=mock_pool,
     ):
         await puck_memory.connect()
-        await puck_memory.save("m1", [0.1])
-        await puck_memory.search([0.1])
+        await puck_memory.save("m1", [0.1, 0.2, 0.3])
+        await puck_memory.search([0.1, 0.2, 0.3])
         await puck_memory.delete("abc-123")
 
     assert operation_order == ["acquired", "acquired", "acquired"]
-    assert mock_conn.execute.call_count == 2
+    # _ensure_agent_id now calls execute before every operation, so:
+    # save: set_config + INSERT = 2
+    # search: set_config = 1
+    # delete: set_config + DELETE = 2
+    assert mock_conn.execute.call_count == 5
     mock_conn.fetch.assert_called_once()
     await puck_memory.close()
 

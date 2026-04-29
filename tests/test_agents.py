@@ -825,3 +825,75 @@ async def test_clear_history_persists_to_store(personality):
 
     assert agent._conversation_histories["chat_123"] == []
     mock_store.save.assert_called_once_with("chat_123", [])
+
+
+def test_should_process_message_private_dm_always_true(agent):
+    from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
+    msg = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="1",
+        content="hello",
+        conversation_key="dm_1",
+        metadata={"is_group": False},
+    )
+    assert agent.should_process_message(msg) is True
+
+
+def test_should_process_message_group_no_address_always_true(agent):
+    from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
+    msg = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="2",
+        content="what is the weather?",
+        conversation_key="grp_99",
+        metadata={"is_group": True},
+    )
+    assert agent.should_process_message(msg) is True
+
+
+def test_should_process_message_group_addressed_to_self(agent):
+    from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
+    msg = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="3",
+        content="@puck hello",
+        conversation_key="grp_99",
+        metadata={"is_group": True},
+    )
+    assert agent.should_process_message(msg) is True
+
+
+def test_should_process_message_group_addressed_to_other_agent(agent):
+    from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
+    msg = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="4",
+        content="@wormwood what's the weather?",
+        conversation_key="grp_99",
+        metadata={"is_group": True},
+    )
+    assert agent.should_process_message(msg) is False
+
+
+def test_should_process_message_group_addressed_case_insensitive(agent):
+    from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
+    msg = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="5",
+        content="Puck help me",
+        conversation_key="grp_99",
+        metadata={"is_group": True},
+    )
+    assert agent.should_process_message(msg) is True
+
+
+def test_should_process_message_group_comma_after_name(agent):
+    from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
+    msg = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="6",
+        content="wormwood, what's the weather?",
+        conversation_key="grp_99",
+        metadata={"is_group": True},
+    )
+    assert agent.should_process_message(msg) is False

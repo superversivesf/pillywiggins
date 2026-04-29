@@ -10,7 +10,9 @@ from pillywiggins.memory.private import PrivateMemory
 @pytest.fixture
 def memory():
     return PrivateMemory(
-        database_url="postgresql://test:test@localhost:5432/testdb", agent_id="puck"
+        database_url="postgresql://test:test@localhost:5432/testdb",
+        agent_id="puck",
+        embedding_dimension=3,  # short dimension for unit tests
     )
 
 
@@ -83,7 +85,7 @@ async def test_save_inserts_memory(memory):
         await memory.connect()
         await memory.save("test memory", [0.1, 0.2, 0.3], {"source": "test"})
 
-    mock_conn.execute.assert_called_once()
+    assert mock_conn.execute.call_count == 2
     call_args = mock_conn.execute.call_args
     assert "INSERT INTO private_memory" in call_args[0][0]
     assert "embedding, metadata)" in call_args[0][0]
@@ -300,6 +302,143 @@ async def test_close_does_nothing_if_no_pool(memory):
 
 
 # ---------------------------------------------------------------------------
+# Dimension validation tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_save_rejects_wrong_dimension_embedding():
+    """PrivateMemory.save should reject embeddings with wrong dimension."""
+    from pillywiggins.memory.private import PrivateMemory
+    import logging
+
+    mem = PrivateMemory(
+        database_url="postgresql://test:test@localhost:5432/testdb",
+        agent_id="puck",
+        embedding_dimension=768,
+    )
+    # Create a 3-dim embedding when 768 is expected
+    wrong_dim_embedding = [0.1, 0.2, 0.3]
+
+    mock_conn = AsyncMock()
+    mock_conn.execute = AsyncMock()
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch("pillywiggins.memory.private.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await mem.connect()
+        await mem.save("test memory", wrong_dim_embedding, {"source": "test"})
+
+    # execute should never have been called because dimension check rejects
+    # before any SQL is executed
+    assert mock_conn.execute.call_count == 0
+    await mem.close()
+
+
+@pytest.mark.asyncio
+async def test_save_accepts_correct_dimension_embedding():
+    """PrivateMemory.save should accept embeddings with correct dimension."""
+    from pillywiggins.memory.private import PrivateMemory
+
+    mem = PrivateMemory(
+        database_url="postgresql://test:test@localhost:5432/testdb",
+        agent_id="puck",
+        embedding_dimension=768,
+    )
+    correct_dim_embedding = [0.0] * 768
+
+    mock_conn = AsyncMock()
+    mock_conn.execute = AsyncMock()
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch("pillywiggins.memory.private.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await mem.connect()
+        await mem.save("test memory", correct_dim_embedding, {"source": "test"})
+
+    # Should have both set_config and INSERT calls
+    assert mock_conn.execute.call_count == 2
+    call_args = mock_conn.execute.call_args
+    assert "INSERT INTO private_memory" in call_args[0][0]
+    await mem.close()
+
+
+@pytest.mark.asyncio
+async def test_search_rejects_wrong_dimension_embedding():
+    """PrivateMemory.search should reject query embeddings with wrong dimension."""
+    from pillywiggins.memory.private import PrivateMemory
+
+    mem = PrivateMemory(
+        database_url="postgresql://test:test@localhost:5432/testdb",
+        agent_id="puck",
+        embedding_dimension=768,
+    )
+    wrong_dim_query = [0.1, 0.2, 0.3]
+
+    mock_conn = AsyncMock()
+    mock_conn.fetch = AsyncMock(return_value=[])
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch("pillywiggins.memory.private.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await mem.connect()
+        results = await mem.search(wrong_dim_query, limit=5)
+
+    # Should return empty list without calling fetch
+    assert results == []
+    assert mock_conn.fetch.call_count == 0
+    await mem.close()
+
+
+@pytest.mark.asyncio
+async def test_search_accepts_correct_dimension_embedding():
+    """PrivateMemory.search should accept query embeddings with correct dimension."""
+    from pillywiggins.memory.private import PrivateMemory
+
+    mem = PrivateMemory(
+        database_url="postgresql://test:test@localhost:5432/testdb",
+        agent_id="puck",
+        embedding_dimension=768,
+    )
+    correct_dim_query = [0.0] * 768
+
+    mock_conn = AsyncMock()
+    mock_conn.fetch = AsyncMock(return_value=[])
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch("pillywiggins.memory.private.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await mem.connect()
+        results = await mem.search(correct_dim_query, limit=5)
+
+    # Should return empty results (no matches) but fetch should have been called
+    assert results == []
+    assert mock_conn.fetch.call_count == 1
+    await mem.close()
+
+
+@pytest.mark.asyncio
+async def test_private_memory_default_dimension():
+    """PrivateMemory should default to 768 dimensions."""
+    from pillywiggins.memory.private import PrivateMemory
+
+    mem = PrivateMemory(
+        database_url="postgresql://test:test@localhost:5432/testdb",
+        agent_id="puck",
+    )
+    assert mem._embedding_dimension == 768
+
+
+@pytest.mark.asyncio
+async def test_private_memory_custom_dimension():
+    """PrivateMemory should accept a custom embedding dimension."""
+    from pillywiggins.memory.private import PrivateMemory
+
+    mem = PrivateMemory(
+        database_url="postgresql://test:test@localhost:5432/testdb",
+        agent_id="puck",
+        embedding_dimension=1024,
+    )
+    assert mem._embedding_dimension == 1024
+
+
+# ---------------------------------------------------------------------------
 # Real PostgreSQL integration tests (pytest-postgresql)
 # ---------------------------------------------------------------------------
 
@@ -336,14 +475,18 @@ async def test_private_memory_real_postgres(postgresql_proc):
     mem = PrivateMemory(database_url=dsn, agent_id="puck")
     await mem.connect()
 
-    await mem.save("integration memory", [0.1, 0.2, 0.3], {"source": "test"})
-    results = await mem.search([0.1, 0.2, 0.3], limit=5)
+    # Use a 768-dim zero vector to match the schema's vector(768) column.
+    zero_vec = [0.0] * 768
+
+    await mem.save("integration memory", zero_vec, {"source": "test"})
+    results = await mem.search(zero_vec, limit=5)
     assert len(results) == 1
     assert results[0]["content"] == "integration memory"
+    # metadata comes back as a dict, but when read from jsonb it can be a string depending on driver version
     assert results[0]["metadata"] == {"source": "test"}
 
     memory_id = results[0]["id"]
     assert await mem.delete(memory_id) is True
-    assert len(await mem.search([0.1, 0.2, 0.3], limit=5)) == 0
+    assert len(await mem.search(zero_vec, limit=5)) == 0
 
     await mem.close()

@@ -82,21 +82,23 @@ async def test_insight_skipped_when_no_council_memory(agent):
 
 
 @pytest.mark.asyncio
-async def test_skill_deployed_routes_to_skill_registry(agent):
+async def test_skill_published_routes_to_skill_registry(agent):
+    """skill_published message triggers registry reload."""
     mock_registry = MagicMock()
     agent._skill_registry = mock_registry
 
-    await agent._on_nats_message("skill_deployed", {"skill": "web_search"})
+    await agent._on_nats_message("skill_published", {"skill": "web_search"})
 
     mock_registry.load_all.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_skill_deployed_skipped_when_no_registry(agent):
+async def test_skill_published_skipped_when_no_registry(agent):
+    """skill_published message is ignored when no registry is set."""
     assert agent._skill_registry is None
 
     # Should not raise even though _skill_registry is None
-    await agent._on_nats_message("skill_deployed", {"skill": "web_search"})
+    await agent._on_nats_message("skill_published", {"skill": "web_search"})
 
 
 @pytest.mark.asyncio
@@ -125,5 +127,5 @@ async def test_unknown_message_type_logs_warning(agent):
         await agent._on_nats_message("unknown_type", {"foo": "bar"})
 
     mock_warn.assert_called_once()
-    assert "Unknown NATS message type" in mock_warn.call_args[0][0]
-    assert mock_warn.call_args[0][1] == "unknown_type"
+    assert "unknown NATS message type" in mock_warn.call_args[0][0]
+    assert mock_warn.call_args[0][2] == "unknown_type"

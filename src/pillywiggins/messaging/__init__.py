@@ -3,6 +3,7 @@ from pillywiggins.messaging.nats_bus import (
     COUNCIL_STREAM,
     DIRECT_SUBJECT_PREFIX,
     NatsBus,
+    NatsConnectError,
 )
 from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
 
@@ -12,5 +13,6 @@ __all__ = [
     "COUNCIL_STREAM",
     "DIRECT_SUBJECT_PREFIX",
     "NatsBus",
+    "NatsConnectError",
     "UnifiedMessage",
 ]

@@ -8,14 +8,32 @@ import pytest
 from pillywiggins.messaging.nats_bus import (
     BROADCAST_SUBJECT,
     COUNCIL_STREAM,
+    DEFAULT_CONNECT_TIMEOUT,
+    DEFAULT_RECONNECT_ATTEMPTS,
+    DEFAULT_RETRY_DELAY,
+    DEFAULT_RETRY_MAX_DELAY,
     DIRECT_SUBJECT_PREFIX,
     NatsBus,
+    NatsConnectError,
 )
 
 
 @pytest.fixture
 def bus():
     return NatsBus(nats_url="nats://localhost:4222", agent_id="puck")
+
+
+@pytest.fixture
+def bus_with_fast_retry():
+    """Bus configured for fast retry in tests (no real sleep)."""
+    return NatsBus(
+        nats_url="nats://localhost:4222",
+        agent_id="puck",
+        reconnect_attempts=3,
+        retry_delay=0.01,  # minimal delay for tests
+        retry_max_delay=0.01,
+        connect_timeout=0.5,
+    )
 
 
 def _mock_nats_connection():
@@ -31,6 +49,11 @@ def _mock_nats_connection():
     return nc, js
 
 
+# ---------------------------------------------------------------------------
+# Connection tests
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 async def test_connect_creates_nats_connection(bus):
     nc, js = _mock_nats_connection()
@@ -39,6 +62,20 @@ async def test_connect_creates_nats_connection(bus):
         await bus.connect()
 
     assert bus._nc is nc
+    assert bus.is_connected is True
+
+
+@pytest.mark.asyncio
+async def test_connect_passes_timeout(bus):
+    nc, js = _mock_nats_connection()
+    bus._connect_timeout = 10.0
+
+    with patch("pillywiggins.messaging.nats_bus.nats.connect", new_callable=AsyncMock, return_value=nc) as mock_connect:
+        await bus.connect()
+
+    mock_connect.assert_called_once()
+    call_kwargs = mock_connect.call_args.kwargs
+    assert call_kwargs["connect_timeout"] == 10.0
 
 
 @pytest.mark.asyncio
@@ -79,6 +116,186 @@ async def test_connect_handles_existing_stream(bus):
     assert bus._js is js
 
 
+# ---------------------------------------------------------------------------
+# is_connected property
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_is_connected_false_before_connect(bus):
+    assert bus.is_connected is False
+
+
+@pytest.mark.asyncio
+async def test_is_connected_true_after_connect(bus):
+    nc, js = _mock_nats_connection()
+
+    with patch("pillywiggins.messaging.nats_bus.nats.connect", new_callable=AsyncMock, return_value=nc):
+        await bus.connect()
+
+    assert bus.is_connected is True
+
+
+@pytest.mark.asyncio
+async def test_is_connected_false_after_close(bus):
+    nc, js = _mock_nats_connection()
+    bus._nc = nc
+    bus._js = js
+    bus._connected = True
+
+    await bus.close()
+
+    assert bus.is_connected is False
+
+
+# ---------------------------------------------------------------------------
+# Retry logic tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_connect_retries_on_failure(bus_with_fast_retry):
+    """Connect should retry multiple times before raising NatsConnectError."""
+    call_count = 0
+
+    def failing_connect(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        raise Exception("connection refused")
+
+    with patch("pillywiggins.messaging.nats_bus.nats.connect", new_callable=AsyncMock, side_effect=failing_connect):
+        with pytest.raises(NatsConnectError) as exc_info:
+            await bus_with_fast_retry.connect()
+
+    assert call_count == bus_with_fast_retry._reconnect_attempts
+    assert exc_info.value.url == "nats://localhost:4222"
+    assert exc_info.value.attempts == 3
+
+
+@pytest.mark.asyncio
+async def test_connect_succeeds_on_second_attempt(bus_with_fast_retry):
+    """Connect should succeed if the second attempt works."""
+    call_count = 0
+    nc, js = _mock_nats_connection()
+
+    def connect_with_retry(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise Exception("connection refused")
+        return nc
+
+    with patch("pillywiggins.messaging.nats_bus.nats.connect", new_callable=AsyncMock, side_effect=connect_with_retry):
+        await bus_with_fast_retry.connect()
+
+    assert bus_with_fast_retry.is_connected is True
+    assert call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_connect_raises_nats_connect_error(bus_with_fast_retry):
+    """After all retries exhausted, connect() raises NatsConnectError."""
+    with patch("pillywiggins.messaging.nats_bus.nats.connect", new_callable=AsyncMock, side_effect=Exception("connection refused")):
+        with pytest.raises(NatsConnectError) as exc_info:
+            await bus_with_fast_retry.connect()
+
+    assert exc_info.value.url == "nats://localhost:4222"
+    assert exc_info.value.attempts == 3
+    assert "connection refused" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_nats_connect_error_attributes():
+    """NatsConnectError should carry URL, attempts, and last_error."""
+    last_err = OSError("timeout")
+    err = NatsConnectError("nats://nats:4222", 5, last_err)
+    assert err.url == "nats://nats:4222"
+    assert err.attempts == 5
+    assert err.last_error is last_err
+    assert "nats://nats:4222" in str(err)
+    assert "5 attempts" in str(err)
+
+
+@pytest.mark.asyncio
+async def test_nats_connect_error_no_last_error():
+    """NatsConnectError with last_error=None."""
+    err = NatsConnectError("nats://nats:4222", 3, None)
+    assert err.last_error is None
+    assert "nats://nats:4222" in str(err)
+    assert "3 attempts" in str(err)
+
+
+# ---------------------------------------------------------------------------
+# connect_or_log tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_connect_or_log_returns_true_on_success(bus):
+    nc, js = _mock_nats_connection()
+
+    with patch("pillywiggins.messaging.nats_bus.nats.connect", new_callable=AsyncMock, return_value=nc):
+        result = await bus.connect_or_log()
+
+    assert result is True
+    assert bus.is_connected is True
+
+
+@pytest.mark.asyncio
+async def test_connect_or_log_returns_false_on_failure(bus_with_fast_retry):
+    with patch("pillywiggins.messaging.nats_bus.nats.connect", new_callable=AsyncMock, side_effect=Exception("connection refused")):
+        result = await bus_with_fast_retry.connect_or_log()
+
+    assert result is False
+    assert bus_with_fast_retry.is_connected is False
+
+
+@pytest.mark.asyncio
+async def test_connect_or_log_does_not_raise(bus_with_fast_retry):
+    """connect_or_log should never raise, even when all retries fail."""
+    with patch("pillywiggins.messaging.nats_bus.nats.connect", new_callable=AsyncMock, side_effect=Exception("connection refused")):
+        # This should NOT raise
+        result = await bus_with_fast_retry.connect_or_log()
+
+    assert result is False
+
+
+# ---------------------------------------------------------------------------
+# reconnect tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconnect_closes_existing_and_reconnects(bus):
+    nc1, js1 = _mock_nats_connection()
+    nc2, js2 = _mock_nats_connection()
+
+    with patch("pillywiggins.messaging.nats_bus.nats.connect", new_callable=AsyncMock, return_value=nc1):
+        await bus.connect()
+
+    assert bus._nc is nc1
+    assert bus.is_connected is True
+
+    with patch("pillywiggins.messaging.nats_bus.nats.connect", new_callable=AsyncMock, return_value=nc2):
+        await bus.reconnect()
+
+    assert bus._nc is nc2
+    assert bus.is_connected is True
+
+
+@pytest.mark.asyncio
+async def test_reconnect_raises_on_failure(bus_with_fast_retry):
+    """reconnect() should raise NatsConnectError if it can't reconnect."""
+    with patch("pillywiggins.messaging.nats_bus.nats.connect", new_callable=AsyncMock, side_effect=Exception("connection refused")):
+        with pytest.raises(NatsConnectError):
+            await bus_with_fast_retry.reconnect()
+
+
+# ---------------------------------------------------------------------------
+# Publish tests
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 async def test_publish_broadcast_sends_to_correct_subject(bus):
     nc, js = _mock_nats_connection()
@@ -113,6 +330,11 @@ async def test_publish_direct_sends_to_agent_subject(bus):
     assert payload["type"] == "question"
     assert payload["from"] == "puck"
     assert payload["data"] == {"text": "what?"}
+
+
+# ---------------------------------------------------------------------------
+# Subscribe tests
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -152,11 +374,17 @@ async def test_subscribe_direct_creates_durable_subscription(bus):
     assert len(bus._subs) == 1
 
 
+# ---------------------------------------------------------------------------
+# Close tests
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 async def test_close_drains_and_closes_connection(bus):
     nc, js = _mock_nats_connection()
     bus._nc = nc
     bus._js = js
+    bus._connected = True
     bus._subs = [MagicMock()]
 
     await bus.close()
@@ -166,6 +394,7 @@ async def test_close_drains_and_closes_connection(bus):
     assert bus._nc is None
     assert bus._js is None
     assert bus._subs == []
+    assert bus.is_connected is False
 
 
 @pytest.mark.asyncio
@@ -174,33 +403,34 @@ async def test_close_handles_exception_gracefully(bus):
     nc.drain = AsyncMock(side_effect=Exception("drain failed"))
     bus._nc = nc
     bus._js = js
+    bus._connected = True
 
     await bus.close()
 
     assert bus._nc is None
     assert bus._js is None
+    assert bus.is_connected is False
 
 
 @pytest.mark.asyncio
 async def test_close_does_nothing_if_not_connected(bus):
     assert bus._nc is None
+    assert bus.is_connected is False
     await bus.close()
     assert bus._nc is None
+    assert bus.is_connected is False
 
 
-@pytest.mark.asyncio
-async def test_graceful_degradation_connect_failure(bus):
-    with patch("pillywiggins.messaging.nats_bus.nats.connect", new_callable=AsyncMock, side_effect=Exception("connection refused")):
-        await bus.connect()
-
-    assert bus._nc is None
-    assert bus._js is None
+# ---------------------------------------------------------------------------
+# Graceful degradation tests
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_graceful_degradation_publish_broadcast_noop(bus):
     bus._js = None
     bus._nc = None
+    bus._connected = False
     await bus.publish_broadcast("insight", {"content": "hello"})
 
 
@@ -208,6 +438,7 @@ async def test_graceful_degradation_publish_broadcast_noop(bus):
 async def test_graceful_degradation_publish_direct_noop(bus):
     bus._js = None
     bus._nc = None
+    bus._connected = False
     await bus.publish_direct("mustardseed", "question", {"text": "what?"})
 
 
@@ -215,6 +446,7 @@ async def test_graceful_degradation_publish_direct_noop(bus):
 async def test_graceful_degradation_subscribe_broadcast_noop(bus):
     bus._js = None
     bus._nc = None
+    bus._connected = False
     handler = AsyncMock()
     await bus.subscribe_broadcast(handler)
 
@@ -223,8 +455,14 @@ async def test_graceful_degradation_subscribe_broadcast_noop(bus):
 async def test_graceful_degradation_subscribe_direct_noop(bus):
     bus._js = None
     bus._nc = None
+    bus._connected = False
     handler = AsyncMock()
     await bus.subscribe_direct(handler)
+
+
+# ---------------------------------------------------------------------------
+# Payload tests
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -261,6 +499,11 @@ async def test_parse_payload_extracts_type_and_data(bus):
 
     assert msg_type == "skill_announcement"
     assert data == {"skill": "web_search"}
+
+
+# ---------------------------------------------------------------------------
+# Subscription callback tests
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -329,6 +572,11 @@ async def test_direct_subscription_callback_parses_message(bus):
     assert received[0][1] == {"text": "anyone tried this?"}
 
 
+# ---------------------------------------------------------------------------
+# Constant tests
+# ---------------------------------------------------------------------------
+
+
 def test_broadcast_subject_constant():
     assert BROADCAST_SUBJECT == "council.broadcast"
 
@@ -339,3 +587,19 @@ def test_direct_subject_prefix_constant():
 
 def test_council_stream_constant():
     assert COUNCIL_STREAM == "COUNCIL"
+
+
+def test_default_connect_timeout():
+    assert DEFAULT_CONNECT_TIMEOUT == 5
+
+
+def test_default_reconnect_attempts():
+    assert DEFAULT_RECONNECT_ATTEMPTS == 5
+
+
+def test_default_retry_delay():
+    assert DEFAULT_RETRY_DELAY == 1.0
+
+
+def test_default_retry_max_delay():
+    assert DEFAULT_RETRY_MAX_DELAY == 60.0

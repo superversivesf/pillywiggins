@@ -18,6 +18,8 @@ services:
       retries: 5
     ports:
     - 5432:5432
+    networks:
+    - pillywiggins
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -34,6 +36,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    networks:
+    - pillywiggins
   nats:
     image: nats:2-alpine
     restart: unless-stopped
@@ -51,6 +55,8 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    networks:
+    - pillywiggins
   searxng:
     image: searxng/searxng:latest
     restart: unless-stopped
@@ -72,6 +78,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    networks:
+    - pillywiggins
   puck:
     build: .
     restart: unless-stopped
@@ -83,6 +91,7 @@ services:
       AGENT_ID: puck
       TELEGRAM_BOT_TOKEN: ${PUCK_TELEGRAM_TOKEN}
       PERSONALITY_FILE: /config/puck.yaml
+      NATS_URL: nats://nats:4222
       HEALTH_PORT: 8080
     volumes:
     - ./personalities:/config:ro
@@ -105,6 +114,8 @@ services:
         condition: service_healthy
       searxng:
         condition: service_healthy
+    networks:
+    - pillywiggins
   puck-discord:
     build: .
     restart: unless-stopped
@@ -115,6 +126,7 @@ services:
     environment:
       AGENT_ID: puck-discord
       DISCORD_BOT_TOKEN: ${PUCK_DISCORD_TOKEN}
+      NATS_URL: nats://nats:4222
       HEALTH_PORT: 8080
     volumes:
     - ./personalities:/config:ro
@@ -135,6 +147,13 @@ services:
         condition: service_healthy
       nats:
         condition: service_healthy
+      searxng:
+        condition: service_healthy
+    networks:
+    - pillywiggins
+networks:
+  pillywiggins:
+    driver: bridge
 volumes:
   pgdata: null
   redisdata: null

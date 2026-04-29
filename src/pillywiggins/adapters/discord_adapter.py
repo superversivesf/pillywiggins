@@ -103,6 +103,7 @@ class DiscordAdapter(BaseAdapter):
         metadata = {
             "username": raw_message.author.name,
             "is_bot": raw_message.author.bot,
+            "is_group": is_group,
         }
         if is_group and raw_message.guild:
             metadata["guild_id"] = str(raw_message.guild.id)
@@ -213,6 +214,8 @@ class DiscordAdapter(BaseAdapter):
             await message.channel.send("You are not authorized to use this bot.")
             return
         unified = self.normalize(message)
+        if not self.agent.should_process_message(unified):
+            return
         channel_id = unified.conversation_key
         is_bot = unified.metadata.get("is_bot", False)
         if not self._should_respond_to_bot(channel_id, is_bot):

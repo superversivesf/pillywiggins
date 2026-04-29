@@ -50,15 +50,43 @@ async def check_health(settings) -> dict:
         checks["llm"] = f"error: {e}"
 
     try:
+        from pillywiggins.memory.embeddings import check_embedding_health
+
+        result = await check_embedding_health(
+            base_url=settings.llm_base_url,
+            api_key=settings.llm_api_key,
+            provider=settings.llm_provider,
+            model=settings.embedding_model,
+            expected_dimension=settings.embedding_dimension,
+        )
+        if result["healthy"]:
+            dim_info = f"dim={result['dimension']}"
+            if result.get("dimension_match") is not None:
+                dim_info += f" (expected={result['expected_dimension']}, match={result['dimension_match']})"
+            checks["embedding"] = f"ok ({result['model']}, {dim_info})"
+        else:
+            checks["embedding"] = f"error: {result['error']}"
+    except Exception as e:
+        checks["embedding"] = f"error: {e}"
+
+    try:
         import nats
 
         nc = await nats.connect(settings.nats_url)
-        await nc.close()
-        checks["nats"] = "ok"
+        try:
+            js = nc.jetstream()
+            # Verify JetStream is actually functional by checking account info
+            try:
+                await js.account_info()
+                checks["nats"] = "ok"
+            except Exception as js_err:
+                checks["nats"] = f"degraded: connected but JetStream unavailable ({js_err})"
+        finally:
+            await nc.close()
     except Exception as e:
         checks["nats"] = f"error: {e}"
 
-    overall = "ok" if all(v == "ok" for v in checks.values()) else "degraded"
+    overall = "ok" if all(v == "ok" or (isinstance(v, str) and v.startswith("ok")) for v in checks.values()) else "degraded"
     logger.info("Health check: %s — %s", overall, checks)
     return {"status": overall, "checks": checks}
 

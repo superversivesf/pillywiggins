@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from typing import Any, Optional
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
@@ -19,6 +20,15 @@ from pillywiggins.scheduling.scheduler import AgentScheduler
 logger = logging.getLogger(__name__)
 
 _ACTIVE_AGENTS: dict[str, "PillywigginAgent"] = {}
+
+# Matches an explicit agent address at the start of a message:
+#   @name      (mention/tag)
+#   name:     (name followed by colon)
+#   name,     (name followed by comma)
+_ADDRESS_PATTERN = re.compile(
+    r"^(?:@([a-zA-Z0-9_\-]+)|([a-zA-Z0-9_\-]+)[,:])",
+    re.UNICODE,
+)
 
 
 async def _builtin_heartbeat_handler(**kwargs: Any) -> None:
@@ -149,6 +159,7 @@ class PillywigginAgent:
                 )
 
     async def _on_nats_message(self, msg_type: str, data: dict) -> None:
+        logger.info("Agent %s handling NATS message type=%s from=%s", self.agent_id, msg_type, data.get("from", "?"))
         if msg_type == "message":
             try:
                 channel = ChannelType(data.get("channel", "telegram"))
@@ -161,6 +172,7 @@ class PillywigginAgent:
                 conversation_key=data.get("conversation_key", ""),
                 metadata=data.get("metadata", {}),
             )
+            logger.info("Agent %s processing inbound direct message from %s", self.agent_id, data.get("from", "?"))
             await self.process_message(msg)
         elif msg_type == "insight":
             if self._council_memory is not None:
@@ -171,11 +183,11 @@ class PillywigginAgent:
                     message_type="insight",
                     confidence=1.0,
                 )
-        elif msg_type == "skill_deployed":
+        elif msg_type == "skill_published":
             if self._skill_registry is not None:
                 self._skill_registry.load_all()
         else:
-            logger.warning("Unknown NATS message type: %s", msg_type)
+            logger.warning("Agent %s unknown NATS message type: %s", self.agent_id, msg_type)
 
     async def start(self) -> None:
         from pillywiggins.config import Settings
@@ -195,12 +207,20 @@ class PillywigginAgent:
                 self._council_memory = None
         if self._nats_url is not None:
             try:
-                bus = NatsBus(self._nats_url, self.agent_id)
-                await bus.connect()
-                self._nats_bus = bus
-                await bus.subscribe_broadcast(self._on_nats_message)
-                await bus.subscribe_direct(self._on_nats_message)
-                logger.info("NATS bus connected and subscribed for %s", self.agent_id)
+                bus = NatsBus(
+                    self._nats_url,
+                    self.agent_id,
+                    connect_timeout=settings.nats_connect_timeout,
+                    reconnect_attempts=settings.nats_reconnect_attempts,
+                )
+                connected = await bus.connect_or_log()
+                if connected:
+                    self._nats_bus = bus
+                    await bus.subscribe_broadcast(self._on_nats_message)
+                    await bus.subscribe_direct(self._on_nats_message)
+                    logger.info("NATS bus connected and subscribed for %s", self.agent_id)
+                else:
+                    self._nats_bus = None
             except Exception:
                 logger.warning("Failed to connect NATS bus for %s", self.agent_id, exc_info=True)
                 self._nats_bus = None
@@ -374,7 +394,40 @@ class PillywigginAgent:
         self._set_history(new_history, conversation_key)
         return f"Compacted {len(old_messages)} messages into summary. Keeping {keep_count} recent."
 
+    def should_process_message(self, message: UnifiedMessage) -> bool:
+        """Decide whether this agent should process the given message.
+
+        Returns ``False`` only when the message is explicitly addressed to
+        another agent by name (e.g. "@wormwood …").  Messages with no
+        explicit mention, or with an explicit mention of this agent, are
+        processed normally.
+
+        In private (DM) contexts the agent always processes the message — there
+        is no other agent in the room.
+        """
+        is_group = message.metadata.get("is_group", False)
+        if not is_group:
+            return True
+
+        content = message.content.strip()
+        if not content:
+            return True
+
+        match = _ADDRESS_PATTERN.match(content)
+        if match:
+            addressed_to = match.group(1) or match.group(2)
+            # Case-insensitive comparison so "Wormwood" == "wormwood"
+            if addressed_to.lower() != self.agent_id.lower():
+                logger.info(
+                    "Agent %s ignoring message addressed to %s", self.agent_id, addressed_to
+                )
+                return False
+
+        return True
+
     async def process_message(self, message: UnifiedMessage) -> str:
+        if not self.should_process_message(message):
+            return ""
         return await self.handle_message(message)
 
     async def handle_message(self, message: UnifiedMessage) -> str:

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 from pillywiggins.skills.builder import (
     DraftStatus,
     SkillDraft,
-    deploy_skill,
+    publish_skill,
 )
 
 
@@ -22,9 +22,9 @@ def run(x: int = 0) -> dict:
 """
 
 
-class TestDeploySkillBroadcast:
-    async def test_successful_deploy_broadcasts_skill_deployed(self):
-        """After successful deploy_skill(), broadcast 'skill_deployed' via NATS."""
+class TestPublishSkillBroadcast:
+    async def test_successful_publish_broadcasts_skill_published(self):
+        """After successful publish_skill(), broadcast 'skill_published' via NATS."""
         draft = SkillDraft(
             name="my_skill",
             code=VALID_SKILL_CODE,
@@ -46,7 +46,7 @@ class TestDeploySkillBroadcast:
         nats_bus = MagicMock()
         nats_bus.publish_broadcast = AsyncMock()
 
-        result = await deploy_skill(
+        result = await publish_skill(
             draft,
             approved=True,
             skills_dir="/tmp",
@@ -54,23 +54,23 @@ class TestDeploySkillBroadcast:
             nats_bus=nats_bus,
         )
 
-        assert "deployed successfully" in result
+        assert "published successfully" in result
         registry.register_skill.assert_called_once_with(
             "my_skill", VALID_SKILL_CODE, {"name": "my_skill", "description": "A test skill"}
         )
         nats_bus.publish_broadcast.assert_awaited_once_with(
-            "skill_deployed",
+            "skill_published",
             {"skill_name": "my_skill", "meta": {"name": "my_skill", "description": "A test skill"}},
         )
 
-    async def test_failed_deploy_does_not_broadcast(self):
-        """If deploy is rejected or fails, no broadcast should be sent."""
+    async def test_failed_publish_does_not_broadcast(self):
+        """If publish is rejected or fails, no broadcast should be sent."""
         draft = SkillDraft(name="test", code="pass", status=DraftStatus.DRAFT)
         registry = MagicMock()
         nats_bus = MagicMock()
         nats_bus.publish_broadcast = AsyncMock()
 
-        result = await deploy_skill(
+        result = await publish_skill(
             draft,
             approved=True,
             skills_dir="/tmp",
@@ -78,12 +78,12 @@ class TestDeploySkillBroadcast:
             nats_bus=nats_bus,
         )
 
-        assert "cannot be deployed" in result
+        assert "cannot be published" in result
         registry.register_skill.assert_not_called()
         nats_bus.publish_broadcast.assert_not_called()
 
-    async def test_deploy_without_nats_bus_still_works(self):
-        """deploy_skill() must work when nats_bus is not provided (backward compat)."""
+    async def test_publish_without_nats_bus_still_works(self):
+        """publish_skill() must work when nats_bus is not provided (backward compat)."""
         draft = SkillDraft(
             name="my_skill",
             code=VALID_SKILL_CODE,
@@ -103,18 +103,18 @@ class TestDeploySkillBroadcast:
         )
         registry = MagicMock()
 
-        result = await deploy_skill(
+        result = await publish_skill(
             draft,
             approved=True,
             skills_dir="/tmp",
             registry=registry,
         )
 
-        assert "deployed successfully" in result
+        assert "published successfully" in result
         registry.register_skill.assert_called_once()
 
-    async def test_deploy_with_failing_tests_does_not_broadcast(self):
-        """If tests fail, deploy is blocked and no broadcast is sent."""
+    async def test_publish_with_failing_tests_does_not_broadcast(self):
+        """If tests fail, publish is blocked and no broadcast is sent."""
         draft = SkillDraft(
             name="test",
             code="pass",
@@ -135,7 +135,7 @@ class TestDeploySkillBroadcast:
         nats_bus = MagicMock()
         nats_bus.publish_broadcast = AsyncMock()
 
-        result = await deploy_skill(
+        result = await publish_skill(
             draft,
             approved=True,
             skills_dir="/tmp",
@@ -147,14 +147,14 @@ class TestDeploySkillBroadcast:
         registry.register_skill.assert_not_called()
         nats_bus.publish_broadcast.assert_not_called()
 
-    async def test_deploy_without_approval_does_not_broadcast(self):
+    async def test_publish_without_approval_does_not_broadcast(self):
         """If not approved, no broadcast is sent."""
         draft = SkillDraft(name="test", code="pass", status=DraftStatus.TESTED)
         registry = MagicMock()
         nats_bus = MagicMock()
         nats_bus.publish_broadcast = AsyncMock()
 
-        result = await deploy_skill(
+        result = await publish_skill(
             draft,
             approved=False,
             skills_dir="/tmp",

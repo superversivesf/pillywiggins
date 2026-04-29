@@ -17,7 +17,7 @@ from pillywiggins.agents.brain import (
     build_skill,
     test_skill_code as run_skill_test,
     review_skill_code,
-    deploy_skill_code,
+    publish_skill_code,
     schedule_task,
     unschedule_task,
     list_scheduled_tasks,
@@ -230,7 +230,7 @@ def test_create_brain_registers_builtin_tools(monkeypatch):
     assert "build_skill" in tool_names
     assert "test_skill_code" in tool_names
     assert "review_skill_code" in tool_names
-    assert "deploy_skill_code" in tool_names
+    assert "publish_skill_code" in tool_names
 
 
 def test_create_brain_registers_skill_tools(monkeypatch):
@@ -266,14 +266,14 @@ def test_create_brain_no_skill_registry_no_skill_tools(monkeypatch):
     assert "build_skill" in tool_names
     assert "test_skill_code" in tool_names
     assert "review_skill_code" in tool_names
-    assert "deploy_skill_code" in tool_names
+    assert "publish_skill_code" in tool_names
     assert "schedule_task" in tool_names
     assert "unschedule_task" in tool_names
     assert "list_scheduled_tasks" in tool_names
     assert "get_current_time" in tool_names
     assert "get_conversation_info" in tool_names
-    assert "send_message_to_agent" in tool_names
-    assert len(tool_names) == 14
+    assert "test_driven_skill" in tool_names
+    assert len(tool_names) == 15
 
 
 def test_create_brain_empty_skill_registry(monkeypatch):
@@ -288,7 +288,7 @@ def test_create_brain_empty_skill_registry(monkeypatch):
         skill_registry=registry,
     )
     tool_names = list(agent._function_toolset.tools.keys())
-    assert len(tool_names) == 14
+    assert len(tool_names) == 15
 
 
 def test_create_brain_multiple_skill_tools(monkeypatch):
@@ -310,7 +310,7 @@ def test_create_brain_multiple_skill_tools(monkeypatch):
     assert "calculator" in tool_names
     assert "translator" in tool_names
     assert "send_message_to_agent" in tool_names
-    assert len(tool_names) == 17
+    assert len(tool_names) == 18
 
 
 def test_create_brain_deps_type_is_agent_deps(monkeypatch):
@@ -396,6 +396,7 @@ class TestRecallPrivateMemoryEdgeCases:
             api_key="key",
             provider="ollama",
             model="nomic-embed-text",
+            expected_dimension=mock_settings.embedding_dimension,
         )
 
 
@@ -645,7 +646,7 @@ class TestRunSandboxedSkill:
         from pillywiggins.agents.brain import _run_sandboxed_skill
 
         skill = _make_skill(name="nofile")
-        result = await _run_sandboxed_skill(skill, {})
+        result = await _run_sandboxed_skill(skill, {}, "puck", "discord")
         assert "no source file" in result
 
     @pytest.mark.asyncio
@@ -658,7 +659,7 @@ class TestRunSandboxedSkill:
         )
         skill = _make_skill(name="fail_skill", file_path=Path("/some/path/fail_skill.py"))
         with patch.object(Path, "read_text", return_value="code"):
-            result = await _run_sandboxed_skill(skill, {})
+            result = await _run_sandboxed_skill(skill, {}, "puck", "discord")
         assert "Sandbox error" in result
 
     @pytest.mark.asyncio
@@ -669,7 +670,7 @@ class TestRunSandboxedSkill:
         mock_run_sandboxed.return_value = MagicMock(success=True, error=None, result="hello world")
         skill = _make_skill(name="str_skill", file_path=Path("/some/path/str_skill.py"))
         with patch.object(Path, "read_text", return_value="code"):
-            result = await _run_sandboxed_skill(skill, {})
+            result = await _run_sandboxed_skill(skill, {}, "puck", "discord")
         assert result == "hello world"
 
     @pytest.mark.asyncio
@@ -682,7 +683,7 @@ class TestRunSandboxedSkill:
         )
         skill = _make_skill(name="dict_skill", file_path=Path("/some/path/dict_skill.py"))
         with patch.object(Path, "read_text", return_value="code"):
-            result = await _run_sandboxed_skill(skill, {})
+            result = await _run_sandboxed_skill(skill, {}, "puck", "discord")
         parsed = json.loads(result)
         assert parsed == {"key": "value"}
 
@@ -770,7 +771,7 @@ class TestMakeSkillTool:
         ctx = _make_ctx()
         mock_run_sandboxed.return_value = "sandboxed result"
         result = await tool_fn(ctx)
-        mock_run_sandboxed.assert_awaited_once_with(skill, {})
+        mock_run_sandboxed.assert_awaited_once_with(skill, {}, "puck", "discord", None)
         assert result == "sandboxed result"
 
 
@@ -788,7 +789,43 @@ class TestBuildSkill:
         code = "print('no meta or run')"
         ctx = _make_ctx()
         result = await build_skill(ctx, name="bad_skill", code=code)
-        assert "validation failed" in result.lower()
+        assert "Skill generation failed" in result
+        assert "fix and try again" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_build_skill_syntax_error_graceful(self):
+        code = 'SKILL_META = {"name": "bad", "description": "bad"}\nasync def run(**kwargs): return "hello"  \n    invalid syntax here'
+        ctx = _make_ctx()
+        result = await build_skill(ctx, name="bad_skill", code=code)
+        assert "Skill generation failed" in result
+        assert "fix and try again" in result.lower()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.skills.builder.draft_skill")
+    async def test_build_skill_exception_caught(self, mock_draft):
+        mock_draft.side_effect = SyntaxError("unexpected EOF while parsing")
+        ctx = _make_ctx()
+        result = await build_skill(ctx, name="oops", code="bad")
+        assert "Skill generation failed: SyntaxError" in result
+        assert "fix and try again" in result.lower()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.skills.builder.draft_skill")
+    async def test_build_skill_error_draft_returns_message(self, mock_draft):
+        from pillywiggins.skills.builder import SkillDraft, DraftStatus
+
+        draft = SkillDraft(
+            name="bad",
+            code="bad",
+            meta={},
+            status=DraftStatus.ERROR,
+            test_results=[{"passed": False, "error": "Syntax error: invalid syntax"}],
+        )
+        mock_draft.return_value = draft
+        ctx = _make_ctx()
+        result = await build_skill(ctx, name="bad", code="bad")
+        assert "Skill generation failed: Syntax error" in result
+        assert "fix and try again" in result.lower()
 
     @pytest.mark.asyncio
     async def test_build_skill_with_permissions(self):
@@ -833,7 +870,8 @@ class TestTestSkillCode:
         mock_draft.side_effect = ValueError("Code must contain a SKILL_META dict assignment")
         ctx = _make_ctx()
         result = await run_skill_test(ctx, name="skill", code="bad code", test_cases_json="[]")
-        assert "validation failed" in result.lower()
+        assert "Skill generation failed: ValueError" in result
+        assert "fix and try again" in result.lower()
 
     @pytest.mark.asyncio
     @patch("pillywiggins.skills.builder.test_skill", new_callable=AsyncMock)
@@ -860,7 +898,7 @@ class TestTestSkillCode:
                 "expected": "world",
                 "passed": False,
                 "actual": "hello",
-                "error": None,
+                "error": "Assertion failed",
                 "execution_time_ms": 5.0,
             },
         ]
@@ -869,9 +907,9 @@ class TestTestSkillCode:
         result = await run_skill_test(
             ctx, name="hello", code="code", test_cases_json='[{"args": {}}]'
         )
-        assert "1/2 passed" in result
-        assert "PASS" in result
-        assert "FAIL" in result
+        assert "has test failures" in result
+        assert "Assertion failed" in result
+        assert "fix the code" in result.lower()
 
     @pytest.mark.asyncio
     @patch("pillywiggins.skills.builder.test_skill", new_callable=AsyncMock)
@@ -899,7 +937,50 @@ class TestTestSkillCode:
         result = await run_skill_test(
             ctx, name="fail", code="code", test_cases_json='[{"args": {}}]'
         )
-        assert "Error: crashed" in result
+    @pytest.mark.asyncio
+    @patch("pillywiggins.skills.builder.draft_skill")
+    async def test_error_draft_returns_self_correction(self, mock_draft):
+        from pillywiggins.skills.builder import SkillDraft, DraftStatus
+
+        draft = SkillDraft(
+            name="bad",
+            code="bad",
+            meta={},
+            status=DraftStatus.ERROR,
+            test_results=[{"passed": False, "error": "Syntax error: invalid syntax"}],
+        )
+        mock_draft.return_value = draft
+        ctx = _make_ctx()
+        result = await run_skill_test(ctx, name="bad", code="bad", test_cases_json="[]")
+        assert "Skill generation failed: Syntax error" in result
+        assert "fix and try again" in result.lower()
+
+    @pytest.mark.asyncio
+    @patch("pillywiggins.skills.builder.test_skill", new_callable=AsyncMock)
+    @patch("pillywiggins.skills.builder.draft_skill")
+    async def test_all_tests_pass_success(self, mock_draft, mock_test):
+        from pillywiggins.skills.builder import SkillDraft, DraftStatus
+
+        draft = SkillDraft(name="good", code="code", meta={}, status=DraftStatus.TESTED)
+        mock_draft.return_value = draft
+        draft_results = SkillDraft(name="good", code="code", meta={}, status=DraftStatus.TESTED)
+        draft_results.test_results = [
+            {
+                "args": {},
+                "expected": "hi",
+                "passed": True,
+                "actual": "hi",
+                "error": None,
+                "execution_time_ms": 10.0,
+            }
+        ]
+        mock_test.return_value = draft_results
+        ctx = _make_ctx()
+        result = await run_skill_test(
+            ctx, name="good", code="code", test_cases_json='[{"args": {}}]'
+        )
+        assert "1/1 passed" in result
+        assert "PASS" in result
 
 
 class TestReviewSkillCode:
@@ -921,7 +1002,8 @@ class TestReviewSkillCode:
         mock_draft.side_effect = ValueError("Code must contain a SKILL_META dict assignment")
         ctx = _make_ctx()
         result = await review_skill_code(ctx, name="skill", code="bad", test_cases_json="[]")
-        assert "validation failed" in result.lower()
+        assert "Skill generation failed: ValueError" in result
+        assert "fix and try again" in result.lower()
 
     @pytest.mark.asyncio
     @patch("pillywiggins.skills.builder.review_skill")
@@ -938,12 +1020,30 @@ class TestReviewSkillCode:
         result = await review_skill_code(ctx, name="hello", code="code", test_cases_json="[]")
         mock_review.assert_called_once_with(draft)
 
+    @pytest.mark.asyncio
+    @patch("pillywiggins.skills.builder.draft_skill")
+    async def test_error_draft_returns_self_correction(self, mock_draft):
+        from pillywiggins.skills.builder import SkillDraft, DraftStatus
 
-class TestDeploySkillCode:
+        draft = SkillDraft(
+            name="bad",
+            code="bad",
+            meta={},
+            status=DraftStatus.ERROR,
+            test_results=[{"passed": False, "error": "Syntax error: invalid syntax"}],
+        )
+        mock_draft.return_value = draft
+        ctx = _make_ctx()
+        result = await review_skill_code(ctx, name="bad", code="bad", test_cases_json="[]")
+        assert "Skill generation failed: Syntax error" in result
+        assert "fix and try again" in result.lower()
+
+
+class TestPublishSkillCode:
     @pytest.mark.asyncio
     async def test_invalid_json(self):
         ctx = _make_ctx(skill_registry=MagicMock(spec=SkillRegistry))
-        result = await deploy_skill_code(
+        result = await publish_skill_code(
             ctx, name="skill", code="pass", test_cases_json="bad", approved=True
         )
         assert "Invalid test_cases_json" in result
@@ -951,7 +1051,7 @@ class TestDeploySkillCode:
     @pytest.mark.asyncio
     async def test_not_array(self):
         ctx = _make_ctx(skill_registry=MagicMock(spec=SkillRegistry))
-        result = await deploy_skill_code(
+        result = await publish_skill_code(
             ctx, name="skill", code="pass", test_cases_json='{"a":1}', approved=True
         )
         assert "must be a JSON array" in result
@@ -961,30 +1061,31 @@ class TestDeploySkillCode:
     async def test_code_validation_failure(self, mock_draft):
         mock_draft.side_effect = ValueError("Code must contain a SKILL_META dict assignment")
         ctx = _make_ctx(skill_registry=MagicMock(spec=SkillRegistry))
-        result = await deploy_skill_code(
+        result = await publish_skill_code(
             ctx, name="skill", code="bad", test_cases_json="[]", approved=True
         )
-        assert "validation failed" in result.lower()
+        assert "Skill generation failed: ValueError" in result
+        assert "fix and try again" in result.lower()
 
     @pytest.mark.asyncio
     @patch("pillywiggins.config.Settings")
-    @patch("pillywiggins.skills.builder.deploy_skill")
+    @patch("pillywiggins.skills.builder.publish_skill")
     @patch("pillywiggins.skills.builder.test_skill", new_callable=AsyncMock)
     @patch("pillywiggins.skills.builder.draft_skill")
-    async def test_successful_deploy(self, mock_draft, mock_test, mock_deploy, mock_settings_cls):
+    async def test_successful_publish(self, mock_draft, mock_test, mock_publish, mock_settings_cls):
         from pillywiggins.skills.builder import SkillDraft, DraftStatus
 
         draft = SkillDraft(name="hello", code="code", meta={}, status=DraftStatus.TESTED)
         mock_draft.return_value = draft
         mock_test.return_value = draft
-        mock_deploy.return_value = "Skill 'hello' deployed successfully."
+        mock_publish.return_value = "Skill 'hello' published successfully."
         mock_settings_cls.return_value = MagicMock(skills_dir="/tmp/skills")
         registry = MagicMock(spec=SkillRegistry)
         ctx = _make_ctx(skill_registry=registry)
-        result = await deploy_skill_code(
+        result = await publish_skill_code(
             ctx, name="hello", code="code", test_cases_json="[]", approved=True
         )
-        mock_deploy.assert_awaited_once()
+        mock_publish.assert_awaited_once()
 
 
 class TestScheduleTask:

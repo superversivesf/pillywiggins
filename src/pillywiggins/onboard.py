@@ -17,10 +17,12 @@ ENV_EXAMPLE = Path("env.example")
 
 COMPOSE_DEPENDS_ON = {
     "postgres": {"condition": "service_healthy"},
-    "redis": {"condition": "service_started"},
-    "nats": {"condition": "service_started"},
+    "redis": {"condition": "service_healthy"},
+    "nats": {"condition": "service_healthy"},
     "searxng": {"condition": "service_healthy"},
 }
+
+COMPOSE_NETWORKS = ["pillywiggins"]
 
 COMPOSE_VOLUMES = [
     "./personalities:/config:ro",
@@ -279,6 +281,7 @@ def add_agent_to_docker_compose(
         "AGENT_ID": agent_id,
         "TELEGRAM_BOT_TOKEN": f"${{{token_env}}}",
         "PERSONALITY_FILE": personality_path,
+        "NATS_URL": "nats://nats:4222",
         "TIMEZONE": timezone,
         "TZ": timezone,
     }
@@ -303,9 +306,16 @@ def add_agent_to_docker_compose(
         "environment": service_env,
         "volumes": list(COMPOSE_VOLUMES),
         "depends_on": dict(COMPOSE_DEPENDS_ON),
+        "networks": list(COMPOSE_NETWORKS),
     }
 
     compose["services"][agent_id] = service
+
+    # Ensure the 'networks' top-level key exists in the compose file
+    if "networks" not in compose:
+        compose["networks"] = {}
+    if "pillywiggins" not in compose["networks"]:
+        compose["networks"]["pillywiggins"] = {"driver": "bridge"}
 
     if "volumes" not in compose:
         compose["volumes"] = {}
