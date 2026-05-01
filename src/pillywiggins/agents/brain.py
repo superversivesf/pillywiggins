@@ -134,7 +134,7 @@ async def share_to_council(
     if ctx.deps.nats_bus is not None:
         try:
             await ctx.deps.nats_bus.publish_broadcast(
-                "insight", {"content": content, "tags": parsed_tags}
+                "insight", {"content": content, "tags": parsed_tags, "embedding": embedding}
             )
         except Exception:
             pass

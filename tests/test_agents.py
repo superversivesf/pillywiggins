@@ -598,7 +598,7 @@ async def test_start_connects_council_memory(personality):
             database_url="postgresql://test:5432/db",
         )
         await agent.start()
-        mock_council_cls.assert_called_once_with("postgresql://test:5432/db", "puck")
+        mock_council_cls.assert_called_once_with("postgresql://test:5432/db", "puck", embedding_dimension=768)
         mock_council.connect.assert_awaited_once()
         assert agent._council_memory is mock_council
 
@@ -610,6 +610,7 @@ async def test_start_connects_nats_bus(personality):
         patch("pillywiggins.agents.base.NatsBus") as mock_nats_cls,
     ):
         mock_bus = AsyncMock()
+        mock_bus.connect_or_log = AsyncMock(return_value=True)
         mock_nats_cls.return_value = mock_bus
         agent = PillywigginAgent(
             agent_id="puck",
@@ -621,8 +622,8 @@ async def test_start_connects_nats_bus(personality):
             nats_url="nats://localhost:4222",
         )
         await agent.start()
-        mock_nats_cls.assert_called_once_with("nats://localhost:4222", "puck")
-        mock_bus.connect.assert_awaited_once()
+        mock_nats_cls.assert_called_once_with("nats://localhost:4222", "puck", connect_timeout=5.0, reconnect_attempts=5)
+        mock_bus.connect_or_log.assert_awaited_once()
         assert agent._nats_bus is mock_bus
 
 
@@ -685,7 +686,7 @@ async def test_start_handles_nats_bus_failure_gracefully(personality):
         patch("pillywiggins.agents.base.NatsBus") as mock_nats_cls,
     ):
         mock_bus = AsyncMock()
-        mock_bus.connect = AsyncMock(side_effect=ConnectionError("nats down"))
+        mock_bus.connect_or_log = AsyncMock(return_value=False)
         mock_nats_cls.return_value = mock_bus
         agent = PillywigginAgent(
             agent_id="puck",
@@ -697,6 +698,7 @@ async def test_start_handles_nats_bus_failure_gracefully(personality):
             nats_url="nats://localhost:4222",
         )
         await agent.start()
+        mock_bus.connect_or_log.assert_awaited_once()
         assert agent._nats_bus is None
 
 

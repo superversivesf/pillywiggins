@@ -17,7 +17,11 @@ from pillywiggins.memory.council import (
 
 @pytest.fixture
 def memory():
-    return CouncilMemory(database_url="postgresql://test:test@localhost:5432/testdb", agent_id="puck")
+    return CouncilMemory(
+        database_url="postgresql://test:test@localhost:5432/testdb",
+        agent_id="puck",
+        embedding_dimension=3,  # small dimension so unit-test embeddings work
+    )
 
 
 def _make_pool_mock(acquire_return=None):
@@ -101,7 +105,7 @@ async def test_write_entry_with_custom_message_type(memory):
 
     with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
-        result = await memory.write_entry("new skill available", ["skill"], [0.1], message_type="skill_announcement")
+        result = await memory.write_entry("new skill available", ["skill"], [0.1, 0.2, 0.3], message_type="skill_announcement")
 
     assert result["success"] is True
     call_args = mock_conn.fetchrow.call_args[0]
@@ -132,7 +136,7 @@ async def test_write_accepts_content_at_max_length(memory):
     with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         max_content = "x" * MAX_CONTENT_LENGTH
-        result = await memory.write_entry(max_content, ["general"], [0.1])
+        result = await memory.write_entry(max_content, ["general"], [0.1, 0.2, 0.3])
 
     assert result["success"] is True
     await memory.close()
@@ -184,7 +188,7 @@ async def test_write_rate_limits_ten_per_hour(memory):
 
     memory._pool.acquire = _acquire
 
-    result = await memory.write_entry("content", ["general"], [0.1])
+    result = await memory.write_entry("content", ["general"], [0.1, 0.2, 0.3])
     assert result["success"] is False
     assert f"Rate limit exceeded: {RATE_LIMIT_PER_HOUR} writes/hour" in result["error"]
 
@@ -201,7 +205,7 @@ async def test_write_allows_under_rate_limit(memory):
 
     with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
-        result = await memory.write_entry("content", ["general"], [0.1])
+        result = await memory.write_entry("content", ["general"], [0.1, 0.2, 0.3])
 
     assert result["success"] is True
     await memory.close()
@@ -270,16 +274,18 @@ async def test_write_without_pool_returns_not_connected(memory):
 @pytest.mark.asyncio
 async def test_search_returns_matching_entries(memory):
     now = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+    test_uuid = uuid4()
     mock_conn = AsyncMock()
     mock_conn.fetch = AsyncMock(return_value=[
         {
-            "id": uuid4(),
+            "id": test_uuid,
             "contributing_agent": "puck",
             "content": "council insight",
             "tags": ["general"],
             "message_type": "insight",
             "confidence": 0.9,
             "created_at": now,
+            "similarity": 0.85,
         }
     ])
 
@@ -294,6 +300,7 @@ async def test_search_returns_matching_entries(memory):
     assert results[0]["contributing_agent"] == "puck"
     assert results[0]["message_type"] == "insight"
     assert results[0]["confidence"] == 0.9
+    assert results[0]["similarity"] == 0.85
     await memory.close()
 
 
@@ -311,7 +318,8 @@ async def test_search_filters_by_tags(memory):
     assert results == []
     call_args = mock_conn.fetch.call_args[0]
     assert "tags &&" in call_args[0]
-    assert call_args[1] == ["skill"]
+    assert call_args[1] == [0.1, 0.2, 0.3]  # embedding is now $1
+    assert call_args[2] == ["skill"]       # tags are now $2
     await memory.close()
 
 
@@ -340,10 +348,74 @@ async def test_search_respects_limit(memory):
 
     with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
-        await memory.search([0.1], limit=5)
+        await memory.search([0.1, 0.2, 0.3], limit=5)
 
     call_args = mock_conn.fetch.call_args[0]
-    assert call_args[-1] == 5
+    assert call_args[2] == 5   # limit is $2 when no tags filter
+    await memory.close()
+
+
+@pytest.mark.asyncio
+async def test_search_rejects_wrong_dimension_embedding():
+    """CouncilMemory.search should reject query embeddings with wrong dimension."""
+    mem = CouncilMemory(
+        database_url="postgresql://test:test@localhost:5432/testdb",
+        agent_id="puck",
+        embedding_dimension=768,
+    )
+    wrong_dim_query = [0.1, 0.2, 0.3]
+
+    mock_conn = AsyncMock()
+    mock_conn.fetch = AsyncMock(return_value=[])
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await mem.connect()
+        results = await mem.search(wrong_dim_query, limit=5)
+
+    assert results == []
+    assert mock_conn.fetch.call_count == 0
+    await mem.close()
+
+
+@pytest.mark.asyncio
+async def test_search_accepts_correct_dimension_embedding():
+    """CouncilMemory.search should accept query embeddings with correct dimension."""
+    mem = CouncilMemory(
+        database_url="postgresql://test:test@localhost:5432/testdb",
+        agent_id="puck",
+        embedding_dimension=768,
+    )
+    correct_dim_query = [0.0] * 768
+
+    mock_conn = AsyncMock()
+    mock_conn.fetch = AsyncMock(return_value=[])
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await mem.connect()
+        results = await mem.search(correct_dim_query, limit=5)
+
+    assert results == []
+    assert mock_conn.fetch.call_count == 1
+    await mem.close()
+
+
+@pytest.mark.asyncio
+async def test_search_passes_embedding_as_native_list(memory):
+    mock_conn = AsyncMock()
+    mock_conn.fetch = AsyncMock(return_value=[])
+
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await memory.connect()
+        results = await memory.search([0.1, 0.2, 0.3])
+
+    call_args = mock_conn.fetch.call_args[0]
+    assert "$1::vector" in call_args[0]
+    assert call_args[1] == [0.1, 0.2, 0.3]
+    assert results == []
     await memory.close()
 
 
@@ -583,3 +655,58 @@ async def test_search_empty_results(memory):
 
     assert results == []
     await memory.close()
+
+
+@pytest.mark.asyncio
+async def test_write_entry_with_none_embedding(memory):
+    """Writing with embedding=None should insert with NULL vector (no embedding)."""
+    entry_id = uuid4()
+    mock_conn = AsyncMock()
+    mock_conn.fetchval = AsyncMock(return_value=0)
+    mock_conn.fetchrow = AsyncMock(return_value={"id": entry_id})
+
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await memory.connect()
+        result = await memory.write_entry("no-embedding entry", ["general"], None)
+
+    assert result["success"] is True
+    assert result["id"] == str(entry_id)
+    # The INSERT should use NULL instead of a vector cast
+    call_args = mock_conn.fetchrow.call_args[0]
+    assert "NULL" in call_args[0]
+    # No $4::vector when embedding is None — only 5 params
+    assert call_args[1] == "puck"
+    assert call_args[2] == "no-embedding entry"
+    await memory.close()
+
+
+@pytest.mark.asyncio
+async def test_write_entry_normalizes_empty_list_to_none(memory):
+    """Passing embedding=[] should be treated like None (NULL vector)."""
+    entry_id = uuid4()
+    mock_conn = AsyncMock()
+    mock_conn.fetchval = AsyncMock(return_value=0)
+    mock_conn.fetchrow = AsyncMock(return_value={"id": entry_id})
+
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await memory.connect()
+        result = await memory.write_entry("empty-list embedding", ["general"], [])
+
+    assert result["success"] is True
+    assert result["id"] == str(entry_id)
+    call_args = mock_conn.fetchrow.call_args[0]
+    assert "NULL" in call_args[0]
+    await memory.close()
+
+
+@pytest.mark.asyncio
+async def test_write_entry_rejects_wrong_dimension(memory):
+    """Embeddings with wrong dimension should be rejected, even when None is allowed."""
+    memory._pool = MagicMock()
+    result = await memory.write_entry("content", ["general"], [0.1, 0.2])
+    assert result["success"] is False
+    assert "Embedding dimension" in result["error"]

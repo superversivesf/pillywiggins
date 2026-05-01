@@ -1,4 +1,5 @@
 import logging
+import os
 
 from aiohttp import web
 
@@ -106,7 +107,9 @@ def create_health_app(settings):
     return app
 
 
-async def start_health_server(settings, host="0.0.0.0", port=8080):
+async def start_health_server(settings, host="0.0.0.0", port=None):
+    if port is None:
+        port = int(os.environ.get("HEALTH_PORT", "8080"))
     app = create_health_app(settings)
     runner = web.AppRunner(app)
     await runner.setup()

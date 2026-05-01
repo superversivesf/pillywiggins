@@ -104,6 +104,8 @@ def main():
         skill_registry=skill_registry,
         compact_keep_messages=settings.compact_keep_messages,
         compact_truncate_message_chars=settings.compact_truncate_message_chars,
+        database_url=settings.database_url,
+        nats_url=settings.nats_url,
     )
 
     AdapterClass = _load_adapter_class(channel)

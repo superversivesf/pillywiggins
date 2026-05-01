@@ -17,7 +17,7 @@ services:
       timeout: 5s
       retries: 5
     ports:
-    - 5432:5432
+    - 127.0.0.1:5432:5432
     networks:
     - pillywiggins
   redis:
@@ -27,7 +27,7 @@ services:
     volumes:
     - redisdata:/data
     ports:
-    - 6379:6379
+    - 127.0.0.1:6379:6379
     healthcheck:
       test:
       - CMD
@@ -43,8 +43,8 @@ services:
     restart: unless-stopped
     command: nats-server -js -m 8222
     ports:
-    - 4222:4222
-    - 8222:8222
+    - 127.0.0.1:4222:4222
+    - 127.0.0.1:8222:8222
     healthcheck:
       test:
       - CMD
@@ -67,7 +67,7 @@ services:
     - searxng_data:/etc/searxng:rw
     - ./searxng_settings.yml:/etc/searxng/settings.yml:ro
     ports:
-    - 8888:8080
+    - 127.0.0.1:8888:8080
     healthcheck:
       test:
       - CMD
@@ -85,8 +85,6 @@ services:
     restart: unless-stopped
     command: python -m pillywiggins --agent-id puck
     env_file: .env
-    extra_hosts:
-    - "host.docker.internal:host-gateway"
     environment:
       AGENT_ID: puck
       TELEGRAM_BOT_TOKEN: ${PUCK_TELEGRAM_TOKEN}
@@ -96,7 +94,7 @@ services:
     volumes:
     - ./personalities:/config:ro
     - ./agents.yaml:/app/agents.yaml:ro
-    - skills:/app/skills
+    - ./skills:/app/skills
     healthcheck:
       test:
       - CMD-SHELL
@@ -104,15 +102,13 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 5s
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       nats:
-        condition: service_healthy
-      searxng:
         condition: service_healthy
     networks:
     - pillywiggins
@@ -121,8 +117,6 @@ services:
     restart: unless-stopped
     command: python -m pillywiggins --agent-id puck-discord
     env_file: .env
-    extra_hosts:
-    - "host.docker.internal:host-gateway"
     environment:
       AGENT_ID: puck-discord
       DISCORD_BOT_TOKEN: ${PUCK_DISCORD_TOKEN}
@@ -131,7 +125,7 @@ services:
     volumes:
     - ./personalities:/config:ro
     - ./agents.yaml:/app/agents.yaml:ro
-    - skills:/app/skills
+    - ./skills:/app/skills
     healthcheck:
       test:
       - CMD-SHELL
@@ -139,15 +133,13 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 5s
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       nats:
-        condition: service_healthy
-      searxng:
         condition: service_healthy
     networks:
     - pillywiggins
@@ -158,4 +150,3 @@ volumes:
   pgdata: null
   redisdata: null
   searxng_data: null
-  skills: null

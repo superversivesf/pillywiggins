@@ -111,10 +111,31 @@ def log_skill_execution(
 
             async def _write():
                 try:
+                    # Generate a real embedding so the entry is searchable
+                    # via vector similarity.  Fall back to None if embedding
+                    # generation fails (write_entry will store NULL).
+                    embedding: list[float] | None = None
+                    try:
+                        from pillywiggins.memory.embeddings import embed
+                        from pillywiggins.config import Settings
+
+                        settings = Settings()
+                        embedding = await embed(
+                            content,
+                            base_url=settings.llm_base_url,
+                            api_key=settings.llm_api_key,
+                            provider=settings.llm_provider,
+                            model=settings.embedding_model,
+                            expected_dimension=settings.embedding_dimension,
+                        )
+                    except Exception:
+                        # Embedding generation failed — write with NULL
+                        pass
+
                     await council_memory.write_entry(
                         content=content,
                         tags=["skill"],
-                        embedding=[],
+                        embedding=embedding,
                         message_type="skill_execution",
                         confidence=1.0,
                     )

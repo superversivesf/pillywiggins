@@ -1,8 +1,10 @@
 import ast
 import enum
 import logging
+import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional
 
 from pillywiggins.skills.sandbox import SandboxResult, run_sandboxed, run_test_driven
@@ -412,6 +414,20 @@ async def publish_skill(
 
     registry.register_skill(draft.name, draft.code, draft.meta)
 
+    # Verify peer readability and fix permissions
+    skill_path = Path(skills_dir) / f"{draft.name}.py"
+    try:
+        os.chmod(skill_path, 0o644)
+    except OSError as exc:
+        logger.warning("Failed to chmod %s to 644: %s", skill_path, exc)
+
+    if not os.access(skill_path, os.R_OK):
+        logger.warning(
+            "Skill %s was published but the file may not be readable by other agents: %s",
+            draft.name,
+            skill_path,
+        )
+
     if nats_bus is not None:
         try:
             await nats_bus.publish_broadcast(
@@ -422,6 +438,6 @@ async def publish_skill(
                 },
             )
         except Exception:
-            pass
+            logger.warning("Failed to broadcast skill_published for %s", draft.name, exc_info=True)
 
     return f"Skill '{draft.name}' published successfully."

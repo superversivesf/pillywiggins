@@ -4,14 +4,14 @@ CREATE TABLE IF NOT EXISTS private_memory (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     agent_id          TEXT NOT NULL,
     content           TEXT NOT NULL,
-    memory_type       VARCHAR(32) NOT NULL DEFAULT 'episodic',
+    memory_type       VARCHAR(32) DEFAULT NULL,      -- reserved for future use
     embedding         vector(768),
     metadata          JSONB DEFAULT '{}',
-    importance        FLOAT DEFAULT 0.5,
-    access_count      INTEGER DEFAULT 0,
-    last_accessed_at  TIMESTAMPTZ,
+    importance        FLOAT DEFAULT NULL,             -- reserved for future use
+    access_count      INTEGER DEFAULT NULL,          -- reserved for future use
+    last_accessed_at  TIMESTAMPTZ DEFAULT NULL,       -- reserved for future use
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at        TIMESTAMPTZ DEFAULT NULL       -- reserved for future use
 );
 
 CREATE INDEX IF NOT EXISTS idx_private_memory_agent_id
@@ -19,13 +19,14 @@ CREATE INDEX IF NOT EXISTS idx_private_memory_agent_id
 
 CREATE INDEX IF NOT EXISTS idx_private_memory_embedding
     ON private_memory
-    USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 100);
+    USING hnsw (embedding vector_cosine_ops);
 
 ALTER TABLE private_memory ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY private_memory_isolation ON private_memory
-    USING (agent_id = current_setting('app.agent_id')::text);
+    FOR ALL
+    USING (agent_id = current_setting('app.agent_id')::text)
+    WITH CHECK (agent_id = current_setting('app.agent_id')::text);
 
 CREATE TABLE IF NOT EXISTS council_memory (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -35,16 +36,18 @@ CREATE TABLE IF NOT EXISTS council_memory (
     embedding          vector(768),
     message_type       VARCHAR(32) NOT NULL DEFAULT 'insight',
     confidence         FLOAT DEFAULT 1.0,
-    source_context     JSONB DEFAULT '{}',
+    source_context     JSONB DEFAULT NULL,             -- reserved for future use
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    expires_at         TIMESTAMPTZ,
-    superseded_by      UUID REFERENCES council_memory(id)
+    expires_at         TIMESTAMPTZ DEFAULT NULL,       -- reserved for future use
+    superseded_by      UUID REFERENCES council_memory(id) DEFAULT NULL  -- reserved for future use
 );
 
 CREATE INDEX IF NOT EXISTS idx_council_memory_embedding
     ON council_memory
-    USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 100);
+    USING hnsw (embedding vector_cosine_ops);
+
+CREATE INDEX IF NOT EXISTS idx_council_memory_contributing_agent_created_at
+    ON council_memory (contributing_agent, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS conversation_cache (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -62,4 +65,6 @@ CREATE INDEX IF NOT EXISTS idx_conversation_cache_agent_id
 ALTER TABLE conversation_cache ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY conversation_cache_isolation ON conversation_cache
-    USING (agent_id = current_setting('app.agent_id')::text);
+    FOR ALL
+    USING (agent_id = current_setting('app.agent_id')::text)
+    WITH CHECK (agent_id = current_setting('app.agent_id')::text);

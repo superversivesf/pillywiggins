@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone
 
 import nats
-from nats.js.api import StreamConfig
+from nats.js.api import ConsumerConfig, StreamConfig
 
 logger = logging.getLogger(__name__)
 
@@ -48,14 +48,19 @@ class NatsBus:
         self._retry_delay = retry_delay
         self._retry_max_delay = retry_max_delay
         self._nc: nats.NATS | None = None
-        self._js = None
+        self._js: nats.js.JetStreamContext | None = None
         self._subs = []
         self._connected = False
+        self._broadcast_handler = None
+        self._direct_handler = None
+        self._monitor_task: asyncio.Task | None = None
 
     @property
     def is_connected(self) -> bool:
         """Check whether the NATS connection is currently active."""
-        return self._connected and self._nc is not None
+        if self._nc is None:
+            return False
+        return self._nc.is_connected
 
     async def connect(self) -> None:
         """Connect to NATS with retry logic and exponential backoff.
@@ -80,6 +85,8 @@ class NatsBus:
                 self._nc = nc
                 self._js = js
                 self._connected = True
+                if self._monitor_task is None or self._monitor_task.done():
+                    self._monitor_task = asyncio.create_task(self._monitor())
                 logger.info("NATS connected for agent %s at %s", self._agent_id, self._nats_url)
                 return
             except Exception as e:
@@ -105,22 +112,21 @@ class NatsBus:
     async def _ensure_stream(self, js) -> None:
         """Ensure the COUNCIL JetStream stream exists."""
         try:
-            await js.add_stream(
-                name=COUNCIL_STREAM,
-                subjects=[BROADCAST_SUBJECT, f"{DIRECT_SUBJECT_PREFIX}.>"],
-                config=StreamConfig(
-                    name=COUNCIL_STREAM,
-                    subjects=[BROADCAST_SUBJECT, f"{DIRECT_SUBJECT_PREFIX}.>"],
-                ),
-            )
-            logger.info("JetStream stream %s created/verified for %s", COUNCIL_STREAM, self._agent_id)
-        except nats.js.errors.BadRequestError as e:
-            if "already in use" in str(e).lower() or "stream name already in use" in str(e).lower():
-                logger.info("JetStream stream %s already exists (OK)", COUNCIL_STREAM)
-            else:
-                logger.warning("JetStream add_stream failed for %s: %s", self._agent_id, e, exc_info=True)
+            await js.stream_info(COUNCIL_STREAM)
+            logger.info("JetStream stream %s already exists (OK)", COUNCIL_STREAM)
+        except nats.js.errors.NotFoundError:
+            try:
+                await js.add_stream(
+                    config=StreamConfig(
+                        name=COUNCIL_STREAM,
+                        subjects=[BROADCAST_SUBJECT, f"{DIRECT_SUBJECT_PREFIX}.>"],
+                    ),
+                )
+                logger.info("JetStream stream %s created for %s", COUNCIL_STREAM, self._agent_id)
+            except Exception as e:
+                logger.error("JetStream add_stream failed for %s: %s", self._agent_id, e, exc_info=True)
         except Exception as e:
-            logger.warning("JetStream add_stream failed for %s: %s", self._agent_id, e, exc_info=True)
+            logger.error("JetStream stream_info failed for %s: %s", self._agent_id, e, exc_info=True)
 
     async def connect_or_log(self) -> bool:
         """Try to connect to NATS, logging a warning on failure.
@@ -138,6 +144,25 @@ class NatsBus:
             )
             return False
 
+    async def _monitor(self) -> None:
+        """Background health monitor that reconnects + re-subscribes on outage."""
+        while True:
+            try:
+                await asyncio.sleep(10.0)
+            except asyncio.CancelledError:
+                return
+            if not self.is_connected:
+                logger.warning("NATS connection dropped for %s, attempting reconnect", self._agent_id)
+                try:
+                    await self.reconnect()
+                    if self._broadcast_handler is not None:
+                        await self.subscribe_broadcast(self._broadcast_handler)
+                    if self._direct_handler is not None:
+                        await self.subscribe_direct(self._direct_handler)
+                    logger.info("NATS reconnected and re-subscribed for %s", self._agent_id)
+                except Exception:
+                    logger.warning("NATS reconnect failed for %s", self._agent_id, exc_info=True)
+
     async def reconnect(self) -> None:
         """Close existing connection (if any) and reconnect.
 
@@ -153,7 +178,7 @@ class NatsBus:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "data": data,
         }
-        return json.dumps(payload).encode()
+        return json.dumps(payload, default=str).encode()
 
     def _parse_payload(self, msg) -> tuple[str, dict]:
         raw = msg.data
@@ -198,6 +223,7 @@ class NatsBus:
             logger.exception("Failed to publish direct %s from %s to %s on %s", message_type, self._agent_id, target_agent_id, subject)
 
     async def subscribe_broadcast(self, handler):
+        self._broadcast_handler = handler
         if self._js is None:
             logger.warning("NATS not connected, skipping broadcast subscribe")
             return
@@ -223,11 +249,13 @@ class NatsBus:
             queue=durable,
             durable=durable,
             cb=_cb,
+            config=ConsumerConfig(max_deliver=3),
         )
         self._subs.append(sub)
         logger.info("Broadcast subscription created for %s (durable=%s)", self._agent_id, durable)
 
     async def subscribe_direct(self, handler):
+        self._direct_handler = handler
         if self._js is None:
             logger.warning("NATS not connected, skipping direct subscribe")
             return
@@ -254,12 +282,20 @@ class NatsBus:
             queue=durable,
             durable=durable,
             cb=_cb,
+            config=ConsumerConfig(max_deliver=3),
         )
         self._subs.append(sub)
         logger.info("Direct subscription created for %s on %s (durable=%s)", self._agent_id, subject, durable)
 
     async def close(self):
         self._connected = False
+        if self._monitor_task is not None and not self._monitor_task.done():
+            self._monitor_task.cancel()
+            try:
+                await self._monitor_task
+            except asyncio.CancelledError:
+                pass
+            self._monitor_task = None
         if self._nc is not None:
             try:
                 for sub in self._subs:
@@ -274,4 +310,3 @@ class NatsBus:
                 logger.warning("Error closing NATS connection", exc_info=True)
             self._nc = None
             self._js = None
-            self._subs.clear()

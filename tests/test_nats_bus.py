@@ -1,3 +1,4 @@
+import nats
 import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -38,12 +39,14 @@ def bus_with_fast_retry():
 
 def _mock_nats_connection():
     nc = MagicMock()
+    nc.is_connected = True
     nc.jetstream = MagicMock()
     js = MagicMock()
     nc.jetstream.return_value = js
     js.publish = AsyncMock()
     js.subscribe = AsyncMock()
     js.add_stream = AsyncMock()
+    js.stream_info = AsyncMock(side_effect=nats.js.errors.NotFoundError)
     nc.drain = AsyncMock()
     nc.close = AsyncMock()
     return nc, js
@@ -98,8 +101,8 @@ async def test_connect_adds_council_stream(bus):
 
     js.add_stream.assert_called_once()
     call_kwargs = js.add_stream.call_args
-    assert call_kwargs.kwargs["name"] == COUNCIL_STREAM
-    subjects = call_kwargs.kwargs["subjects"]
+    assert call_kwargs.kwargs["config"].name == COUNCIL_STREAM
+    subjects = call_kwargs.kwargs["config"].subjects
     assert BROADCAST_SUBJECT in subjects
     assert f"{DIRECT_SUBJECT_PREFIX}.>" in subjects
 
@@ -107,13 +110,14 @@ async def test_connect_adds_council_stream(bus):
 @pytest.mark.asyncio
 async def test_connect_handles_existing_stream(bus):
     nc, js = _mock_nats_connection()
-    js.add_stream = AsyncMock(side_effect=Exception("stream already exists"))
+    js.stream_info = AsyncMock(return_value={})
 
     with patch("pillywiggins.messaging.nats_bus.nats.connect", new_callable=AsyncMock, return_value=nc):
         await bus.connect()
 
     assert bus._nc is nc
     assert bus._js is js
+    js.add_stream.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

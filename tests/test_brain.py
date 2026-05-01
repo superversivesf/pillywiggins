@@ -580,7 +580,7 @@ class TestShareToCouncil:
         ctx = _make_ctx(council_memory=council, nats_bus=nats)
         result = await share_to_council(ctx, "shared finding", tags="idea", message_type="insight")
         nats.publish_broadcast.assert_awaited_once_with(
-            "insight", {"content": "shared finding", "tags": ["idea"]}
+            "insight", {"content": "shared finding", "tags": ["idea"], "embedding": [0.1, 0.2, 0.3]}
         )
         assert result == "Shared to council: shared finding"
 

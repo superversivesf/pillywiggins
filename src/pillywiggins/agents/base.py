@@ -173,7 +173,15 @@ class PillywigginAgent:
                 metadata=data.get("metadata", {}),
             )
             logger.info("Agent %s processing inbound direct message from %s", self.agent_id, data.get("from", "?"))
-            await self.process_message(msg)
+            response = await self.process_message(msg)
+            if response and self._nats_bus is not None:
+                sender = data.get("from")
+                if sender:
+                    await self._nats_bus.publish_direct(
+                        target_agent_id=sender,
+                        message_type="direct_reply",
+                        data={"reply": response},
+                    )
         elif msg_type == "insight":
             if self._council_memory is not None:
                 await self._council_memory.write_entry(
@@ -186,6 +194,7 @@ class PillywigginAgent:
         elif msg_type == "skill_published":
             if self._skill_registry is not None:
                 self._skill_registry.load_all()
+                self._refresh_brain_tools()
         else:
             logger.warning("Agent %s unknown NATS message type: %s", self.agent_id, msg_type)
 
@@ -196,7 +205,7 @@ class PillywigginAgent:
         settings = Settings()
         if self._database_url is not None:
             try:
-                council = CouncilMemory(self._database_url, self.agent_id)
+                council = CouncilMemory(self._database_url, self.agent_id, embedding_dimension=settings.embedding_dimension)
                 await council.connect()
                 self._council_memory = council
                 logger.info("Council memory connected for %s", self.agent_id)
@@ -272,6 +281,17 @@ class PillywigginAgent:
     @property
     def model_name(self) -> str:
         return self._model_name
+
+    def _refresh_brain_tools(self) -> None:
+        """Re-register tools when skills change (e.g. after skill_published)."""
+        self._brain = create_brain(
+            self._model_name,
+            self._provider,
+            self._base_url,
+            self._api_key,
+            skill_registry=self._skill_registry,
+        )
+        logger.info("Refreshed brain tools for %s", self.agent_id)
 
     def switch_model(self, new_model: str) -> None:
         self._model_name = new_model
