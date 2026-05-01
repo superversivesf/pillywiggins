@@ -220,7 +220,7 @@ async def test_driven_skill(
     Args:
         name: The skill name.
         code: The Python source code for the skill. Must contain SKILL_META
-            and a run() function.
+            and an async def run() function.
         test_code: Python test code.  It runs in the same module scope as the
             skill code, so it can call ``run()`` directly.  Use standard
             Python ``assert`` statements for checks.
@@ -255,7 +255,7 @@ async def build_skill(ctx: RunContext[AgentDeps], name: str, code: str) -> str:
 
     Args:
         name: The skill name (used for the filename and registry entry).
-        code: The Python source code for the skill. Must contain SKILL_META and a run() function.
+        code: The Python source code for the skill. Must contain SKILL_META and an async def run() function.
 
     Returns:
         Draft info including name and meta, or a validation error message.

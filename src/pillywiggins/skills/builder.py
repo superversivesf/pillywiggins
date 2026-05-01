@@ -73,9 +73,9 @@ def validate_skill_code(
     if not has_meta:
         return False, "Code must contain a SKILL_META dict assignment"
 
-    has_run = bool(re.search(r"(async\s+def|def)\s+run\s*\(", code))
+    has_run = bool(re.search(r"async\s+def\s+run\s*\(", code))
     if not has_run:
-        return False, "Code must contain an async def run() or def run() function"
+        return False, "Code must contain an async def run() function"
 
     perm = permissions or {}
     for pattern, regex in DANGEROUS_PATTERNS.items():
@@ -412,22 +412,14 @@ async def publish_skill(
         if failed:
             return f"Skill '{draft.name}' has {len(failed)} failing test(s). Fix before publishing."
 
-    registry.register_skill(draft.name, draft.code, draft.meta)
+    skill = registry.register_skill(draft.name, draft.code, draft.meta)
+    if skill is None:
+        error_msg = ""
+        if hasattr(registry, "load_errors") and registry.load_errors:
+            error_msg = f" Registry error: {registry.load_errors[-1]}"
+        return f"Skill '{draft.name}' was written but could not be loaded.{error_msg}"
 
-    # Verify peer readability and fix permissions
-    skill_path = Path(skills_dir) / f"{draft.name}.py"
-    try:
-        os.chmod(skill_path, 0o644)
-    except OSError as exc:
-        logger.warning("Failed to chmod %s to 644: %s", skill_path, exc)
-
-    if not os.access(skill_path, os.R_OK):
-        logger.warning(
-            "Skill %s was published but the file may not be readable by other agents: %s",
-            draft.name,
-            skill_path,
-        )
-
+    # Only broadcast if the skill was actually registered
     if nats_bus is not None:
         try:
             await nats_bus.publish_broadcast(

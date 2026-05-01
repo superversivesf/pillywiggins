@@ -56,6 +56,7 @@ def _is_dangerous_env(key: str) -> bool:
 
 
 _WRAPPER_TEMPLATE = """\
+import asyncio
 import json
 import sys
 
@@ -70,21 +71,32 @@ def _safe_str(exc):
         except Exception:
             return "Unknown error occurred."
 
-if __name__ == "__main__":
+async def _main():
     try:
         _args = json.loads(sys.argv[1]) if sys.argv[1] else {{}}
-        _result = run(**_args)
+        _result = await run(**_args)
         print(json.dumps({{"success": True, "result": _result}}))
     except Exception as _e:
         print(json.dumps({{"success": False, "error": _safe_str(_e)}}))
+
+if __name__ == "__main__":
+    asyncio.run(_main())
 """
 
 
 _TEST_DRIVEN_WRAPPER = """\
+import asyncio
 import json
 import sys
 
 {skill_code}
+
+_original_run = run
+def run(*args, **kwargs):
+    result = _original_run(*args, **kwargs)
+    if asyncio.iscoroutine(result):
+        return asyncio.run(result)
+    return result
 
 def _safe_str(exc):
     try:

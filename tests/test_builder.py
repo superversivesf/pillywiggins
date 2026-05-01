@@ -29,12 +29,12 @@ SKILL_META = {
     "permissions": {"network": False, "subprocess": False, "file_write": False},
 }
 
-def run(x: int = 0) -> dict:
+async def run(x: int = 0) -> dict:
     return {"result": x * 2}
 """
 
 CODE_MISSING_META = """\
-def run(x: int = 0) -> dict:
+async def run(x: int = 0) -> dict:
     return {"result": x * 2}
 """
 
@@ -50,19 +50,19 @@ def compute(x):
 
 CODE_SYNTAX_ERROR = """\
 SKILL_META = {"name": "bad"}
-def run(:
+async def run(:
     return {}
 """
 
 CODE_WITH_EVAL = """\
 SKILL_META = {"name": "evil", "permissions": {"network": False, "subprocess": False, "file_write": False}}
-def run(expr: str = "") -> dict:
+async def run(expr: str = "") -> dict:
     return {"result": eval(expr)}
 """
 
 CODE_WITH_EXEC = """\
 SKILL_META = {"name": "evil", "permissions": {"network": False, "subprocess": False, "file_write": False}}
-def run(cmd: str = "") -> dict:
+async def run(cmd: str = "") -> dict:
     exec(cmd)
     return {"done": True}
 """
@@ -70,7 +70,7 @@ def run(cmd: str = "") -> dict:
 CODE_WITH_OS_SYSTEM = """\
 SKILL_META = {"name": "evil", "permissions": {"network": False, "subprocess": False, "file_write": False}}
 import os
-def run(cmd: str = "") -> dict:
+async def run(cmd: str = "") -> dict:
     os.system(cmd)
     return {"done": True}
 """
@@ -78,7 +78,7 @@ def run(cmd: str = "") -> dict:
 CODE_WITH_SUBPROCESS_POPEN = """\
 SKILL_META = {"name": "evil", "permissions": {"network": False, "subprocess": False, "file_write": False}}
 import subprocess
-def run(cmd: str = "") -> dict:
+async def run(cmd: str = "") -> dict:
     subprocess.Popen(cmd.split())
     return {"done": True}
 """
@@ -90,14 +90,14 @@ SKILL_META = {
     "permissions": {"network": False, "subprocess": True, "file_write": False},
 }
 import subprocess
-def run(cmd: str = "") -> dict:
+async def run(cmd: str = "") -> dict:
     subprocess.Popen(cmd.split())
     return {"done": True}
 """
 
 CODE_WITH_IMPORT = """\
 SKILL_META = {"name": "evil", "permissions": {"network": False, "subprocess": False, "file_write": False}}
-def run(mod: str = "") -> dict:
+async def run(mod: str = "") -> dict:
     m = __import__(mod)
     return {"module": str(m)}
 """
@@ -274,7 +274,7 @@ class TestValidateSkillCode:
         code = """\
 SKILL_META = {"name": "evil", "permissions": {"network": True, "subprocess": True, "file_write": True}}
 import os
-def run(cmd: str = "") -> dict:
+async def run(cmd: str = "") -> dict:
     os.system(cmd)
     return {"done": True}
 """
@@ -286,14 +286,15 @@ def run(cmd: str = "") -> dict:
         valid, error = validate_skill_code(VALID_SKILL_CODE, permissions=None)
         assert valid is True
 
-    def test_sync_run_function_accepted(self):
+    def test_sync_run_function_rejected(self):
         code = """\
 SKILL_META = {"name": "sync_skill", "description": "sync"}
 def run(x: int = 0) -> dict:
     return {"result": x * 2}
 """
         valid, error = validate_skill_code(code)
-        assert valid is True
+        assert valid is False
+        assert "async def run()" in error
 
     def test_async_run_function_accepted(self):
         code = """\
@@ -421,7 +422,7 @@ SKILL_META = {
     "permissions": {"network": False, "subprocess": False, "file_write": False},
 }
 
-def run() -> dict:
+async def run() -> dict:
     raise RuntimeError("intentional crash")
 """
         draft = draft_skill("crasher", error_code)
@@ -441,7 +442,7 @@ SKILL_META = {
 
 import time
 
-def run() -> dict:
+async def run() -> dict:
     time.sleep(60)
     return {"done": True}
 """
@@ -530,7 +531,7 @@ SKILL_META = {
     "permissions": {"network": False, "subprocess": False, "file_write": False},
 }
 
-def run(x: int = 0) -> dict:
+async def run(x: int = 0) -> dict:
     return {"result": x * 2}
 """
         test_code = "assert run(5) == {'result': 10}\nassert run(0) == {'result': 0}"
@@ -546,7 +547,7 @@ SKILL_META = {
     "permissions": {"network": False, "subprocess": False, "file_write": False},
 }
 
-def run(x: int = 0) -> dict:
+async def run(x: int = 0) -> dict:
     return {"result": x * 2}
 """
         test_code = "assert run(5) == {'result': 999}"
@@ -569,7 +570,7 @@ SKILL_META = {
     "permissions": {"network": False, "subprocess": False, "file_write": False},
 }
 
-def run(x: int = 0) -> dict:
+async def run(x: int = 0) -> dict:
     return {"result": x * 2}
 """
         test_code = "assert 5 +\n"
@@ -585,7 +586,7 @@ SKILL_META = {
     "permissions": {"network": False, "subprocess": False, "file_write": False},
 }
 
-def run(x: int = 0) -> dict:
+async def run(x: int = 0) -> dict:
     return {"result": x * 2}
 """
         test_code = "run('string')['missing_key']"
@@ -601,7 +602,7 @@ SKILL_META = {
     "permissions": {"network": False, "subprocess": False, "file_write": False},
 }
 
-def run(x: int = 0) -> dict:
+async def run(x: int = 0) -> dict:
     return {"result": x * 2}
 """
         test_code = "assert run(5) == {'result': 10}"
@@ -932,14 +933,14 @@ class TestEscapedSkillCode:
 
     def test_sanitization_fixes_escaped_newlines(self):
         """Sanitization should turn literal \\n into real newlines so valid code parses."""
-        code = 'SKILL_META = {"name": "sanitized", "permissions": {"network": False, "subprocess": False, "file_write": False}}\ndef run():\\n    return {"result": 1}\n'
+        code = 'SKILL_META = {"name": "sanitized", "permissions": {"network": False, "subprocess": False, "file_write": False}}\nasync def run():\\n    return {"result": 1}\n'
         draft = draft_skill("sanitized", code)
         assert draft.status == DraftStatus.DRAFT
         assert draft.meta["name"] == "sanitized"
 
     def test_sanitization_fixes_escaped_triple_quotes(self):
         """Sanitization should remove backslashes before triple quotes."""
-        code = 'SKILL_META = {"name": "doc_skill", "permissions": {"network": False, "subprocess": False, "file_write": False}}\ndef run():\\n    \\"""Get weather"""\\n    return {"result": 1}\n'
+        code = 'SKILL_META = {"name": "doc_skill", "permissions": {"network": False, "subprocess": False, "file_write": False}}\nasync def run():\\n    \\"""Get weather"""\\n    return {"result": 1}\n'
         draft = draft_skill("doc_skill", code)
         assert draft.status == DraftStatus.DRAFT
         assert draft.meta["name"] == "doc_skill"
@@ -958,7 +959,7 @@ class TestEscapedSkillCode:
         original = (
             'SKILL_META = {"name": "good_docstring", "description": "A skill", '
             '"permissions": {"network": False, "subprocess": False, "file_write": False}}\n'
-            'def run():\n    """Get weather"""\n    return 1\n'
+            'async def run():\n    """Get weather"""\n    return 1\n'
         )
         json_encoded = json.dumps(original)
         decoded = json.loads(json_encoded)
