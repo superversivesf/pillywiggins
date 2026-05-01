@@ -688,3 +688,28 @@ async def test_check_health_nats_jetstream_degraded(settings):
     assert "nats" in result["checks"]
     assert "degraded" in result["checks"]["nats"]
     assert "JetStream" in result["checks"]["nats"]
+
+
+@pytest.mark.asyncio
+async def test_start_health_server_reads_health_port_env_var(monkeypatch, settings):
+    """start_health_server should read HEALTH_PORT from the environment."""
+    from pillywiggins.health import start_health_server
+
+    monkeypatch.setenv("HEALTH_PORT", "9090")
+
+    with (
+        patch("pillywiggins.health.web.AppRunner") as mock_runner_cls,
+        patch("pillywiggins.health.web.TCPSite") as mock_site_cls,
+    ):
+        mock_runner = AsyncMock()
+        mock_runner.setup = AsyncMock()
+        mock_runner_cls.return_value = mock_runner
+        mock_site = AsyncMock()
+        mock_site.start = AsyncMock()
+        mock_site_cls.return_value = mock_site
+
+        runner = await start_health_server(settings, host="127.0.0.1")
+
+    assert runner is mock_runner
+    mock_site_cls.assert_called_once_with(mock_runner, "127.0.0.1", 9090)
+    mock_site.start.assert_awaited_once()

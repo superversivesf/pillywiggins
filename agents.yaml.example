@@ -1,8 +1,1 @@
-agents:
-- id: puck
-  personality: /config/puck.yaml
-  channel: telegram
-  allowed_user_ids: all
-  timezone: UTC
-  environment:
-    TELEGRAM_BOT_TOKEN: ${PUCK_TELEGRAM_TOKEN}
+agents: []

@@ -787,6 +787,36 @@ def test_switch_model_passes_skill_registry(personality):
     )
 
 
+def test_refresh_brain_tools_recreate_brain_with_current_registry(personality):
+    """When _refresh_brain_tools is called, create_brain should be invoked with current args and skill_registry."""
+    mock_registry = MagicMock()
+    original_brain = MagicMock()
+    new_brain = MagicMock()
+    with patch("pillywiggins.agents.base.create_brain", return_value=original_brain) as mock_create:
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+            skill_registry=mock_registry,
+        )
+    assert agent._brain is original_brain
+
+    with patch("pillywiggins.agents.base.create_brain", return_value=new_brain) as mock_create:
+        agent._refresh_brain_tools()
+
+    assert agent._brain is new_brain
+    mock_create.assert_called_once_with(
+        "qwen3.5:8b",
+        "ollama",
+        "http://localhost:11434",
+        "",
+        skill_registry=mock_registry,
+    )
+
+
 @pytest.mark.asyncio
 async def test_clear_history_persists_to_cache(personality):
     mock_cache = AsyncMock()

@@ -1,7 +1,8 @@
+import asyncio
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -482,3 +483,125 @@ def test_load_skill_file_spec_loader_none(tmp_path):
         result = reg._load_skill_file(skills_dir / "no_loader.py")
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Hot-reload watcher tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_watch_loop_detects_new_file_and_reloads(tmp_path):
+    """_watch_loop should detect a new .py file and call load_all."""
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    reg = SkillRegistry(skills_dir=skills_dir)
+    reg._last_snapshot = reg._snapshot_skills()  # baseline empty
+    reg._watcher_running = True
+
+    load_calls = []
+    original_load_all = reg.load_all
+
+    def tracking_load_all():
+        load_calls.append(1)
+        return original_load_all()
+
+    reg.load_all = tracking_load_all
+
+    # Create a new skill file after the baseline snapshot.
+    (skills_dir / "new_skill.py").write_text(
+        'SKILL_META = {"name": "new_skill", "description": "x", "version": "1.0", "parameters": {}, "permissions": {"network": False, "subprocess": False, "file_write": False}}\n'
+        "async def run():\n    return 'ok'\n"
+    )
+
+    # Patch asyncio.sleep so we don't wait; raise CancelledError on second call to exit the loop.
+    sleep_count = 0
+
+    async def fake_sleep(_):
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count >= 2:
+            raise asyncio.CancelledError()
+
+    with patch("pillywiggins.skills.registry.asyncio.sleep", fake_sleep):
+        await reg._watch_loop(interval=0.001)
+
+    assert len(load_calls) >= 1
+    reg.stop_watching()
+
+
+# ---------------------------------------------------------------------------
+# Atomic registry.json write tests
+# ---------------------------------------------------------------------------
+
+
+def test_sync_registry_json_writes_temp_then_replaces(tmp_path):
+    """_sync_registry_json should write to a temp file and atomically replace registry.json."""
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    reg = SkillRegistry(skills_dir=skills_dir)
+
+    # Seed a skill so there is something to sync.
+    (skills_dir / "alpha.py").write_text(
+        'SKILL_META = {"name": "alpha", "description": "a", "version": "1.0", "parameters": {}, "permissions": {"network": False, "subprocess": False, "file_write": False}}\n'
+        "async def run():\n    return 'ok'\n"
+    )
+    reg.load_all()
+
+    reg._sync_registry_json()
+
+    registry_path = skills_dir / "registry.json"
+    assert registry_path.exists()
+    tmp_path_file = skills_dir / "registry.json.tmp"
+    # Temp file should have been replaced; it may or may not exist after os.replace,
+    # but on most POSIX systems it is gone.  We assert that the real file exists and is valid JSON.
+    data = json.loads(registry_path.read_text())
+    assert "skills" in data
+    assert any(s["name"] == "alpha" for s in data["skills"])
+
+
+# ---------------------------------------------------------------------------
+# load_errors surfacing tests
+# ---------------------------------------------------------------------------
+
+
+def test_load_all_captures_error_in_load_errors(tmp_path):
+    """When a skill file fails to load, the error should be stored in load_errors and surfaced via get_status."""
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    (skills_dir / "good.py").write_text(
+        'SKILL_META = {"name": "good", "description": "g", "version": "1.0", "parameters": {}, "permissions": {"network": False, "subprocess": False, "file_write": False}}\n'
+        "async def run():\n    return 'ok'\n"
+    )
+    (skills_dir / "broken.py").write_text("this is not valid python syntax :\n")
+    reg = SkillRegistry(skills_dir=skills_dir)
+    reg.load_all()
+
+    status = reg.get_status()
+    assert status["loaded"] == 1
+    assert len(status["errors"]) >= 1
+    assert any("broken.py" in err for err in status["errors"])
+    assert len(reg.load_errors) >= 1
+
+
+# ---------------------------------------------------------------------------
+# run() coroutine validation tests
+# ---------------------------------------------------------------------------
+
+
+def test_load_all_skips_non_coroutine_run(tmp_path, caplog):
+    """A skill with def run() (not async def) should be rejected with an ERROR log and skipped."""
+    import logging
+
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    (skills_dir / "sync_run.py").write_text(
+        'SKILL_META = {"name": "sync_run", "description": "s", "version": "1.0", "parameters": {}, "permissions": {"network": False, "subprocess": False, "file_write": False}}\n'
+        "def run():\n    return 'not async'\n"
+    )
+    reg = SkillRegistry(skills_dir=skills_dir)
+    with caplog.at_level(logging.ERROR, logger="pillywiggins.skills.registry"):
+        skills = reg.load_all()
+
+    assert skills == []
+    assert any("not a coroutine function" in rec.message for rec in caplog.records)

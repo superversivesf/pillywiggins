@@ -1,3 +1,4 @@
+import asyncio
 import nats
 import json
 from contextlib import asynccontextmanager
@@ -574,6 +575,60 @@ async def test_direct_subscription_callback_parses_message(bus):
     assert len(received) == 1
     assert received[0][0] == "question"
     assert received[0][1] == {"text": "anyone tried this?"}
+
+
+# ---------------------------------------------------------------------------
+# Monitor tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_monitor_triggers_reconnect_and_re_subscribes(bus):
+    """When is_connected becomes False, _monitor calls reconnect and re-subscribes."""
+    nc = MagicMock()
+    nc.is_connected = False
+
+    bus._nc = nc
+    bus._broadcast_handler = AsyncMock()
+    bus._direct_handler = AsyncMock()
+
+    reconnect_called = False
+
+    async def fake_reconnect():
+        nonlocal reconnect_called
+        reconnect_called = True
+        bus._nc = nc  # restore connection
+
+    bus.reconnect = fake_reconnect
+
+    subscribe_broadcast_called = False
+    subscribe_direct_called = False
+
+    async def fake_subscribe_broadcast(handler):
+        nonlocal subscribe_broadcast_called
+        subscribe_broadcast_called = True
+
+    async def fake_subscribe_direct(handler):
+        nonlocal subscribe_direct_called
+        subscribe_direct_called = True
+
+    bus.subscribe_broadcast = fake_subscribe_broadcast
+    bus.subscribe_direct = fake_subscribe_direct
+
+    sleep_count = 0
+
+    async def fake_sleep(_):
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count >= 2:
+            raise asyncio.CancelledError()
+
+    with patch("pillywiggins.messaging.nats_bus.asyncio.sleep", fake_sleep):
+        await bus._monitor()
+
+    assert reconnect_called is True
+    assert subscribe_broadcast_called is True
+    assert subscribe_direct_called is True
 
 
 # ---------------------------------------------------------------------------

@@ -67,11 +67,13 @@ def main():
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
     settings = Settings()
+    settings.resolve_embedding_config()
 
     if args.agent_id:
         agent_cfg = get_agent_config(args.agent_id, path=settings.agents_config_path)
         apply_agent_env(agent_cfg)
         settings = Settings()
+        settings.resolve_embedding_config()
         personality = load_personality(agent_cfg.personality)
         agent_id = agent_cfg.id
         channel = agent_cfg.channel

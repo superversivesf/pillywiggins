@@ -60,9 +60,15 @@ This is different from most AI frameworks where one brain wears different masks.
 └──────────────────────────────────────────────────────┘
 ```
 
-**Private memory** is stored in PostgreSQL with enforced isolation. Even if there's a bug in the code, Puck literally cannot read Ariel's memories — the database itself blocks it.
+**Private memory** is stored in PostgreSQL with enforced isolation. Even if there's a bug in the code, Puck literally cannot read Ariel's memories — the database itself blocks it. Under the hood:
 
-**Council memory** is a shared noticeboard. Any agent can pin something there, tagged with who said it and what it's about. Other agents can search it. This is how agents share knowledge without sharing everything. When a new skill is deployed, it gets announced here so all agents know about it.
+- Embeddings are stored with `pgvector` using a native `list[float]` binding via `asyncpg`, validated against the expected 768-dimension column on every save and search
+- RLS policies include explicit `WITH CHECK` clauses, not just `USING`, preventing cross-agent inserts even if a connection is compromised
+- Semantic search returns cosine-similarity scores (`1 - (embedding <=> query)`) alongside results so the agent knows how strongly a memory matches the query
+- Vector recall is served by an `hnsw` index (upgraded from `ivfflat`) for better accuracy with small datasets
+- A composite index on `(agent_id, created_at)` speeds up chronological pagination
+
+**Council memory** is a shared noticeboard. Any agent can pin something there, tagged with who said it and what it's about. Other agents can search it. This is how agents share knowledge without sharing everything. When a new skill is deployed, it gets announced here so all agents know about it. Council writes are validated: max 2000 characters, whitelisted tags, 10 entries per hour per agent, and a deduplication check against recent embeddings.
 
 **Conversation cache** is fast, short-term memory in Redis. It keeps the last few minutes of conversation so the agent doesn't have to hit the database for every message.
 
@@ -113,10 +119,12 @@ Puck:   ✅ Skill "check_website" deployed!
 2. It writes test cases for the function
 3. It runs the tests in a **sandboxed subprocess** (restricted, no access to your filesystem or network unless explicitly allowed)
 4. You review the code and tests, give feedback, iterate
-5. When you approve, the skill file is saved to a shared `skills/` directory
-6. The skill registry is updated
+5. When you approve, the skill file is saved to the shared `skills/` directory with `chmod 644` so every agent can read it
+6. The skill registry is updated atomically (temp-file + rename) so agents never see a half-written registry
 7. A council announcement is published so all agents discover the new skill
-8. From now on, any agent can use `check_website` as a tool
+8. Each agent's hot-reload file watcher notices the change and reloads the skill automatically — the brain's tools are refreshed dynamically via `_refresh_brain_tools()` so new skills are available immediately without restarting the agent
+9. The registry validates that every `run()` function is a proper coroutine before it can be called
+10. From now on, any agent can use `check_website` as a tool
 
 ### Skills are permanent and shared
 
@@ -196,8 +204,11 @@ Here's what happens when someone sends "Hey Puck, what's the weather?" on Discor
    h. Gets a response back
    i. Saves the exchange to conversation cache + private memory
 5. The adapter translates the response back to Discord format
+5. The adapter translates the response back to Discord format
 6. Discord shows the reply
 ```
+
+When another agent deploys a new skill, Puck receives a NATS `skill_published` announcement and calls `_refresh_brain_tools()` to dynamically rebuild its tool set — no container restart required.
 
 The same flow works for every channel — only step 1 (receive) and step 6 (send) are platform-specific. Cron-triggered actions follow the same path, just with a synthetic "scheduled task" message instead of a user message.
 
@@ -238,11 +249,12 @@ Here's what's inside:
 │  │  Agent  │ │  Agent  │                       │
 │  └─────────┘ └─────────┘                       │
 │                                                 │
-│  Shared:                                        │
-│  ┌────────────────────┐                         │
-│  │ skills/ volume     │ ← mounted into all      │
-│  │ (persistent tools) │   agent containers       │
-│  └────────────────────┘                         │
+  │  Shared:                                        │
+  │  ┌────────────────────┐                         │
+  │  │ skills/ bind mount │ <- mounted into all     │
+  │  │ (local edits show  │    agent containers      │
+  │  │  up immediately)   │                         │
+  │  └────────────────────┘                         │
 │                                                 │
 └─────────────────────────────────────────────────┘
 ```
@@ -251,9 +263,24 @@ Here's what's inside:
 > Ollama is expected to run externally (e.g. on the host machine, in a separate GPU-optimized container you manage yourself, or via a remote/cloud endpoint). Agents connect to it using `OLLAMA_BASE_URL` set in `.env` (default: `http://host.docker.internal:11434` on Docker Desktop, or the IP of your Ollama host). This separation keeps GPU drivers, model pulls, and VRAM management outside the project's Compose lifecycle.
 
 
-Each agent is a Python process in its own container. They talk to each other through NATS (a lightweight message bus). They store memories in PostgreSQL. They cache conversations in Redis. They think using Ollama. They share skills through a mounted Docker volume.
+Each agent is a Python process in its own container. They talk to each other through NATS JetStream (a lightweight message bus) with a reliability layer that includes:
+
+- `stream_info()` detection before stream creation, preventing duplicate-declaration races when multiple agents start simultaneously
+- Consumer-level retry limits (`ConsumerConfig(max_deliver=3)`) so a failed message is retried three times before NATS gives up
+- A background health monitor that reconnects and re-subscribes automatically if NATS drops
+- JSON payloads serialized with `json.dumps(default=str)` so datetime and UUID objects don't crash the bus
+- Skill publications and insights are broadcast on `council.broadcast`; direct agent-to-agent messages use `council.direct.{agent_id}`
+
+They store memories in PostgreSQL. They cache conversations in Redis. They think using Ollama. They share skills through a bind mount (`./skills:/app/skills`), not a Docker named volume, so local edits are reflected immediately across all agents -- no rebuild, no restart.
 
 No Kubernetes. No sidecars. No control planes. Just containers talking to each other over a Docker network.
+
+### Deployment notes
+
+- **Skills directory is a bind mount** (`./skills:/app/skills`), not a Docker named volume. This means you can edit skill files on the host filesystem and every agent sees the change immediately — no `docker build` required.
+- **Exposed ports are restricted to localhost** (`127.0.0.1:5432:5432`, `127.0.0.1:6379:6379`, etc.) so infrastructure is not accidentally reachable from the network.
+- **Agent healthchecks use `start_period: 30s`** to give slow containers time to connect to dependencies before Docker marks them unhealthy.
+- **`extra_hosts` has been removed** from the Docker Compose template — bind-mount networking means `host.docker.internal` works natively on modern Docker Desktop; Linux users should set `OLLAMA_BASE_URL` to the host IP instead.
 
 ---
 

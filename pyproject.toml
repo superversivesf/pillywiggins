@@ -18,6 +18,7 @@ dependencies = [
     "watchfiles",
     "questionary>=2.0",
     "pgvector>=0.2.4",
+    "sentence-transformers",
 ]
 
 [project.scripts]

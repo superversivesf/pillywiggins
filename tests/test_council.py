@@ -710,3 +710,98 @@ async def test_write_entry_rejects_wrong_dimension(memory):
     result = await memory.write_entry("content", ["general"], [0.1, 0.2])
     assert result["success"] is False
     assert "Embedding dimension" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_write_entry_passes_embedding_as_native_list(memory):
+    """write_entry should pass the embedding as a native Python list (not str) to the DB query."""
+    entry_id = uuid4()
+    mock_conn = AsyncMock()
+    mock_conn.fetchval = AsyncMock(return_value=0)
+    mock_conn.fetch = AsyncMock(return_value=[])
+    mock_conn.fetchrow = AsyncMock(return_value={"id": entry_id})
+
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await memory.connect()
+        embedding = [0.1, 0.2, 0.3]
+        result = await memory.write_entry("hello council", ["general"], embedding)
+
+    assert result["success"] is True
+    call_args = mock_conn.fetchrow.call_args[0]
+    # The 4th positional argument after the SQL string is the embedding (index 4).
+    assert call_args[4] == [0.1, 0.2, 0.3]
+    assert isinstance(call_args[4], list)
+    await memory.close()
+
+
+@pytest.mark.asyncio
+async def test_search_on_db_failure_returns_empty_list(memory):
+    """When the DB query inside search() raises, search must return [] instead of propagating."""
+    mock_conn = AsyncMock()
+    mock_conn.fetch = AsyncMock(side_effect=Exception("database is down"))
+
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await memory.connect()
+        results = await memory.search([0.1, 0.2, 0.3])
+
+    assert results == []
+    await memory.close()
+
+
+@pytest.mark.asyncio
+async def test_search_result_similarity_between_zero_and_one(memory):
+    """search() results must include a 'similarity' key whose value is in [0, 1]."""
+    now = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+    test_uuid = uuid4()
+    mock_conn = AsyncMock()
+    mock_conn.fetch = AsyncMock(return_value=[
+        {
+            "id": test_uuid,
+            "contributing_agent": "puck",
+            "content": "council insight",
+            "tags": ["general"],
+            "message_type": "insight",
+            "confidence": 0.9,
+            "created_at": now,
+            "similarity": 0.85,
+        },
+        {
+            "id": uuid4(),
+            "contributing_agent": "mustardseed",
+            "content": "another",
+            "tags": ["idea"],
+            "message_type": "proposal",
+            "confidence": 0.7,
+            "created_at": now,
+            "similarity": 0.0,
+        },
+        {
+            "id": uuid4(),
+            "contributing_agent": "wormwood",
+            "content": "yet another",
+            "tags": ["skill"],
+            "message_type": "skill_announcement",
+            "confidence": 1.0,
+            "created_at": now,
+            "similarity": 1.0,
+        },
+    ])
+
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await memory.connect()
+        results = await memory.search([0.1, 0.2, 0.3])
+
+    assert len(results) == 3
+    for r in results:
+        assert "similarity" in r
+        assert 0.0 <= r["similarity"] <= 1.0
+    assert results[0]["similarity"] == 0.85
+    assert results[1]["similarity"] == 0.0
+    assert results[2]["similarity"] == 1.0
+    await memory.close()

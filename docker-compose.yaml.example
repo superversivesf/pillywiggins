@@ -80,69 +80,29 @@ services:
       retries: 10
     networks:
     - pillywiggins
-  puck:
-    build: .
-    restart: unless-stopped
-    command: python -m pillywiggins --agent-id puck
-    env_file: .env
-    environment:
-      AGENT_ID: puck
-      TELEGRAM_BOT_TOKEN: ${PUCK_TELEGRAM_TOKEN}
-      PERSONALITY_FILE: /config/puck.yaml
-      NATS_URL: nats://nats:4222
-      HEALTH_PORT: 8080
-    volumes:
-    - ./personalities:/config:ro
-    - ./agents.yaml:/app/agents.yaml:ro
-    - ./skills:/app/skills
-    healthcheck:
-      test:
-      - CMD-SHELL
-      - wget --spider -q http://localhost:8080/healthz || exit 1
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      nats:
-        condition: service_healthy
-    networks:
-    - pillywiggins
-  puck-discord:
-    build: .
-    restart: unless-stopped
-    command: python -m pillywiggins --agent-id puck-discord
-    env_file: .env
-    environment:
-      AGENT_ID: puck-discord
-      DISCORD_BOT_TOKEN: ${PUCK_DISCORD_TOKEN}
-      NATS_URL: nats://nats:4222
-      HEALTH_PORT: 8080
-    volumes:
-    - ./personalities:/config:ro
-    - ./agents.yaml:/app/agents.yaml:ro
-    - ./skills:/app/skills
-    healthcheck:
-      test:
-      - CMD-SHELL
-      - wget --spider -q http://localhost:8080/healthz || exit 1
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      nats:
-        condition: service_healthy
-    networks:
-    - pillywiggins
+
+  # # Add your agent service here (e.g. Discord, Slack, Telegram)
+  # # Use `pillywiggins onboard` to generate the correct service block.
+  # puck-discord:
+  #   build: .
+  #   restart: unless-stopped
+  #   command: ["pillywiggins", "--channel", "discord"]
+  #   env_file:
+  #     - .env
+  #   volumes:
+  #   - ./personalities:/config:ro
+  #   - ./agents.yaml:/app/agents.yaml:ro
+  #   - ./skills:/app/skills
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #     nats:
+  #       condition: service_healthy
+  #   networks:
+  #   - pillywiggins
+
 networks:
   pillywiggins:
     driver: bridge

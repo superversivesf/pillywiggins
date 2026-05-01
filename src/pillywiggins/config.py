@@ -1,3 +1,5 @@
+import asyncio
+
 from pydantic_settings import BaseSettings
 
 
@@ -15,8 +17,8 @@ class Settings(BaseSettings):
     llm_base_url: str = "http://host.docker.internal:11434/v1"
     llm_api_key: str = ""
     model_name: str = "qwen3.5:8b"
-    embedding_model: str = "nomic-embed-text"
-    embedding_dimension: int = 768  # must match pgvector column width
+    embedding_model: str = "auto"  # "auto" = discover from Ollama, "" = use HF
+    embedding_dimension: int = 768  # updated at startup by resolve_embedding_config
     telegram_bot_token: str = ""
     discord_bot_token: str = ""
     compact_keep_messages: int = 6
@@ -53,3 +55,63 @@ class Settings(BaseSettings):
         if not self.allowed_user_ids or self.allowed_user_ids.strip().lower() == "all":
             return set()
         return {int(uid.strip()) for uid in self.allowed_user_ids.split(",") if uid.strip()}
+
+    def resolve_embedding_config(self) -> None:
+        """Discover the best available embedding model and update settings in-place.
+
+        This is a one-time startup call.  If ``embedding_model`` is ``"auto"`` we
+        query Ollama for a local embedding model.  If none is found (or Ollama is
+        unreachable) we fall back to the sentence-transformers Hugging Face
+        provider and clear ``embedding_model`` (empty string signals HF).
+        """
+        from pillywiggins.embeddings.resolver import (
+            DEFAULT_HF_MODEL,
+            discover_ollama_embedding_model,
+        )
+        from pillywiggins.memory.embeddings import (
+            KNOWN_EMBEDDING_DIMENSIONS,
+        )
+
+        import logging
+        logger = logging.getLogger(__name__)
+
+        if self.embedding_model != "auto":
+            # Already explicit — just make sure the dimension is set.
+            dim = KNOWN_EMBEDDING_DIMENSIONS.get(self.embedding_model)
+            if dim is not None:
+                self.embedding_dimension = dim
+                logger.info("Explicit embedding model '%s' with dimension %d", self.embedding_model, dim)
+            return
+
+        # Strip the /v1 suffix from llm_base_url so the Ollama native endpoint works
+        base = self.llm_base_url.rstrip("/")
+        if base.endswith("/v1"):
+            base = base[:-3]
+        base = base.rstrip("/")
+
+        discovered = None
+        try:
+            discovered = asyncio.get_event_loop().run_until_complete(
+                discover_ollama_embedding_model(ollama_base_url=base)
+            )
+        except Exception as exc:
+            logger.warning("Embedding discovery failed: %s", exc)
+
+        if discovered:
+            self.embedding_model = discovered
+            dim = KNOWN_EMBEDDING_DIMENSIONS.get(discovered)
+            if dim is not None:
+                self.embedding_dimension = dim
+                logger.info("Discovered Ollama embedding model '%s' (%d-dim)", discovered, dim)
+            else:
+                logger.info("Discovered Ollama embedding model '%s' (dimension unknown)", discovered)
+        else:
+            self.embedding_model = ""
+            dim = KNOWN_EMBEDDING_DIMENSIONS.get(DEFAULT_HF_MODEL)
+            if dim is not None:
+                self.embedding_dimension = dim
+            logger.info("No Ollama embedding model found; falling back to Hugging Face '%s' (%d-dim)", DEFAULT_HF_MODEL, dim or 768)
+
+
+# Top-level settings instance used by legacy imports.
+settings = Settings()

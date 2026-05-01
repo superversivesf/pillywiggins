@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import logging
 import time
+from typing import Optional
 
 import aiohttp
 
@@ -28,6 +29,26 @@ KNOWN_EMBEDDING_DIMENSIONS: dict[str, int] = {
     "text-embedding-3-small": 1536,
     "text-embedding-ada-002": 1536,
 }
+
+# Lazy-initialized HF fallback provider instance.
+_hf_provider: Optional[object] = None
+
+
+def _get_hf_provider():
+    """Return (or create) the HuggingFaceEmbeddingProvider singleton."""
+    global _hf_provider
+    if _hf_provider is None:
+        from pillywiggins.embeddings.resolver import (
+            DEFAULT_HF_MODEL,
+            HuggingFaceEmbeddingProvider,
+        )
+        try:
+            _hf_provider = HuggingFaceEmbeddingProvider(DEFAULT_HF_MODEL)
+            logger.info("Initialised HuggingFace embedding provider (%s)", DEFAULT_HF_MODEL)
+        except Exception as exc:
+            logger.error("Failed to initialise HuggingFace embedding provider: %s", exc)
+            raise
+    return _hf_provider
 
 
 def normalize_ollama_url(base_url: str) -> str:
@@ -109,9 +130,22 @@ async def _embed_with_retry(
     base_url: str,
     api_key: str,
     provider: str,
-    model: str = "nomic-embed-text",
-) -> dict | None:
-    """Call the embedding endpoint with retries and exponential backoff."""
+    model: str = "",
+) -> dict | list[float] | list[list[float]] | None:
+    """Call the embedding endpoint with retries and exponential backoff.
+
+    If ``provider`` is ``"ollama"`` and ``model`` is empty we attempt a
+    HuggingFace fallback.  The return value is either a parsed JSON dict
+    (Ollama/OpenAI) or a raw embedding list (HuggingFace).
+    """
+    if provider == "huggingface" or (provider == "ollama" and not model):
+        try:
+            hf = _get_hf_provider()
+            return hf.encode(text_or_texts)
+        except Exception as exc:
+            logger.error("HuggingFace embedding failed: %s", exc)
+            return None
+
     if provider == "ollama":
         # Ollama's native /api/embed endpoint is at the root, not under /v1.
         # Strip the OpenAI-compatible /v1 suffix that PydanticAI needs.
@@ -182,12 +216,41 @@ async def _embed_with_retry(
     return None
 
 
+async def _extract_embedding(
+    result: dict | list[float] | list[list[float]],
+    provider: str,
+    model: str,
+) -> list[float] | None:
+    """Extract a single embedding vector from an API response or HF result."""
+    if isinstance(result, list):
+        return result
+    if provider == "ollama":
+        return result.get("embeddings", [None])[0]
+    data = result.get("data", [])
+    if data:
+        return data[0].get("embedding")
+    return None
+
+
+async def _extract_embeddings(
+    result: dict | list[float] | list[list[float]],
+    provider: str,
+    model: str,
+) -> list[list[float]] | None:
+    """Extract a batch of embeddings from an API response or HF result."""
+    if isinstance(result, list):
+        return result
+    if provider == "ollama":
+        return result.get("embeddings", [])
+    return [d.get("embedding") for d in result.get("data", [])]
+
+
 async def embed(
     text: str,
     base_url: str,
     api_key: str,
     provider: str,
-    model: str = "nomic-embed-text",
+    model: str = "",
     use_cache: bool = True,
     expected_dimension: int | None = None,
 ) -> list[float] | None:
@@ -197,8 +260,8 @@ async def embed(
         text: The text to embed.
         base_url: API base URL (for Ollama, the /v1 suffix is stripped automatically).
         api_key: Optional API key for authentication.
-        provider: "ollama" or "openai"-compatible.
-        model: Embedding model name.
+        provider: "ollama", "openai"-compatible, or "huggingface".
+        model: Embedding model name.  Empty string triggers HF fallback.
         use_cache: Whether to use the in-memory cache.
         expected_dimension: If set, validate that the returned vector has this
             many dimensions. Mismatches are logged as errors and None is returned.
@@ -221,19 +284,12 @@ async def embed(
         )
         return None
 
-    if provider == "ollama":
-        embedding = result.get("embeddings", [None])[0]
-    else:
-        data = result.get("data", [])
-        if data:
-            embedding = data[0].get("embedding")
-        else:
-            embedding = None
+    embedding = await _extract_embedding(result, provider, model)
 
     if embedding is None:
         logger.error(
             "Embedding response contained no vector: provider=%s model=%s response_keys=%s",
-            provider, model, list(result.keys()),
+            provider, model, list(result.keys()) if isinstance(result, dict) else ["<list>"],
         )
         return None
 
@@ -255,7 +311,7 @@ async def embed_texts(
     base_url: str,
     api_key: str,
     provider: str,
-    model: str = "nomic-embed-text",
+    model: str = "",
     use_cache: bool = True,
     expected_dimension: int | None = None,
 ) -> list[list[float]] | None:
@@ -265,8 +321,8 @@ async def embed_texts(
         texts: List of texts to embed.
         base_url: API base URL (for Ollama, the /v1 suffix is stripped automatically).
         api_key: Optional API key for authentication.
-        provider: "ollama" or "openai"-compatible.
-        model: Embedding model name.
+        provider: "ollama", "openai"-compatible, or "huggingface".
+        model: Embedding model name.  Empty string triggers HF fallback.
         use_cache: Whether to use the in-memory cache.
         expected_dimension: If set, validate that each returned vector has this
             many dimensions. Mismatches are logged as errors and None is returned.
@@ -289,10 +345,7 @@ async def embed_texts(
         )
         return None
 
-    if provider == "ollama":
-        embeddings = result.get("embeddings", [])
-    else:
-        embeddings = [d.get("embedding") for d in result.get("data", [])]
+    embeddings = await _extract_embeddings(result, provider, model)
 
     if not embeddings or any(e is None for e in embeddings):
         logger.error(
@@ -320,13 +373,17 @@ async def check_embedding_health(
     base_url: str,
     api_key: str,
     provider: str,
-    model: str = "nomic-embed-text",
+    model: str = "",
     expected_dimension: int | None = None,
 ) -> dict:
     """Verify that the embedding endpoint is reachable and produces valid vectors.
 
+    If ``model`` is empty and ``provider`` is ``"ollama"`` the function
+    transparently falls back to HuggingFace when an HF provider can be loaded.
+
     Returns a dict with:
         - ``healthy`` (bool): Whether the check passed.
+        - ``provider`` (str): The effective provider used.
         - ``model`` (str): The model name tested.
         - ``dimension`` (int | None): Actual vector dimension produced (or None on failure).
         - ``expected_dimension`` (int | None): The expected dimension, if provided.
@@ -335,6 +392,7 @@ async def check_embedding_health(
     """
     result: dict = {
         "healthy": False,
+        "provider": provider,
         "model": model,
         "dimension": None,
         "expected_dimension": expected_dimension,
@@ -353,7 +411,27 @@ async def check_embedding_health(
             # actual dimension even if it mismatches, so we can report it.
         )
         if vec is None:
-            result["error"] = f"Embedding endpoint returned None (provider={provider}, model={model})"
+            # Attempt HF fallback if Ollama was selected but no model was set
+            if provider == "ollama" and not model:
+                try:
+                    vec = await embed(
+                        "health check probe",
+                        base_url="",
+                        api_key="",
+                        provider="huggingface",
+                        model="",
+                        use_cache=False,
+                    )
+                    result["provider"] = "huggingface"
+                    result["model"] = "all-MiniLM-L6-v2"
+                except Exception as hf_exc:
+                    result["error"] = f"Embedding endpoint returned None and HF fallback failed: {hf_exc}"
+                    return result
+            else:
+                result["error"] = f"Embedding endpoint returned None (provider={provider}, model={model})"
+                return result
+        if vec is None:
+            result["error"] = "Embedding endpoint returned None after fallback attempt"
             return result
         result["dimension"] = len(vec)
         if expected_dimension is not None:

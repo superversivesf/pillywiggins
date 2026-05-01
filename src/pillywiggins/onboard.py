@@ -19,7 +19,6 @@ COMPOSE_DEPENDS_ON = {
     "postgres": {"condition": "service_healthy"},
     "redis": {"condition": "service_healthy"},
     "nats": {"condition": "service_healthy"},
-    "searxng": {"condition": "service_healthy"},
 }
 
 COMPOSE_NETWORKS = ["pillywiggins"]
@@ -27,7 +26,7 @@ COMPOSE_NETWORKS = ["pillywiggins"]
 COMPOSE_VOLUMES = [
     "./personalities:/config:ro",
     "./agents.yaml:/app/agents.yaml:ro",
-    "skills:/app/skills",
+    "./skills:/app/skills",
 ]
 
 LLM_ENV_KEYS = ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "MODEL_NAME")
