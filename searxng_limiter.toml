@@ -1,0 +1,5 @@
+[botdetection.ip_limit]
+# activate the link_token method in the ip_limit filter
+link_token = true
+length = 8
+token_ttl = 300

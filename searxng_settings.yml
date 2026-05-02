@@ -24,8 +24,14 @@ outgoing:
   enable_http2: true
 
 engines:
-  # --- Disabled: engines that rate-limit aggressively ---
+  # --- Disabled: engines that fail initialization or rate-limit aggressively ---
+  - name: ahmia
+    disabled: true
   - name: brave
+    disabled: true
+  - name: torch
+    disabled: true
+  - name: wikidata
     disabled: true
 
   # --- Web search: stable, non-aggressive engines ---
