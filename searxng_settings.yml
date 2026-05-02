@@ -12,10 +12,37 @@ search:
 
 server:
   secret_key: "${SEARXNG_SECRET:-changeme}"
-  limiter: false
+  limiter: true
   image_proxy: false
 
+outgoing:
+  request_timeout: 10.0
+  max_request_timeout: 15.0
+  useragent_suffix: ""
+  pool_connections: 100
+  pool_maxsize: 20
+  enable_http2: true
+
 engines:
+  # --- Disabled: engines that rate-limit aggressively ---
+  - name: brave
+    disabled: true
+
+  # --- Web search: stable, non-aggressive engines ---
+  - name: bing
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: qwant
+    disabled: false
+  - name: bing images
+    disabled: false
+  - name: google images
+    disabled: false
+
+  # --- Academic / knowledge ---
   - name: wolframalpha
     disabled: false
   - name: arxiv
@@ -24,11 +51,13 @@ engines:
     disabled: false
   - name: pubmed
     disabled: false
+  - name: wikipedia
+    disabled: false
+
+  # --- Social / code / media ---
   - name: reddit
     disabled: false
-  - name: bing images
-    disabled: false
-  - name: google images
+  - name: github
     disabled: false
   - name: youtube
     disabled: false
