@@ -18,3 +18,4 @@ class AgentDeps:
     scheduler: Any = field(default=None)
     conversation_key: str = field(default="")
     conversation_info: Callable = field(default=lambda: {"message_count": 0, "estimated_tokens": 0})
+    logger: Any = field(default=None)

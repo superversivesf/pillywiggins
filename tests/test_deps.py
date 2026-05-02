@@ -38,6 +38,7 @@ def test_init_with_all_fields():
     mock_council = object()
     mock_nats = object()
     mock_scheduler = object()
+    mock_logger = object()
     deps = AgentDeps(
         agent_id="puck",
         channel="discord",
@@ -46,6 +47,7 @@ def test_init_with_all_fields():
         council_memory=mock_council,
         nats_bus=mock_nats,
         scheduler=mock_scheduler,
+        logger=mock_logger,
     )
 
     assert deps.agent_id == "puck"
@@ -55,6 +57,7 @@ def test_init_with_all_fields():
     assert deps.council_memory is mock_council
     assert deps.nats_bus is mock_nats
     assert deps.scheduler is mock_scheduler
+    assert deps.logger is mock_logger
 
 
 def test_optional_fields_are_typed_as_any():

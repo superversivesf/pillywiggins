@@ -1,4 +1,5 @@
 import os
+import time
 from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -6,6 +7,7 @@ from zoneinfo import ZoneInfo
 from pydantic_ai import Agent, RunContext
 
 from pillywiggins.agents.deps import AgentDeps
+from pillywiggins.logging_utils import AgentLogger
 
 
 def _should_sandbox(skill_name: str) -> bool:
@@ -665,21 +667,32 @@ def _make_skill_tool(skill):
         agent_id = ctx.deps.agent_id
         channel = ctx.deps.channel
         council_memory = ctx.deps.council_memory
+        agent_logger = ctx.deps.logger
 
         if _should_sandbox(skill.name):
             return await _run_sandboxed_skill(skill, kwargs, agent_id, channel, council_memory)
+        start = time.perf_counter()
         try:
             result = await skill.execute(**kwargs)
         except TypeError as e:
+            duration_ms = (time.perf_counter() - start) * 1000
             available = ", ".join(skill.meta.get("parameters", {}).keys())
             err = f"Error calling skill {skill.name}: {e}. Available parameters: {available}"
             log_skill_execution(agent_id, channel, skill.name, kwargs, error=err, council_memory=council_memory)
+            if agent_logger is not None:
+                agent_logger.log_tool_error(skill.name, err, duration_ms)
             return err
         except Exception as e:
+            duration_ms = (time.perf_counter() - start) * 1000
             err = f"Error calling skill {skill.name}: {e}"
             log_skill_execution(agent_id, channel, skill.name, kwargs, error=err, council_memory=council_memory)
+            if agent_logger is not None:
+                agent_logger.log_tool_error(skill.name, err, duration_ms)
             return err
+        duration_ms = (time.perf_counter() - start) * 1000
         log_skill_execution(agent_id, channel, skill.name, kwargs, result=result, council_memory=council_memory)
+        if agent_logger is not None:
+            agent_logger.log_tool_result(skill.name, result, duration_ms)
         if isinstance(result, str):
             return result
         return json.dumps(result)

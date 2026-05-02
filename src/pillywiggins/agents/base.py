@@ -1,13 +1,24 @@
 import asyncio
 import logging
 import re
+import time
 from typing import Any, Optional
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 
 from pillywiggins.agents.brain import Agent, create_brain
 from pillywiggins.agents.deps import AgentDeps
 from pillywiggins.agents.personality import Personality
+from pillywiggins.logging_utils import AgentLogger
 from pillywiggins.memory.cache import ConversationCache
 from pillywiggins.memory.council import CouncilMemory
 from pillywiggins.memory.private import PrivateMemory
@@ -121,6 +132,7 @@ class PillywigginAgent:
         self._scheduler: Optional[AgentScheduler] = None
         self._adapter: Any = None
         self._lock = asyncio.Lock()
+        self._agent_logger = AgentLogger(agent_id)
         self._brain: Agent = create_brain(
             model_name,
             provider,
@@ -454,6 +466,9 @@ class PillywigginAgent:
         async with self._lock:
             conversation_key = message.conversation_key
             history = self._get_history(conversation_key)
+            agent_logger = self._agent_logger
+
+            agent_logger.log_user_message(message.content)
 
             def _get_conversation_info():
                 hist = self._get_history(conversation_key)
@@ -473,18 +488,31 @@ class PillywigginAgent:
                 scheduler=self._scheduler,
                 conversation_key=conversation_key or "",
                 conversation_info=_get_conversation_info,
+                logger=agent_logger,
             )
+
+            total_start = time.perf_counter()
             result = await self._brain.run(
                 message.content,
                 deps=deps,
                 message_history=history,
             )
+            total_duration_ms = (time.perf_counter() - total_start) * 1000
+
             new_history = result.all_messages()
             self._set_history(new_history, conversation_key)
+
+            # Persist history
+            persist_start = time.perf_counter()
             if self._cache is not None:
                 await self._cache.save(
                     self.agent_id, new_history, conversation_key=conversation_key
                 )
             if self._store is not None:
                 await self._store.save(conversation_key, new_history)
+            persist_duration_ms = (time.perf_counter() - persist_start) * 1000
+            if persist_duration_ms > 1:
+                agent_logger.log_timing("persist_history", persist_duration_ms)
+
+            agent_logger.log_llm_response(result.output, total_duration_ms)
             return result.output

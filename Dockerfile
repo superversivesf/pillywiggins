@@ -34,5 +34,8 @@ RUN pip install --no-cache-dir \
 COPY personalities/ ./personalities/
 COPY skills/ ./skills/
 
+# Create logs directory for agent round-trip logging
+RUN mkdir -p /app/logs
+
 # Run the agent
 CMD ["python", "-m", "pillywiggins", "--agent-id", "puck"]
