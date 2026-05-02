@@ -18,7 +18,7 @@ def test_settings_defaults():
     assert s.llm_base_url == "http://host.docker.internal:11434/v1"
     assert s.llm_api_key == ""
     assert s.model_name == "qwen3.5:8b"
-    assert s.embedding_model == "nomic-embed-text"
+    assert s.embedding_model == "auto"
     assert s.telegram_bot_token == ""
 
 
