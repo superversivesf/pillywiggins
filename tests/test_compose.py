@@ -32,39 +32,24 @@ def test_compose_yaml_parses(compose_data):
     assert "services" in compose_data
 
 
-def test_compose_has_puck_discord_service(services):
-    assert "puck-discord" in services, (
-        "docker-compose.yaml.example should define a puck-discord service"
+def test_compose_has_no_preconfigured_agents(services):
+    # After the empty-default refactor, no agents are pre-configured.
+    # Users opt-in via `pillywiggins onboard`.
+    preconfigured = [name for name in services if name not in {
+        "postgres", "redis", "nats", "searxng", "ollama"
+    }]
+    assert not preconfigured, (
+        f"docker-compose.yaml.example should not define pre-configured agent services, "
+        f"found: {preconfigured}"
     )
 
 
-def test_puck_discord_service_structure(services):
-    svc = services["puck-discord"]
-    assert svc.get("build") == ".", "puck-discord should build from root"
-    assert svc.get("command") == "python -m pillywiggins --agent-id puck-discord", (
-        "puck-discord command mismatch"
-    )
-    assert svc.get("env_file") == ".env", "puck-discord should use .env"
-    env = svc.get("environment", {})
-    assert env.get("AGENT_ID") == "puck-discord", "puck-discord AGENT_ID mismatch"
-    volumes = svc.get("volumes", [])
-    assert any("personalities" in str(v) for v in volumes), (
-        "puck-discord should mount personalities"
-    )
-    assert any("skills" in str(v) for v in volumes), "puck-discord should mount skills"
-    depends_on = svc.get("depends_on", {})
-    assert "postgres" in depends_on, "puck-discord should depend_on postgres"
-    assert "redis" in depends_on, "puck-discord should depend_on redis"
-    assert "nats" in depends_on, "puck-discord should depend_on nats"
-
-
-def test_env_example_has_discord_token():
+def test_env_example_has_discord_token_placeholder():
     env_path = Path(__file__).resolve().parent.parent / "env.example"
     assert env_path.exists(), "env.example should exist"
     for line in env_path.read_text().splitlines():
         if line.startswith("PUCK_DISCORD_TOKEN="):
             value = line.split("=", 1)[1]
-            assert value != "", "PUCK_DISCORD_TOKEN should not be empty"
             assert "token" in value.lower(), "PUCK_DISCORD_TOKEN should be a placeholder"
             return
     pytest.fail("PUCK_DISCORD_TOKEN not found in env.example")
@@ -127,11 +112,12 @@ def test_nats_healthcheck_exists_and_sensible(services):
     assert len(test_cmd) > 0, "nats healthcheck test should not be empty"
 
 
-def test_agent_services_healthcheck_exists(services):
-    for name in ["puck", "puck-discord"]:
-        assert name in services, f"{name} service should exist"
-        hc = services[name].get("healthcheck", {})
-        test_cmd = hc.get("test", [])
-        assert len(test_cmd) > 0, (
-            f"{name} healthcheck test should not be empty"
-        )
+def test_no_agent_services_healthchecks_expected(services):
+    # With empty-default agents, there are no pre-configured agent services.
+    # When users add agents via `pillywiggins onboard`, healthchecks will be
+    # generated for those specific services.
+    infra_services = {"postgres", "redis", "nats", "searxng", "ollama"}
+    agent_services = [name for name in services if name not in infra_services]
+    assert not agent_services, (
+        f"No pre-configured agent services should exist, found: {agent_services}"
+    )

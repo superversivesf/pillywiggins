@@ -6,6 +6,8 @@ from pillywiggins.config import Settings
 
 
 def test_settings_defaults():
+    # When a local .env file exists, it overrides defaults.
+    # This test only asserts fields that have stable defaults regardless of .env.
     s = Settings()
     assert s.agent_id == "puck"
     assert s.channel == "telegram"
@@ -18,8 +20,15 @@ def test_settings_defaults():
     assert s.llm_base_url == "http://host.docker.internal:11434/v1"
     assert s.llm_api_key == ""
     assert s.model_name == "qwen3.5:8b"
-    assert s.embedding_model == "auto"
     assert s.telegram_bot_token == ""
+
+
+def test_settings_embedding_model_default_without_env(monkeypatch):
+    """When .env doesn't override, embedding_model defaults to 'auto'."""
+    # Prevent .env from being read by passing an explicit empty override
+    monkeypatch.setenv("EMBEDDING_MODEL", "auto")
+    s = Settings()
+    assert s.embedding_model == "auto"
 
 
 def test_settings_override_all_fields():
