@@ -133,6 +133,10 @@ class PillywigginAgent:
         self._adapter: Any = None
         self._lock = asyncio.Lock()
         self._agent_logger = AgentLogger(agent_id)
+        # Rate limiting: max 10 LLM calls per minute per agent
+        self._llm_call_timestamps: list[float] = []
+        self._llm_rate_limit = 10  # calls
+        self._llm_rate_window = 60.0  # seconds
         self._brain: Agent = create_brain(
             model_name,
             provider,
@@ -462,8 +466,31 @@ class PillywigginAgent:
             return ""
         return await self.handle_message(message)
 
+    def _check_rate_limit(self) -> str | None:
+        """Check if agent has exceeded LLM call rate limit. Returns error message if limited."""
+        now = time.monotonic()
+        cutoff = now - self._llm_rate_window
+        self._llm_call_timestamps = [ts for ts in self._llm_call_timestamps if ts > cutoff]
+        if len(self._llm_call_timestamps) >= self._llm_rate_limit:
+            logger.warning(
+                "Agent %s rate limit hit (%d calls in %ds)",
+                self.agent_id,
+                self._llm_rate_limit,
+                int(self._llm_rate_window),
+            )
+            return (
+                "I'm processing a lot of messages right now. "
+                "Please wait a moment and try again."
+            )
+        self._llm_call_timestamps.append(now)
+        return None
+
     async def handle_message(self, message: UnifiedMessage) -> str:
         async with self._lock:
+            rate_err = self._check_rate_limit()
+            if rate_err:
+                return rate_err
+
             conversation_key = message.conversation_key
             history = self._get_history(conversation_key)
             agent_logger = self._agent_logger
