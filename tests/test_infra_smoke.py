@@ -20,6 +20,12 @@ import time
 import pytest
 import yaml
 
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.smoke,
+    pytest.mark.usefixtures("docker_available"),
+]
+
 # Base compose file to test (the canonical example/source of truth)
 BASE_COMPOSE_FILE = os.environ.get("COMPOSE_FILE", "docker-compose.yaml.example")
 INFRA_SERVICES = ["postgres", "redis", "nats"]
@@ -28,18 +34,6 @@ ALT_PORTS_SEQ = {"postgres": [15432], "redis": [16379], "nats": [14222, 18222]}
 HEALTHY_TIMEOUT = 60
 POLL_INTERVAL = 2
 RESTART_TIMEOUT = 30
-
-DOCKER_AVAILABLE = False
-try:
-    subprocess.run(
-        ["docker", "info"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=True,
-    )
-    DOCKER_AVAILABLE = True
-except (subprocess.CalledProcessError, FileNotFoundError):
-    pass
 
 
 def _docker_compose_cmd():
@@ -214,7 +208,6 @@ def _port_in_use(port: int) -> bool:
         return s.connect_ex(("127.0.0.1", port)) == 0
 
 
-@pytest.mark.skipif(not DOCKER_AVAILABLE, reason="Docker not available")
 def test_compose_has_no_duplicate_host_ports(parsed_compose):
     """Static check: no two services map to the same host port.
 
@@ -233,14 +226,12 @@ def test_compose_has_no_duplicate_host_ports(parsed_compose):
     assert len(infra_ports) == len(set(infra_ports)), "Infra services have duplicate ports"
 
 
-@pytest.mark.skipif(not DOCKER_AVAILABLE, reason="Docker not available")
 def test_infra_services_healthy(_infra_up, dc):
     """Start infra services and poll until all report healthy."""
     for svc in INFRA_SERVICES:
         _wait_for_healthy(dc, svc)
 
 
-@pytest.mark.skipif(not DOCKER_AVAILABLE, reason="Docker not available")
 def test_restart_policy(_infra_up, dc, parsed_compose):
     """Verify the restart policy is configured and the container recovers from stop/start.
 
@@ -283,7 +274,6 @@ def test_restart_policy(_infra_up, dc, parsed_compose):
     _wait_for_healthy(dc, service, timeout=RESTART_TIMEOUT)
 
 
-@pytest.mark.skipif(not DOCKER_AVAILABLE, reason="Docker not available")
 def test_ports_not_preoccupied_before_start(parsed_compose):
     """Before bringing up any containers, assert the alt ports are free.
 

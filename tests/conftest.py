@@ -9,6 +9,57 @@ from pillywiggins.agents.personality import Personality
 from pillywiggins.config import Settings
 
 
+# ---------------------------------------------------------------------------
+# Pytest collection hook: auto-mark unmarked tests as unit
+# ---------------------------------------------------------------------------
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        if not any(marker in item.keywords for marker in ("integration", "smoke")):
+            item.add_marker(pytest.mark.unit)
+
+
+# ---------------------------------------------------------------------------
+# Docker availability fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def docker_available():
+    import subprocess
+
+    try:
+        subprocess.run(["docker", "info"], check=True, capture_output=True, timeout=5)
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        pytest.skip("Docker not available", allow_module_level=True)
+
+
+@pytest.fixture(scope="session")
+def infra_services_running(docker_available):
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["docker", "compose", "ps", "--services", "--filter", "status=running"],
+            capture_output=True, text=True, check=False, timeout=10
+        )
+        running = set(result.stdout.strip().splitlines())
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        running = set()
+
+    required = {"postgres", "redis", "nats"}
+    missing = required - running
+    if missing:
+        pytest.skip(f"Required services not running: {missing}")
+    return running
+
+
+# ---------------------------------------------------------------------------
+# Default test fixtures
+# ---------------------------------------------------------------------------
+
+
 @pytest.fixture
 def personality():
     return Personality(

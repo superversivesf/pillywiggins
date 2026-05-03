@@ -36,6 +36,11 @@ import time
 import pytest
 import yaml
 
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.usefixtures("docker_available"),
+]
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -47,23 +52,6 @@ INFRA_SERVICES = ["postgres", "redis", "nats"]
 ALT_PORTS_SEQ = {"postgres": [25432], "redis": [26379], "nats": [24222, 28222]}
 HEALTHY_TIMEOUT = 120
 POLL_INTERVAL = 2
-
-# ---------------------------------------------------------------------------
-# Docker availability probe
-# ---------------------------------------------------------------------------
-
-DOCKER_AVAILABLE = False
-try:
-    subprocess.run(
-        ["docker", "info"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=True,
-    )
-    DOCKER_AVAILABLE = True
-except (subprocess.CalledProcessError, FileNotFoundError):
-    pass
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -280,7 +268,6 @@ def _infra_up(dc_alt):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not DOCKER_AVAILABLE, reason="Docker not available")
 def test_compose_config_validates():
     """``docker compose config`` should parse and validate the canonical file."""
     compose_file_path = os.path.join(_project_dir(), BASE_COMPOSE_FILE)
@@ -306,7 +293,6 @@ def test_compose_config_validates():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not DOCKER_AVAILABLE, reason="Docker not available")
 def test_compose_build():
     """All services with a ``build`` context should build successfully."""
     compose_file_path = os.path.join(_project_dir(), BASE_COMPOSE_FILE)
@@ -332,7 +318,6 @@ def test_compose_build():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not DOCKER_AVAILABLE, reason="Docker not available")
 def test_infra_services_healthy(_infra_up, dc_alt):
     """Postgres, Redis, and NATS containers must reach the ``healthy`` state."""
     for svc in INFRA_SERVICES:
@@ -363,7 +348,6 @@ asyncio.run(main())
 """
 
 
-@pytest.mark.skipif(not DOCKER_AVAILABLE, reason="Docker not available")
 def test_agent_service_healthcheck(alt_compose_file):
     """An agent service container starts and its healthcheck returns 200 OK.
 
@@ -443,7 +427,6 @@ def test_agent_service_healthcheck(alt_compose_file):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(not DOCKER_AVAILABLE, reason="Docker not available")
 def test_skills_volume_shared_between_containers(alt_compose_file):
     """Two agent containers sharing the ``skills/`` bind mount can read each
     other's writes.
@@ -535,7 +518,6 @@ asyncio.run(main())
 """
 
 
-@pytest.mark.skipif(not DOCKER_AVAILABLE, reason="Docker not available")
 def test_nats_pub_sub_between_containers(alt_compose_file):
     """Two lightweight containers on the compose network can publish and
     receive a NATS broadcast message.

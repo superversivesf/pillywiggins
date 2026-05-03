@@ -46,8 +46,10 @@ Thumbs.db
 # Docker
 ollama_models/
 
-# Hive (agent session data)
-.hive/
+# Log artifacts
+logs/
+*.log
+
 
 # Test / coverage
 .pytest_cache/

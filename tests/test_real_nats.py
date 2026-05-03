@@ -9,17 +9,10 @@ import uuid
 
 import pytest
 
-DOCKER_AVAILABLE = False
-try:
-    subprocess.run(
-        ["docker", "info"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=True,
-    )
-    DOCKER_AVAILABLE = True
-except (subprocess.CalledProcessError, FileNotFoundError):
-    pass
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.usefixtures("docker_available"),
+]
 
 
 def _free_port() -> int:
@@ -46,8 +39,6 @@ async def _wait_nats_ready(url: str, timeout: int = 30):
 
 @pytest.fixture(scope="module")
 def nats_url_and_name():
-    if not DOCKER_AVAILABLE:
-        pytest.skip("Docker not available")
     port = _free_port()
     name = f"pillywiggins-test-nats-{uuid.uuid4().hex[:8]}"
     # Note: we intentionally omit --rm so that docker start works for the

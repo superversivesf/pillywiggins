@@ -32,11 +32,14 @@ from pillywiggins.onboard import (
     _host_url,
 )
 
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.usefixtures("docker_available"),
+]
 
 # ---------------------------------------------------------------------------
 # Helpers: load_yaml / save_yaml / read_text / write_text
 # ---------------------------------------------------------------------------
-
 
 class TestLoadYaml:
     def test_load_valid_yaml(self, tmp_path):

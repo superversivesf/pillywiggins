@@ -5,6 +5,11 @@ import pytest
 
 from pillywiggins.memory.private import PrivateMemory
 
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.usefixtures("docker_available"),
+]
+
 
 @pytest.fixture
 def puck_memory():

@@ -9,17 +9,10 @@ import uuid
 
 import pytest
 
-DOCKER_AVAILABLE = False
-try:
-    subprocess.run(
-        ["docker", "info"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=True,
-    )
-    DOCKER_AVAILABLE = True
-except (subprocess.CalledProcessError, FileNotFoundError):
-    pass
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.usefixtures("docker_available"),
+]
 
 SCHEMA_PATH = os.path.join(os.path.dirname(__file__), "..", "scripts", "init-db.sql")
 
@@ -78,8 +71,6 @@ async def _init_schema(admin_dsn: str):
 
 @pytest.fixture(scope="module")
 def postgres_dsn():
-    if not DOCKER_AVAILABLE:
-        pytest.skip("Docker not available")
     port = _free_port()
     name = f"pillywiggins-test-pg-{uuid.uuid4().hex[:8]}"
     subprocess.run(
