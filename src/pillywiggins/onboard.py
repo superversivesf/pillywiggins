@@ -92,6 +92,50 @@ def write_text(path: Path, content: str) -> None:
         f.write(content)
 
 
+def _read_env_dict(path: Path) -> dict[str, str]:
+    """Read a .env file into a key-value dict (preserving comments)."""
+    result: dict[str, str] = {}
+    if not path.exists():
+        return result
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if "=" in stripped:
+            key, _, val = stripped.partition("=")
+            result[key.strip()] = val.strip()
+    return result
+
+
+def _write_env_dict(path: Path, data: dict[str, str]) -> None:
+    """Write a key-value dict back to a .env file, preserving comments."""
+    if not path.exists():
+        path.write_text("")
+    lines = path.read_text().splitlines()
+    out_lines: list[str] = []
+    written_keys: set[str] = set()
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            out_lines.append(line)
+            continue
+        if "=" in stripped:
+            key, _, _ = stripped.partition("=")
+            key = key.strip()
+            if key in data:
+                out_lines.append(f"{key}={data[key]}")
+                written_keys.add(key)
+            else:
+                out_lines.append(line)
+        else:
+            out_lines.append(line)
+    # Append any new keys at the end
+    for key, val in data.items():
+        if key not in written_keys:
+            out_lines.append(f"{key}={val}")
+    path.write_text("\n".join(out_lines) + "\n")
+
+
 def discover_personalities() -> list[dict]:
     results = []
     if not PERSONALITIES_DIR.exists():
@@ -188,8 +232,9 @@ def get_first_agent_llm_config() -> dict | None:
     return result if result else None
 
 
-def _token_env_for_agent(agent_id: str) -> str:
-    return f"{agent_id.upper()}_TELEGRAM_TOKEN"
+def _token_env_for_agent(agent_id: str, channel: str = "telegram") -> str:
+    suffix = channel.upper()
+    return f"{agent_id.upper()}_{suffix}_TOKEN"
 
 
 def _personality_path_for(personality_filename: str) -> str:
@@ -334,7 +379,7 @@ def add_token_to_env(agent_id: str, token_value: str, env_path: Path = ENV_FILE)
         lines = [
             "# Pillywiggins Environment Configuration",
             "",
-            "# --- Telegram Bot Tokens ---",
+            "# --- Agent Credentials ---",
             token_line,
         ]
         write_text(env_path, "\n".join(lines) + "\n")
@@ -362,7 +407,7 @@ def add_token_to_env(agent_id: str, token_value: str, env_path: Path = ENV_FILE)
 
     for line in lines:
         new_lines.append(line)
-        if not inserted and "Telegram Bot Token" in line:
+        if not inserted and "Agent Credentials" in line:
             new_lines.append(token_line)
             inserted = True
 
@@ -371,13 +416,13 @@ def add_token_to_env(agent_id: str, token_value: str, env_path: Path = ENV_FILE)
         inserted = False
         for line in lines:
             new_lines.append(line)
-            if not inserted and re.match(r"^[A-Z_]+_TELEGRAM_TOKEN=", line):
+            if not inserted and re.match(r"^[A-Z_]+_(TOKEN|SECRET|PASSWORD)=", line):
                 new_lines.append(token_line)
                 inserted = True
 
     if not inserted:
         new_lines.append("")
-        new_lines.append("# --- Telegram Bot Tokens ---")
+        new_lines.append("# --- Agent Credentials ---")
         new_lines.append(token_line)
 
     write_text(env_path, "\n".join(new_lines))
@@ -531,8 +576,10 @@ async def _add_agent_flow() -> None:
         "Select channel:",
         choices=[
             questionary.Choice(title="Telegram", value="telegram"),
-            questionary.Choice(title="Discord (not yet available)", value="discord", disabled=True),
-            questionary.Choice(title="Slack (not yet available)", value="slack", disabled=True),
+            questionary.Choice(title="Discord", value="discord"),
+            questionary.Choice(title="Slack", value="slack"),
+            questionary.Choice(title="Matrix", value="matrix"),
+            questionary.Choice(title="Email", value="email"),
         ],
     ).ask_async()
     if channel is None:
@@ -562,26 +609,97 @@ async def _add_agent_flow() -> None:
             return
         remove_agent_from_configs(agent_id)
 
-    # 4. Token setup
-    token = await questionary.text(
-        "Enter Telegram bot token (from @BotFather):",
-        validate=lambda t: (
-            True if t and len(t) > 10 else "Token too short, enter a valid bot token"
-        ),
-    ).ask_async()
-    if token is None:
-        return
-
-    valid, info = await validate_telegram_token(token)
-    if not valid:
-        print(f"Token validation failed: {info}")
-        confirm = await questionary.confirm("Continue anyway?", default=False).ask_async()
-        if not confirm:
+    # 4. Token / credential setup (channel-specific)
+    if channel == "telegram":
+        token = await questionary.text(
+            "Enter Telegram bot token (from @BotFather):",
+            validate=lambda t: (
+                True if t and len(t) > 10 else "Token too short, enter a valid bot token"
+            ),
+        ).ask_async()
+        if token is None:
             return
-        bot_info = "(validation failed)"
+        valid, info = await validate_telegram_token(token)
+        if not valid:
+            print(f"Token validation failed: {info}")
+            confirm = await questionary.confirm("Continue anyway?", default=False).ask_async()
+            if not confirm:
+                return
+            bot_info = "(validation failed)"
+        else:
+            print(f"Token valid! Bot: @{info}")
+            bot_info = f"@{info}"
+    elif channel == "discord":
+        token = await questionary.text(
+            "Enter Discord bot token:",
+            validate=lambda t: True if t and len(t) > 20 else "Token too short",
+        ).ask_async()
+        if token is None:
+            return
+        bot_info = "(Discord)"
+    elif channel == "slack":
+        token = await questionary.text(
+            "Enter Slack bot token (xoxb-...):",
+            validate=lambda t: True if t and t.startswith("xoxb") else "Must start with xoxb-",
+        ).ask_async()
+        if token is None:
+            return
+        bot_info = "(Slack)"
+    elif channel == "matrix":
+        homeserver = await questionary.text(
+            "Matrix homeserver URL (e.g. https://matrix.example.com):",
+            default="https://matrix.example.com",
+        ).ask_async()
+        if homeserver is None:
+            return
+        access_token = await questionary.text(
+            "Matrix access token:",
+            validate=lambda t: True if t and len(t) > 10 else "Token too short",
+        ).ask_async()
+        if access_token is None:
+            return
+        token = f"{homeserver}\n{access_token}"
+        bot_info = "(Matrix)"
+    elif channel == "email":
+        smtp_host = await questionary.text(
+            "SMTP host:",
+            default="smtp.gmail.com",
+        ).ask_async()
+        if smtp_host is None:
+            return
+        smtp_port = await questionary.text(
+            "SMTP port:",
+            default="587",
+        ).ask_async()
+        if smtp_port is None:
+            return
+        smtp_user = await questionary.text(
+            "SMTP user (email address):",
+        ).ask_async()
+        if smtp_user is None:
+            return
+        smtp_password = await questionary.password(
+            "SMTP password:",
+        ).ask_async()
+        if smtp_password is None:
+            return
+        imap_host = await questionary.text(
+            "IMAP host:",
+            default="imap.gmail.com",
+        ).ask_async()
+        if imap_host is None:
+            return
+        imap_port = await questionary.text(
+            "IMAP port:",
+            default="993",
+        ).ask_async()
+        if imap_port is None:
+            return
+        token = f"{smtp_host}\n{smtp_port}\n{smtp_user}\n{smtp_password}\n{imap_host}\n{imap_port}"
+        bot_info = "(Email)"
     else:
-        print(f"Token valid! Bot: @{info}")
-        bot_info = f"@{info}"
+        token = ""
+        bot_info = "(unknown channel)"
 
     # 5. LLM provider + model — default to first agent's config if available
     existing_llm = get_first_agent_llm_config()
@@ -994,6 +1112,69 @@ async def _start_restart_flow() -> None:
             print("docker compose not found. Run manually: docker compose up -d --build")
 
 
+async def _configure_search_flow() -> None:
+    """Configure web search provider: Brave API or SearXNG."""
+    ensure_config_files()
+
+    env = _read_env_dict(ENV_FILE)
+    current_provider = env.get("SEARCH_PROVIDER", "searxng")
+
+    print(f"\n{B}{CYAN}🔍 Search Configuration{RESET}")
+    print(f"{DIM}Current provider: {current_provider}{RESET}\n")
+
+    provider = await questionary.select(
+        "Select web search provider:",
+        choices=[
+            questionary.Choice(
+                title="SearXNG (self-hosted, free, requires Docker)",
+                value="searxng",
+            ),
+            questionary.Choice(
+                title="Brave Search API (hosted, free tier ~1,000/mo)",
+                value="brave",
+            ),
+            questionary.Choice(
+                title="None (disable web search)",
+                value="none",
+            ),
+        ],
+        default=current_provider,
+    ).ask_async()
+    if provider is None:
+        return
+
+    env["SEARCH_PROVIDER"] = provider
+
+    if provider == "brave":
+        api_key = env.get("BRAVE_API_KEY", "")
+        new_key = await questionary.text(
+            "Brave Search API key (get free at https://brave.com/search/api/):",
+            default=api_key,
+        ).ask_async()
+        if new_key is not None:
+            env["BRAVE_API_KEY"] = new_key
+
+    elif provider == "searxng":
+        current_url = env.get("SEARXNG_URL", "http://searxng:8080")
+        new_url = await questionary.text(
+            "SearXNG URL:",
+            default=current_url,
+        ).ask_async()
+        if new_url is not None:
+            env["SEARXNG_URL"] = new_url
+        current_secret = env.get("SEARXNG_SECRET", "")
+        new_secret = await questionary.text(
+            "SearXNG secret key (optional):",
+            default=current_secret,
+        ).ask_async()
+        if new_secret is not None:
+            env["SEARXNG_SECRET"] = new_secret
+
+    _write_env_dict(ENV_FILE, env)
+    print(f"\n✅ Search provider set to: {provider}")
+    print(f"Values saved to {ENV_FILE}")
+
+
 async def onboard() -> None:
     ensure_config_files()
 
@@ -1006,6 +1187,7 @@ async def onboard() -> None:
             choices=[
                 "✨ Add agent",
                 "🔧 Reconfigure agent",
+                "🔍 Configure search (Brave/SearXNG)",
                 "🗑️  Remove agent",
                 "🚀 Start/restart agents",
                 "👋 Exit",
@@ -1020,6 +1202,8 @@ async def onboard() -> None:
             await _add_agent_flow()
         elif action == "🔧 Reconfigure agent":
             await _reconfigure_agent_flow()
+        elif action == "🔍 Configure search (Brave/SearXNG)":
+            await _configure_search_flow()
         elif action == "🗑️  Remove agent":
             await _remove_agent_flow()
         elif action == "🚀 Start/restart agents":
