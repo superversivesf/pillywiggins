@@ -622,11 +622,11 @@ def test_cosine_similarity_zero_vector():
     assert sim == 0.0
 
 
-def test_cosine_similarity_string_embedding():
+def test_cosine_similarity_rejects_string_embedding():
     a = [1.0, 0.0, 0.0]
     b_str = "[1.0, 0.0, 0.0]"
-    sim = CouncilMemory._cosine_similarity(a, b_str)
-    assert abs(sim - 1.0) < 1e-9
+    with pytest.raises(TypeError, match="Expected list or tuple"):
+        CouncilMemory._cosine_similarity(a, b_str)
 
 
 def test_cosine_similarity_opposite_vectors():

@@ -551,7 +551,7 @@ async def test_embed_no_dimension_check_when_not_provided():
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
-        result = await embed("hello", "http://localhost:11434", "", "ollama")
+        result = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
 
     # No expected_dimension provided, so short vector passes through
     assert result == vec3
