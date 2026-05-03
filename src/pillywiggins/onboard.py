@@ -500,7 +500,7 @@ def add_agent_to_configs(
         agent_id, personality_filename, token_env, llm_config=llm_config, timezone=timezone
     )
     if token_value:
-        add_token_to_env(agent_id, token_value)
+        add_token_to_env(agent_id, token_value, channel=channel)
     if llm_config and llm_config.get("LLM_API_KEY"):
         add_llm_api_key_to_env(agent_id, llm_config["LLM_API_KEY"])
 
@@ -806,7 +806,7 @@ async def _add_agent_flow() -> None:
         tz = tz_choice
 
     # 9. Review
-    token_env = _token_env_for_agent(agent_id)
+    token_env = _token_env_for_agent(agent_id, channel)
 
     llm_config = {
         "LLM_PROVIDER": llm_provider,
@@ -1009,13 +1009,13 @@ async def _reconfigure_agent_flow() -> None:
     print(f"Updated '{agent_id}' in agents.yaml")
 
     if new_token:
-        add_token_to_env(agent_id, new_token)
+        add_token_to_env(agent_id, new_token, channel=channel)
 
     if llm_api_key:
         add_llm_api_key_to_env(agent_id, llm_api_key)
 
     # Update docker-compose.yaml with LLM vars too
-    token_env = _token_env_for_agent(agent_id)
+    token_env = _token_env_for_agent(agent_id, channel)
     compose = load_yaml(DOCKER_COMPOSE)
     if "services" in compose and agent_id in compose["services"]:
         svc_env = compose["services"][agent_id].setdefault("environment", {})
