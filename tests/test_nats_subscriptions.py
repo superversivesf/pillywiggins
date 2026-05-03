@@ -15,11 +15,13 @@ def nats_mocks(personality):
     with (
         patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()),
         patch("pillywiggins.agents.base.NatsBus") as mock_nats_cls,
+        patch("pillywiggins.agents.base.AgentScheduler") as mock_sched_cls,
     ):
         mock_bus = AsyncMock()
         mock_bus.subscribe_broadcast = AsyncMock(side_effect=capture_handler)
         mock_bus.subscribe_direct = AsyncMock(side_effect=capture_handler)
         mock_nats_cls.return_value = mock_bus
+        mock_sched_cls.return_value = AsyncMock()
         agent = PillywigginAgent(
             agent_id="puck",
             personality=personality,
