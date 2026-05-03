@@ -60,7 +60,7 @@ async def test_embed_texts_ollama_empty_embeddings_returns_none():
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
-        result = await embed_texts(["hello"], "http://localhost:11434", "", "ollama")
+        result = await embed_texts(["hello"], "http://localhost:11434", "", "ollama", model="nomic-embed-text")
 
     assert result is None
 
@@ -92,7 +92,7 @@ async def test_embed_retries_on_5xx_then_succeeds():
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         start = time.monotonic()
-        result = await embed("hello", "http://localhost:11434", "", "ollama")
+        result = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
         elapsed = time.monotonic() - start
 
     assert result == [0.1, 0.2, 0.3]
@@ -117,7 +117,7 @@ async def test_embed_retries_on_network_exception_then_succeeds():
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
-        result = await embed("hello", "http://localhost:11434", "", "ollama")
+        result = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
 
     assert result == [0.1, 0.2, 0.3]
     assert mock_session.post.call_count == 2
@@ -138,7 +138,7 @@ async def test_embed_retries_exhaustion_returns_none():
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
-        result = await embed("hello", "http://localhost:11434", "", "ollama")
+        result = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
 
     assert result is None
     assert mock_session.post.call_count == 3  # _MAX_RETRIES attempts total
@@ -159,7 +159,7 @@ async def test_embed_no_retry_on_4xx():
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
-        result = await embed("hello", "http://localhost:11434", "", "ollama")
+        result = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
 
     assert result is None
     assert mock_session.post.call_count == 1
@@ -185,8 +185,8 @@ async def test_embed_caches_result():
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
-        result1 = await embed("hello", "http://localhost:11434", "", "ollama")
-        result2 = await embed("hello", "http://localhost:11434", "", "ollama")
+        result1 = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
+        result2 = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
 
     assert result1 == [0.1, 0.2, 0.3]
     assert result2 == [0.1, 0.2, 0.3]
@@ -220,7 +220,7 @@ async def test_embed_cache_key_includes_model_and_provider():
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         r1 = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
         r2 = await embed("hello", "http://localhost:11434", "", "ollama", model="all-minilm")
-        r3 = await embed("hello", "http://other", "", "openai")
+        r3 = await embed("hello", "http://other", "", "openai", model="nomic-embed-text")
 
     assert r1 is not None
     assert r2 is not None
@@ -247,9 +247,9 @@ async def test_embed_cache_ttl_expires(monkeypatch):
     monkeypatch.setattr("pillywiggins.memory.embeddings._CACHE_TTL_SECONDS", 0.05)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
-        result1 = await embed("hello", "http://localhost:11434", "", "ollama")
+        result1 = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
         await asyncio.sleep(0.1)  # wait for TTL
-        result2 = await embed("hello", "http://localhost:11434", "", "ollama")
+        result2 = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
 
     assert result1 == [0.1, 0.2, 0.3]
     assert result2 == [0.1, 0.2, 0.3]
@@ -273,8 +273,8 @@ async def test_embed_cache_can_be_disabled():
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
-        result1 = await embed("hello", "http://localhost:11434", "", "ollama")
-        result2 = await embed("hello", "http://localhost:11434", "", "ollama", use_cache=False)
+        result1 = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
+        result2 = await embed("hello", "http://localhost:11434", "", "ollama", use_cache=False, model="nomic-embed-text")
 
     assert result1 == [0.1, 0.2, 0.3]
     assert result2 == [0.1, 0.2, 0.3]
@@ -301,8 +301,8 @@ async def test_embed_texts_caches_result():
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
-        result1 = await embed_texts(["hello", "world"], "http://localhost:11434", "", "ollama")
-        result2 = await embed_texts(["hello", "world"], "http://localhost:11434", "", "ollama")
+        result1 = await embed_texts(["hello", "world"], "http://localhost:11434", "", "ollama", model="nomic-embed-text")
+        result2 = await embed_texts(["hello", "world"], "http://localhost:11434", "", "ollama", model="nomic-embed-text")
 
     assert result1 == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
     assert result2 == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
@@ -335,7 +335,7 @@ async def test_embed_texts_retries_on_5xx_then_succeeds():
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
-        result = await embed_texts(["hello", "world"], "http://localhost:11434", "", "ollama")
+        result = await embed_texts(["hello", "world"], "http://localhost:11434", "", "ollama", model="nomic-embed-text")
 
     assert result == [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
     assert mock_session.post.call_count == 2
@@ -355,7 +355,7 @@ async def test_embed_openai_no_api_key_no_auth():
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
-        result = await embed("hello", "https://api.example.com/v1", "", "openai")
+        result = await embed("hello", "https://api.example.com/v1", "", "openai", model="nomic-embed-text")
 
     assert result == [0.1, 0.2, 0.3]
     call_kwargs = mock_session.post.call_args
@@ -380,7 +380,7 @@ async def test_embed_ollama_no_api_key_no_auth():
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
-        result = await embed("hello", "http://localhost:11434", "", "ollama")
+        result = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
 
     assert result == [0.1, 0.2, 0.3]
     call_kwargs = mock_session.post.call_args
@@ -425,7 +425,7 @@ async def test_embed_ollama_url_strips_v1():
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
-        result = await embed("hello", "http://host.docker.internal:11434/v1", "", "ollama")
+        result = await embed("hello", "http://host.docker.internal:11434/v1", "", "ollama", model="nomic-embed-text")
 
     assert result is not None
     # Verify the URL was normalized: /v1 removed before /api/embed appended
@@ -450,7 +450,7 @@ async def test_embed_openai_url_preserves_v1():
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
-        result = await embed("hello", "https://api.openai.com/v1", "", "openai")
+        result = await embed("hello", "https://api.openai.com/v1", "", "openai", model="nomic-embed-text")
 
     assert result is not None
     call_args = mock_session.post.call_args
@@ -479,7 +479,7 @@ async def test_embed_dimension_match_passes():
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
-        result = await embed("hello", "http://localhost:11434", "", "ollama", expected_dimension=768)
+        result = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text", expected_dimension=768)
 
     assert result is not None
     assert len(result) == 768
@@ -503,7 +503,7 @@ async def test_embed_dimension_mismatch_returns_none():
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
-        result = await embed("hello", "http://localhost:11434", "", "ollama", expected_dimension=768)
+        result = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text", expected_dimension=768)
 
     assert result is None
 

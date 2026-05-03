@@ -111,3 +111,4 @@ volumes:
   pgdata: null
   redisdata: null
   searxng_data: null
+  skills: null
