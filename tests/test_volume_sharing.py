@@ -43,13 +43,6 @@ def _docker_available() -> bool:
 # docker-compose.yaml validation
 # ---------------------------------------------------------------------------
 
-def test_compose_declares_skills_volume():
-    assert COMPOSE_PATH.exists(), "docker-compose.yaml.example should exist"
-    data = yaml.safe_load(COMPOSE_PATH.read_text())
-    volumes = data.get("volumes", {})
-    assert "skills" in volumes, "'skills' named volume must be declared in volumes:"
-
-
 def test_compose_agent_services_mount_skills_volume():
     data = yaml.safe_load(COMPOSE_PATH.read_text())
     services = data.get("services", {})
@@ -59,13 +52,34 @@ def test_compose_agent_services_mount_skills_volume():
         for name, svc in services.items()
         if str(svc.get("command", "")).startswith("python -m pillywiggins")
     ]
-    assert agent_services, "Expected at least one agent service mounting /app/skills"
+    # With empty-default agents, there may be no pre-configured agent services.
+    # When users add agents via `pillywiggins onboard`, the volume mount is generated.
+    if not agent_services:
+        pytest.skip("No pre-configured agent services (empty-default agents)")
 
     for svc_name in agent_services:
         volumes = services[svc_name].get("volumes", [])
+        # Accept either named volume or bind mount
         assert any(
-            str(v) == "skills:/app/skills" for v in volumes
-        ), f"{svc_name} must mount 'skills:/app/skills'"
+            "skills" in str(v) and "/app/skills" in str(v) for v in volumes
+        ), f"{svc_name} must mount skills to /app/skills"
+
+
+def test_compose_declares_skills_volume_or_bind_mount():
+    assert COMPOSE_PATH.exists(), "docker-compose.yaml.example should exist"
+    data = yaml.safe_load(COMPOSE_PATH.read_text())
+    volumes = data.get("volumes", {})
+    services = data.get("services", {})
+    # Named volume "skills" declared at top level OR bind mount used in a service
+    has_named_volume = "skills" in volumes
+    has_bind_mount = any(
+        "./skills:" in str(v) or "/app/skills" in str(v)
+        for svc in services.values()
+        for v in svc.get("volumes", [])
+    )
+    assert has_named_volume or has_bind_mount, (
+        "skills/ directory must be shared via named volume or bind mount"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -88,7 +88,7 @@ class TestRestrictedEnv:
 
 class TestRunSandboxed:
     async def test_successful_execution(self):
-        code = "def run(**kwargs):\n    return {'message': 'hello'}"
+        code = "async def run(**kwargs):\n    return {'message': 'hello'}"
         result = await run_sandboxed(code, {}, {})
         assert result.success is True
         assert result.result == {"message": "hello"}
@@ -97,14 +97,14 @@ class TestRunSandboxed:
         assert result.execution_time_ms > 0
 
     async def test_timeout(self):
-        code = "import time\ndef run(**kwargs):\n    time.sleep(60)\n    return {'done': True}"
+        code = "import time\nasync def run(**kwargs):\n    time.sleep(60)\n    return {'done': True}"
         result = await run_sandboxed(code, {}, {}, timeout=2)
         assert result.success is False
         assert result.timed_out is True
         assert "timed out" in result.error.lower()
 
     async def test_error_handling(self):
-        code = "def run(**kwargs):\n    raise ValueError('boom')"
+        code = "async def run(**kwargs):\n    raise ValueError('boom')"
         result = await run_sandboxed(code, {}, {})
         assert result.success is False
         assert result.error is not None
@@ -112,26 +112,26 @@ class TestRunSandboxed:
         assert result.timed_out is False
 
     async def test_nonzero_exit_code(self):
-        code = "import sys\ndef run(**kwargs):\n    sys.exit(1)"
+        code = "import sys\nasync def run(**kwargs):\n    sys.exit(1)"
         result = await run_sandboxed(code, {}, {})
         assert result.success is False
         assert result.error is not None
         assert "exited with code 1" in result.error
 
     async def test_invalid_json_stdout(self):
-        code = "def run(**kwargs):\n    print('not json at all')\n    return None"
+        code = "async def run(**kwargs):\n    print('not json at all')\n    return None"
         result = await run_sandboxed(code, {}, {})
         assert result.success is False
         assert "Invalid JSON" in result.error
 
     async def test_empty_stdout(self):
-        code = "import os\ndef run(**kwargs):\n    os._exit(0)"
+        code = "import os\nasync def run(**kwargs):\n    os._exit(0)"
         result = await run_sandboxed(code, {}, {})
         assert result.success is False
         assert "No output" in result.error
 
     async def test_tmp_workdir(self):
-        code = "import os\ndef run(**kwargs):\n    return {'cwd': os.getcwd()}"
+        code = "import os\nasync def run(**kwargs):\n    return {'cwd': os.getcwd()}"
         result = await run_sandboxed(code, {}, {})
         assert result.success is True
         assert os.path.realpath(result.result["cwd"]) == os.path.realpath("/tmp")
@@ -139,38 +139,38 @@ class TestRunSandboxed:
     async def test_env_isolation(self, monkeypatch):
         monkeypatch.setenv("DATABASE_URL", "postgresql://secret@db:5432/mydb")
         monkeypatch.setenv("SECRET_TOKEN", "super-secret")
-        code = "import os\ndef run(**kwargs):\n    return {'has_db': 'DATABASE_URL' in os.environ, 'has_secret': 'SECRET_TOKEN' in os.environ}"
+        code = "import os\nasync def run(**kwargs):\n    return {'has_db': 'DATABASE_URL' in os.environ, 'has_secret': 'SECRET_TOKEN' in os.environ}"
         result = await run_sandboxed(code, {}, {})
         assert result.success is True
         assert result.result["has_db"] is False
         assert result.result["has_secret"] is False
 
     async def test_permission_flags_network(self):
-        code = "import os\ndef run(**kwargs):\n    return {'network': os.environ.get('SKILL_NETWORK', '0')}"
+        code = "import os\nasync def run(**kwargs):\n    return {'network': os.environ.get('SKILL_NETWORK', '0')}"
         result = await run_sandboxed(code, {}, {"network": True})
         assert result.success is True
         assert result.result["network"] == "1"
 
     async def test_permission_flags_no_network(self):
-        code = "import os\ndef run(**kwargs):\n    return {'network': os.environ.get('SKILL_NETWORK', '0')}"
+        code = "import os\nasync def run(**kwargs):\n    return {'network': os.environ.get('SKILL_NETWORK', '0')}"
         result = await run_sandboxed(code, {}, {"network": False})
         assert result.success is True
         assert result.result["network"] == "0"
 
     async def test_with_arguments(self):
-        code = "def run(**kwargs):\n    return kwargs"
+        code = "async def run(**kwargs):\n    return kwargs"
         args = {"name": "puck", "value": 42, "items": [1, 2, 3]}
         result = await run_sandboxed(code, args, {})
         assert result.success is True
         assert result.result == args
 
     async def test_execution_time_recorded(self):
-        code = "def run(**kwargs):\n    return {'ok': True}"
+        code = "async def run(**kwargs):\n    return {'ok': True}"
         result = await run_sandboxed(code, {}, {})
         assert result.execution_time_ms > 0
 
     async def test_safe_env_vars_available(self):
-        code = "import os\ndef run(**kwargs):\n    return {'has_path': 'PATH' in os.environ, 'has_home': 'HOME' in os.environ}"
+        code = "import os\nasync def run(**kwargs):\n    return {'has_path': 'PATH' in os.environ, 'has_home': 'HOME' in os.environ}"
         result = await run_sandboxed(code, {}, {})
         assert result.success is True
         assert result.result["has_path"] is True
