@@ -29,6 +29,82 @@ class Skill:
     async def execute(self, **kwargs) -> Any:
         return await self.run_func(**kwargs)
 
+    def as_tool(self) -> "Tool":
+        """Return a PydanticAI Tool wrapping this skill.
+
+        Introspects SKILL_META parameters to build an explicit function
+        signature so PydanticAI can generate the correct JSON schema for
+        the LLM.  The tool calls the skill's :meth:`run` function via
+        :meth:`execute` and serialises the result to a string (or JSON
+        when the raw result is not a string).
+        """
+        from pydantic_ai.tools import Tool
+        import inspect
+
+        params = self.meta.get("parameters", {})
+
+        # Build explicit signature from SKILL_META so PydanticAI knows the
+        # expected arguments and their types.
+        sig_params: list[inspect.Parameter] = []
+        for pname, pdef in params.items():
+            ptype = pdef.get("type", "string")
+            if ptype == "integer":
+                annotation = int
+            elif ptype == "boolean":
+                annotation = bool
+            elif ptype in ("number", "float"):
+                annotation = float
+            else:
+                annotation = str
+
+            default = pdef.get("default", inspect.Parameter.empty)
+            sig_params.append(
+                inspect.Parameter(
+                    pname,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    default=default,
+                    annotation=annotation,
+                )
+            )
+
+        async def _skill_wrapper(**kwargs) -> str:
+            result = await self.execute(**kwargs)
+            if isinstance(result, str):
+                return result
+            return json.dumps(result)
+
+        # Attach explicit signature and annotations so PydanticAI generates
+        # the JSON schema from SKILL_META rather than bare **kwargs.
+        _skill_wrapper.__signature__ = inspect.Signature(
+            sig_params, return_annotation=str
+        )
+        _skill_wrapper.__annotations__ = {
+            p.name: p.annotation for p in sig_params
+        }
+        _skill_wrapper.__annotations__["return"] = str
+        _skill_wrapper.__name__ = self.name
+
+        # Build Google-style docstring for parameter descriptions.
+        doc_lines = [self.description, ""]
+        if params:
+            doc_lines.append("Args:")
+            for pname, pdef in params.items():
+                pdesc = pdef.get("description", "")
+                line = f"    {pname}"
+                if pdesc:
+                    line += f": {pdesc}"
+                pdefault = pdef.get("default")
+                if pdefault is not None:
+                    line += f" (default: {pdefault})"
+                doc_lines.append(line)
+        _skill_wrapper.__doc__ = "\n".join(doc_lines)
+
+        return Tool(
+            _skill_wrapper,
+            name=self.name,
+            description=self.description,
+        )
+
 
 class SkillRegistry:
     def __init__(

@@ -33,15 +33,15 @@ class TestPrivateMemorySchema:
     def test_has_memory_type(self, table_section):
         assert "memory_type" in table_section, "Missing memory_type column"
 
-    def test_memory_type_defaults_to_null(self, table_section):
-        assert "DEFAULT NULL" in table_section, "memory_type should default to NULL (reserved for future use)"
+    def test_memory_type_defaults_to_episodic(self, table_section):
+        assert "DEFAULT 'episodic'" in table_section, "memory_type should default to 'episodic'"
 
     def test_has_importance(self, table_section):
         assert "importance" in table_section, "Missing importance column"
 
-    def test_importance_defaults_to_null(self, table_section):
-        assert "importance" in table_section and "DEFAULT NULL" in table_section, (
-            "importance should default to NULL (reserved for future use)"
+    def test_importance_defaults_to_point_five(self, table_section):
+        assert "importance" in table_section and "DEFAULT 0.5" in table_section, (
+            "importance should default to 0.5"
         )
 
     def test_has_access_count(self, table_section):

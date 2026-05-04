@@ -719,3 +719,151 @@ def test_load_all_skips_non_coroutine_run(tmp_path, caplog):
 
     assert skills == []
     assert any("not a coroutine function" in rec.message for rec in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Skill.as_tool() tests
+# ---------------------------------------------------------------------------
+
+
+def test_skill_as_tool_returns_pydantic_tool(tmp_path):
+    """Skill.as_tool() should return a pydantic_ai.tools.Tool instance."""
+    from pydantic_ai.tools import Tool
+
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    skill_code = '''
+SKILL_META = {
+    "name": "adder",
+    "description": "Add two numbers",
+    "parameters": {
+        "a": {"type": "integer", "description": "First number"},
+        "b": {"type": "integer", "description": "Second number"},
+    },
+}
+
+async def run(a: int, b: int) -> dict:
+    return {"result": a + b}
+'''
+    (skills_dir / "adder.py").write_text(skill_code)
+    reg = SkillRegistry(skills_dir=skills_dir)
+    reg.load_all()
+    skill = reg.get_skill("adder")
+    tool = skill.as_tool()
+    assert isinstance(tool, Tool)
+    assert tool.name == "adder"
+
+
+def test_skill_as_tool_schema_from_meta(tmp_path):
+    """The generated tool should expose parameters derived from SKILL_META, not just **kwargs."""
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    skill_code = '''
+SKILL_META = {
+    "name": "greeter",
+    "description": "Greet someone",
+    "parameters": {
+        "name": {"type": "string", "description": "Who to greet", "default": "world"},
+        "times": {"type": "integer", "description": "How many times", "default": 1},
+    },
+}
+
+async def run(name: str = "world", times: int = 1):
+    return "Hello, " + name + "!" * times
+'''
+    (skills_dir / "greeter.py").write_text(skill_code)
+    reg = SkillRegistry(skills_dir=skills_dir)
+    reg.load_all()
+    skill = reg.get_skill("greeter")
+    tool = skill.as_tool()
+    assert tool.name == "greeter"
+
+    schema = tool.function_schema
+    assert schema is not None
+    props = schema.json_schema.get("properties", {})
+    assert "name" in props
+    assert "times" in props
+    assert props["name"].get("type") == "string"
+    assert props["times"].get("type") == "integer"
+
+
+@pytest.mark.asyncio
+async def test_skill_as_tool_execution(tmp_path):
+    """Calling the wrapped tool should route through skill.execute()."""
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    skill_code = '''
+SKILL_META = {
+    "name": "multiplier",
+    "description": "Multiply numbers",
+    "parameters": {
+        "x": {"type": "integer", "description": "First factor"},
+        "y": {"type": "integer", "description": "Second factor"},
+    },
+}
+
+async def run(x: int, y: int) -> dict:
+    return {"product": x * y}
+'''
+    (skills_dir / "multiplier.py").write_text(skill_code)
+    reg = SkillRegistry(skills_dir=skills_dir)
+    reg.load_all()
+    skill = reg.get_skill("multiplier")
+    tool = skill.as_tool()
+
+    result = await tool.function(x=3, y=4)
+    assert result == '{"product": 12}'
+
+
+@pytest.mark.asyncio
+async def test_skill_as_tool_with_string_description_and_default(tmp_path):
+    """A skill whose run() returns a plain string should return the string unchanged."""
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    skill_code = '''
+SKILL_META = {
+    "name": "echo",
+    "description": "Echo a message",
+    "parameters": {
+        "msg": {"type": "string", "description": "Message to echo"},
+    },
+}
+
+async def run(msg: str) -> str:
+    return msg
+'''
+    (skills_dir / "echo.py").write_text(skill_code)
+    reg = SkillRegistry(skills_dir=skills_dir)
+    reg.load_all()
+    skill = reg.get_skill("echo")
+    tool = skill.as_tool()
+
+    result = await tool.function(msg="hi there")
+    assert result == "hi there"
+
+
+def test_skill_as_tool_docstring_includes_params(tmp_path):
+    """The generated docstring should carry parameter descriptions from SKILL_META."""
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    skill_code = '''
+SKILL_META = {
+    "name": "param_doc",
+    "description": "Demonstrate doc",
+    "parameters": {
+        "alpha": {"type": "string", "description": "Alpha param"},
+        "beta": {"type": "integer", "description": "Beta param"},
+    },
+}
+
+async def run(alpha, beta):
+    return {"alpha": alpha, "beta": beta}
+'''
+    (skills_dir / "param_doc.py").write_text(skill_code)
+    reg = SkillRegistry(skills_dir=skills_dir)
+    reg.load_all()
+    skill = reg.get_skill("param_doc")
+    tool = skill.as_tool()
+
+    assert "Alpha param" in tool.function_schema.json_schema["properties"]["alpha"].get("description", "")
+    assert "Beta param" in tool.function_schema.json_schema["properties"]["beta"].get("description", "")
