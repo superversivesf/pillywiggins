@@ -1,8 +1,56 @@
+import os
 from pathlib import Path
 
 import pytest
 
 from pillywiggins.config import Settings
+
+
+@pytest.fixture(autouse=True)
+def _clear_embedding_env(monkeypatch):
+    """Remove EMBEDDING_* env vars before each test to avoid cross-test pollution."""
+    monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
+    monkeypatch.delenv("EMBEDDING_DIMENSION", raising=False)
+
+
+def test_settings_with_explicit_unknown_embedding_model_logs_warning(caplog):
+    """An explicit embedding_model not in KNOWN_EMBEDDING_DIMENSIONS shouldn't crash."""
+    s = Settings(embedding_model="totally-unknown-model-v1")
+    with caplog.at_level("INFO", logger="pillywiggins.config"):
+        s.resolve_embedding_config()
+    assert "has unknown dimension; using default" in caplog.text
+    assert s.embedding_dimension == 768  # the default stays intact
+
+
+def test_settings_resolve_embedding_fallback_no_env_poisoning(monkeypatch, caplog):
+    """When falling back to HF, os.environ must NOT gain EMBEDDING_MODEL=''."""
+    from unittest.mock import AsyncMock
+
+    # Patch the resolver so that Ollama discovery returns nothing (fallback)
+    monkeypatch.setattr(
+        "pillywiggins.embeddings.resolver.discover_ollama_embedding_model",
+        AsyncMock(return_value=None),
+    )
+
+    # Ensure env vars are cleared before test
+    monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
+    monkeypatch.delenv("EMBEDDING_DIMENSION", raising=False)
+
+    s = Settings(embedding_model="auto")
+    with caplog.at_level("INFO", logger="pillywiggins.config"):
+        s.resolve_embedding_config()
+
+    # ensure fallback happened
+    assert s.embedding_model == ""
+    # ensure env NOT poisoned with empty string
+    assert os.environ.get("EMBEDDING_MODEL", "NOT_SET") != ""
+    if "EMBEDDING_MODEL" in os.environ:
+        assert os.environ["EMBEDDING_MODEL"] != ""
+    # ensure dimension was set from DEFAULT_HF_MODEL
+    assert s.embedding_dimension == 384
+    # cleanup: remove env vars so subsequent tests aren't affected
+    monkeypatch.delenv("EMBEDDING_DIMENSION", raising=False)
+    monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
 
 
 def test_settings_defaults():

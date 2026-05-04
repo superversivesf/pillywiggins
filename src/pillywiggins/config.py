@@ -86,7 +86,16 @@ class Settings(BaseSettings):
             if dim is not None:
                 self.embedding_dimension = dim
                 os.environ["EMBEDDING_DIMENSION"] = str(dim)
-            logger.info("Explicit embedding model '%s' with dimension %d", self.embedding_model, dim)
+            if self.embedding_model:
+                os.environ["EMBEDDING_MODEL"] = self.embedding_model
+            if dim is not None:
+                logger.info("Explicit embedding model '%s' with dimension %d", self.embedding_model, dim)
+            else:
+                logger.warning(
+                    "Explicit embedding model '%s' has unknown dimension; using default %d",
+                    self.embedding_model,
+                    self.embedding_dimension,
+                )
             return
 
         # Strip the /v1 suffix from llm_base_url so the Ollama native endpoint works
@@ -115,12 +124,15 @@ class Settings(BaseSettings):
                 logger.info("Discovered Ollama embedding model '%s' (dimension unknown)", discovered)
         else:
             self.embedding_model = ""
-            os.environ["EMBEDDING_MODEL"] = ""
             dim = KNOWN_EMBEDDING_DIMENSIONS.get(DEFAULT_HF_MODEL)
             if dim is not None:
                 self.embedding_dimension = dim
                 os.environ["EMBEDDING_DIMENSION"] = str(dim)
-            logger.info("No Ollama embedding model found; falling back to HuggingFace '%s' (%d-dim)", DEFAULT_HF_MODEL, dim or 768)
+            logger.info(
+                "No Ollama embedding model found; falling back to HuggingFace '%s' (%d-dim)",
+                DEFAULT_HF_MODEL,
+                dim or self.embedding_dimension,
+            )
 
 
 # Top-level settings instance used by legacy imports.
