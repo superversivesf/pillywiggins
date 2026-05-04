@@ -45,7 +45,8 @@ pytestmark = [
 # Constants
 # ---------------------------------------------------------------------------
 
-BASE_COMPOSE_FILE = os.environ.get("COMPOSE_FILE", "docker-compose.yaml.example")
+BASE_COMPOSE_FILE = os.environ.get("COMPOSE_FILE",
+    "docker-compose.yaml" if os.path.exists("docker-compose.yaml") else "docker-compose.yaml.example")
 E2E_PROJECT = "pillywiggins-e2e"
 INFRA_SERVICES = ["postgres", "redis", "nats"]
 # Alternative host ports so we don't collide with local postgres/redis/nats.

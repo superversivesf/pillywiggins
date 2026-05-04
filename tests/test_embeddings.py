@@ -589,8 +589,9 @@ def test_config_embedding_dimension_matches_schema():
 
     settings = Settings()
     assert settings.embedding_dimension == 768
-    # Also confirm the default model produces 768-dim vectors
-    assert KNOWN_EMBEDDING_DIMENSIONS.get(settings.embedding_model) == settings.embedding_dimension
+    # The default model is 'auto', which resolves to a known 768-dim model
+    # (e.g. nomic-embed-text).  get_expected_dimension handles the fallback.
+    assert get_expected_dimension(settings.embedding_model) == settings.embedding_dimension
 
 
 # ---- Embedding health check tests ----

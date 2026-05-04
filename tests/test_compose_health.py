@@ -239,7 +239,9 @@ def test_compose_health(compose_infra):
     healthy.  We only need to verify inter-container networking.
     """
     # --- 4. Verify inter-container networking ---
-    network_name = f"{PROJECT_NAME}_default"
+    # The compose file explicitly names the network "pillywiggins" (not
+    # "default"), so the Docker network becomes "<project>_pillywiggins".
+    network_name = f"{PROJECT_NAME}_pillywiggins"
     probe = (
         "nc -z -w5 postgres 5432 && "
         "nc -z -w5 redis 6379 && "
