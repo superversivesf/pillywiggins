@@ -39,6 +39,51 @@ def _make_pool_mock(acquire_return=None):
 
 
 @pytest.mark.asyncio
+async def test_connect_migrates_embedding_dimension_when_mismatched():
+    """If the DB column dimension differs from self._embedding_dimension, ALTER TABLE should run."""
+    mem = CouncilMemory(
+        database_url="postgresql://test:test@localhost:5432/testdb",
+        agent_id="puck",
+        embedding_dimension=384,
+    )
+    mock_conn = AsyncMock()
+    mock_conn.fetchrow = AsyncMock(return_value={"atttypmod": 768})
+    mock_conn.execute = AsyncMock()
+
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await mem.connect()
+
+    mock_conn.fetchrow.assert_called_once()
+    assert "ALTER TABLE council_memory" in mock_conn.execute.call_args[0][0]
+    assert "vector(384)" in mock_conn.execute.call_args[0][0]
+    await mem.close()
+
+
+@pytest.mark.asyncio
+async def test_connect_skips_migration_when_dimension_matches():
+    """If the DB column dimension already matches, ALTER TABLE should NOT run."""
+    mem = CouncilMemory(
+        database_url="postgresql://test:test@localhost:5432/testdb",
+        agent_id="puck",
+        embedding_dimension=768,
+    )
+    mock_conn = AsyncMock()
+    mock_conn.fetchrow = AsyncMock(return_value={"atttypmod": 768})
+    mock_conn.execute = AsyncMock()
+
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+        await mem.connect()
+
+    mock_conn.fetchrow.assert_called_once()
+    mock_conn.execute.assert_not_called()
+    await mem.close()
+
+
+@pytest.mark.asyncio
 async def test_connect_creates_pool(memory):
     mock_pool = MagicMock()
     mock_pool.close = AsyncMock()
@@ -85,8 +130,9 @@ async def test_write_entry_inserts_row(memory):
 
     assert result["success"] is True
     assert result["id"] == str(entry_id)
-    mock_conn.fetchrow.assert_called_once()
-    call_args = mock_conn.fetchrow.call_args[0]
+    assert mock_conn.fetchrow.call_count == 2
+    # Second call is the INSERT statement
+    call_args = mock_conn.fetchrow.call_args_list[1][0]
     assert "INSERT INTO council_memory" in call_args[0]
     assert call_args[1] == "puck"
     assert call_args[2] == "hello council"

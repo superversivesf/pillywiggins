@@ -35,6 +35,28 @@ class PrivateMemory:
             self._agent_id,
         )
 
+    async def _migrate_embedding_dimension(self, conn: asyncpg.Connection) -> None:
+        """Check and migrate embedding column dimension if it differs from runtime config."""
+        row = await conn.fetchrow(
+            """SELECT atttypmod
+               FROM pg_attribute
+               WHERE attrelid = 'private_memory'::regclass
+               AND attname = 'embedding'"""
+        )
+        if row is None:
+            # Table or column doesn't exist yet; nothing to migrate.
+            return
+        current_dim = row.get("atttypmod")
+        if current_dim is None or current_dim == self._embedding_dimension:
+            return
+        logger.warning(
+            "Migrating private_memory.embedding from vector(%s) to vector(%s) for agent %s",
+            current_dim, self._embedding_dimension, self._agent_id,
+        )
+        await conn.execute(
+            f"ALTER TABLE private_memory ALTER COLUMN embedding TYPE vector({self._embedding_dimension})"
+        )
+
     async def connect(self) -> None:
         async def _init_connection(conn):
             await register_vector(conn)
@@ -56,6 +78,9 @@ class PrivateMemory:
             min_size=1,
             max_size=5,
         )
+        # After pool creation, acquire an owning connection to run dimension migration.
+        async with self._pool.acquire() as conn:
+            await self._migrate_embedding_dimension(conn)
         logger.info("Private memory connected for agent %s", self._agent_id)
 
     async def save(

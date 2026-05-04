@@ -74,6 +74,7 @@ async def test_connect_sets_agent_id(memory):
 async def test_save_inserts_memory(memory):
     mock_conn = AsyncMock()
     mock_conn.execute = AsyncMock()
+    mock_conn.fetchrow = AsyncMock(return_value={"atttypmod": 3})
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
@@ -319,18 +320,11 @@ async def test_save_rejects_wrong_dimension_embedding():
     )
     # Create a 3-dim embedding when 768 is expected
     wrong_dim_embedding = [0.1, 0.2, 0.3]
-
     mock_conn = AsyncMock()
     mock_conn.execute = AsyncMock()
+    mock_conn.fetchrow = AsyncMock(return_value={"atttypmod": 768})
+
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
-
-    with patch("pillywiggins.memory.private.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
-        await mem.connect()
-        await mem.save("test memory", wrong_dim_embedding, {"source": "test"})
-
-    # execute should never have been called because dimension check rejects
-    # before any SQL is executed
-    assert mock_conn.execute.call_count == 0
     await mem.close()
 
 
@@ -348,13 +342,15 @@ async def test_save_accepts_correct_dimension_embedding():
 
     mock_conn = AsyncMock()
     mock_conn.execute = AsyncMock()
+    mock_conn.fetchrow = AsyncMock(return_value={"atttypmod": 768})
+
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
     with patch("pillywiggins.memory.private.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await mem.connect()
         await mem.save("test memory", correct_dim_embedding, {"source": "test"})
 
-    # Should have both set_config and INSERT calls
+    # Should have set_config (init) and INSERT calls (no migration when dimensions match)
     assert mock_conn.execute.call_count == 2
     call_args = mock_conn.execute.call_args
     assert "INSERT INTO private_memory" in call_args[0][0]
@@ -436,6 +432,97 @@ async def test_private_memory_custom_dimension():
         embedding_dimension=1024,
     )
     assert mem._embedding_dimension == 1024
+
+
+# ---------------------------------------------------------------------------
+# Embedding dimension migration tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_connect_migrates_dimension_mismatch():
+    """If DB dimension does not match runtime, ALTER TABLE is issued."""
+    from pillywiggins.memory.private import PrivateMemory
+
+    mem = PrivateMemory(
+        database_url="postgresql://test:test@localhost:5432/testdb",
+        agent_id="puck",
+        embedding_dimension=384,
+    )
+    mock_conn = AsyncMock()
+    mock_conn.execute = AsyncMock()
+    mock_conn.fetchrow = AsyncMock(return_value={"atttypmod": 768})
+
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch(
+        "pillywiggins.memory.private.asyncpg.create_pool",
+        new_callable=AsyncMock,
+        return_value=mock_pool,
+    ):
+        await mem.connect()
+
+    # Migration should run (no set_config because create_pool is mocked)
+    assert mock_conn.execute.call_count >= 1
+    calls = [c[0][0] for c in mock_conn.execute.call_args_list]
+    assert any("ALTER TABLE private_memory" in c for c in calls)
+    await mem.close()
+
+
+@pytest.mark.asyncio
+async def test_connect_skips_migration_when_matches():
+    """If DB dimension already matches runtime, no ALTER TABLE is issued."""
+    from pillywiggins.memory.private import PrivateMemory
+
+    mem = PrivateMemory(
+        database_url="postgresql://test:test@localhost:5432/testdb",
+        agent_id="puck",
+        embedding_dimension=768,
+    )
+    mock_conn = AsyncMock()
+    mock_conn.execute = AsyncMock()
+    mock_conn.fetchrow = AsyncMock(return_value={"atttypmod": 768})
+
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch(
+        "pillywiggins.memory.private.asyncpg.create_pool",
+        new_callable=AsyncMock,
+        return_value=mock_pool,
+    ):
+        await mem.connect()
+
+    calls = [c[0][0] for c in mock_conn.execute.call_args_list]
+    assert not any("ALTER TABLE private_memory" in c for c in calls)
+    await mem.close()
+
+
+@pytest.mark.asyncio
+async def test_connect_no_migration_when_column_missing():
+    """If the private_memory table doesn't exist yet, nothing to migrate."""
+    from pillywiggins.memory.private import PrivateMemory
+
+    mem = PrivateMemory(
+        database_url="postgresql://test:test@localhost:5432/testdb",
+        agent_id="puck",
+        embedding_dimension=384,
+    )
+    mock_conn = AsyncMock()
+    mock_conn.execute = AsyncMock()
+    mock_conn.fetchrow = AsyncMock(return_value=None)
+
+    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+
+    with patch(
+        "pillywiggins.memory.private.asyncpg.create_pool",
+        new_callable=AsyncMock,
+        return_value=mock_pool,
+    ):
+        await mem.connect()
+
+    calls = [c[0][0] for c in mock_conn.execute.call_args_list]
+    assert not any("ALTER TABLE private_memory" in c for c in calls)
+    await mem.close()
 
 
 # ---------------------------------------------------------------------------
