@@ -77,11 +77,25 @@ CREATE POLICY conversation_cache_isolation ON conversation_cache
 -- Templates; actual passwords should be set at runtime via
 -- environment variables or a secrets manager.
 -- ============================================================
-CREATE ROLE agent_discord  LOGIN PASSWORD 'changeme';
-CREATE ROLE agent_slack    LOGIN PASSWORD 'changeme';
-CREATE ROLE agent_telegram LOGIN PASSWORD 'changeme';
-CREATE ROLE agent_matrix   LOGIN PASSWORD 'changeme';
-CREATE ROLE agent_email    LOGIN PASSWORD 'changeme';
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'agent_discord') THEN
+        CREATE ROLE agent_discord  LOGIN PASSWORD 'changeme';
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'agent_slack') THEN
+        CREATE ROLE agent_slack    LOGIN PASSWORD 'changeme';
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'agent_telegram') THEN
+        CREATE ROLE agent_telegram LOGIN PASSWORD 'changeme';
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'agent_matrix') THEN
+        CREATE ROLE agent_matrix   LOGIN PASSWORD 'changeme';
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'agent_email') THEN
+        CREATE ROLE agent_email    LOGIN PASSWORD 'changeme';
+    END IF;
+END
+$$;
 
 -- Grant table privileges (RLS policies enforce row-level isolation)
 GRANT SELECT, INSERT, UPDATE, DELETE ON private_memory     TO agent_discord, agent_slack, agent_telegram, agent_matrix, agent_email;
