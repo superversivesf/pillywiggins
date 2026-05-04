@@ -835,18 +835,25 @@ async def _add_agent_flow() -> None:
         bot_chat_limit = 3
 
     # 8. Timezone
+    default_tz = "UTC"
+    for a in load_existing_agents():
+        tz = a.get("timezone", "UTC")
+        if tz != "UTC":
+            default_tz = tz
+            break
+
     tz_choices = COMMON_TIMEZONES + [CUSTOM_TIMEZONE_OPTION]
     tz_choice = await questionary.select(
         "Select timezone:",
         choices=tz_choices,
-        default="UTC",
+        default=default_tz,
     ).ask_async()
     if tz_choice is None:
         return
     if tz_choice == CUSTOM_TIMEZONE_OPTION:
         tz = await questionary.text(
             "Enter timezone (e.g. America/Los_Angeles):",
-            default="UTC",
+            default=default_tz,
         ).ask_async()
         if tz is None:
             return
