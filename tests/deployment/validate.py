@@ -243,18 +243,18 @@ class Validator:
             nc = await nats.connect(self.nats_url, connect_timeout=10)
             try:
                 js = nc.jetstream()
-                # Attempt to get stream info; if COUNCIL exists, it will succeed.
+                # Attempt to get stream info; if pillywiggins exists, it will succeed.
                 try:
-                    info = await js.stream_info("COUNCIL")
+                    info = await js.stream_info("pillywiggins")
                     subjects = getattr(info, "subjects", [])
                     count = getattr(info, "state", {}).get("messages", "?") if isinstance(getattr(info, "state", None), dict) else "?"
                     return self._record(
-                        label, True, f"connected (stream 'COUNCIL' OK, msgs={count})"
+                        label, True, f"connected (stream 'pillywiggins' OK, msgs={count})"
                     )
                 except Exception as stream_exc:
                     # Stream may not exist yet; connection itself is success
                     return self._record(
-                        label, True, f"connected (stream 'COUNCIL' not found yet: {stream_exc})"
+                        label, True, f"connected (stream 'pillywiggins' not found yet: {stream_exc})"
                     )
             finally:
                 await nc.close()

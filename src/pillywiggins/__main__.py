@@ -91,7 +91,7 @@ def main():
         database_url=settings.database_url, agent_id=agent_id, channel=channel
     )
     private_memory = PrivateMemory(database_url=settings.database_url, agent_id=agent_id, embedding_dimension=settings.embedding_dimension)
-    skill_registry = SkillRegistry(skills_dir=Path(settings.skills_dir))
+    skill_registry = SkillRegistry(skills_dir=Path(settings.skills_dir), agent_id=agent_id)
     skill_registry.load_all()
     agent = PillywigginAgent(
         agent_id=agent_id,

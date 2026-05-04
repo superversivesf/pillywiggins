@@ -41,7 +41,7 @@ services:
   nats:
     image: nats:2-alpine
     restart: unless-stopped
-    command: nats-server -js -m 8222 -m 8222
+    command: nats-server -js -m 8222
     ports:
     - 127.0.0.1:4222:4222
     - 127.0.0.1:8222:8222
@@ -82,18 +82,28 @@ services:
     networks:
     - pillywiggins
 
-  # # Add your agent service here (e.g. Discord, Slack, Telegram)
-  # # Use `pillywiggins onboard` to generate the correct service block.
-  # puck-discord:
+  # # Use `pillywiggins onboard` to add agents (Telegram is the default first adapter).
+  # puck:
   #   build: .
   #   restart: unless-stopped
-  #   command: ["pillywiggins", "--channel", "discord"]
+  #   command: python -m pillywiggins --agent-id puck
   #   env_file:
   #     - .env
+  #   environment:
+  #     AGENT_ID: puck
+  #     TELEGRAM_BOT_TOKEN: ${PUCK_TELEGRAM_TOKEN}
+  #     PERSONALITY_FILE: /config/puck.yaml
   #   volumes:
   #   - ./personalities:/config:ro
   #   - ./agents.yaml:/app/agents.yaml:ro
   #   - ./skills:/app/skills
+  #   healthcheck:
+  #     test:
+  #     - CMD-SHELL
+  #     - ps aux | grep -v grep | grep pillywiggins || exit 1
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 3
   #   depends_on:
   #     postgres:
   #       condition: service_healthy
@@ -111,4 +121,3 @@ volumes:
   pgdata: null
   redisdata: null
   searxng_data: null
-  skills: null

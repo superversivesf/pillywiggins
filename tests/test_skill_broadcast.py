@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 from pillywiggins.skills.builder import (
     DraftStatus,
@@ -23,8 +23,8 @@ def run(x: int = 0) -> dict:
 
 
 class TestPublishSkillBroadcast:
-    async def test_successful_publish_broadcasts_skill_published(self):
-        """After successful publish_skill(), broadcast 'skill_published' via NATS."""
+    async def test_successful_publish_broadcasts_skill_deployed(self):
+        """After successful publish_skill(), broadcast 'skill_deployed' via NATS."""
         draft = SkillDraft(
             name="my_skill",
             code=VALID_SKILL_CODE,
@@ -59,8 +59,8 @@ class TestPublishSkillBroadcast:
             "my_skill", VALID_SKILL_CODE, {"name": "my_skill", "description": "A test skill"}
         )
         nats_bus.publish_broadcast.assert_awaited_once_with(
-            "skill_published",
-            {"skill_name": "my_skill", "meta": {"name": "my_skill", "description": "A test skill"}},
+            "skill_deployed",
+            {"skill_name": "my_skill", "agent_id": ANY, "deployed_at": ANY},
         )
 
     async def test_failed_publish_does_not_broadcast(self):

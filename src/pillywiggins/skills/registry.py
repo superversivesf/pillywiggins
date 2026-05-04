@@ -31,13 +31,20 @@ class Skill:
 
 
 class SkillRegistry:
-    def __init__(self, skills_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        skills_dir: Optional[Path] = None,
+        agent_id: Optional[str] = None,
+        nats_bus=None,
+    ):
         self._skills_dir = skills_dir or DEFAULT_SKILLS_DIR
         self._skills: dict[str, Skill] = {}
         self.load_errors: list[str] = []
         self._watch_task: Optional[asyncio.Task] = None
         self._watcher_running = False
         self._last_snapshot: dict[str, float] = {}
+        self._agent_id = agent_id
+        self._nats_bus = nats_bus
 
     def _snapshot_skills(self) -> dict[str, float]:
         """Return a snapshot of skill files and their mtimes."""
@@ -52,6 +59,14 @@ class SkillRegistry:
             except OSError:
                 pass
         return snap
+
+    def watch_for_changes(self, interval: float = 10.0) -> None:
+        """Start an asyncio polling task that reloads skills when files change.
+
+        This is the high-level entrypoint intended for agent startup.
+        It delegates to :meth:`start_watching` with a 10-second default.
+        """
+        self.start_watching(interval=interval)
 
     def start_watching(self, interval: float = 5.0) -> None:
         """Start an asyncio polling task that reloads skills when files change."""
@@ -75,7 +90,9 @@ class SkillRegistry:
             if current != self._last_snapshot:
                 logger.info("Skills directory changed, reloading...")
                 self.load_all()
+                self._sync_registry_json()
                 self._last_snapshot = current
+                await self._notify_reload()
 
     def stop_watching(self) -> None:
         """Stop the filesystem watcher task."""
@@ -87,6 +104,37 @@ class SkillRegistry:
             self._watch_task = None
         logger.info("Stopped skill filesystem watcher")
 
+    async def _notify_reload(self) -> None:
+        """Notify other agents via NATS that skills have changed."""
+        if self._nats_bus is None:
+            return
+        try:
+            await self._nats_bus.publish_broadcast(
+                "skill_published",
+                {
+                    "agent_id": self._agent_id or "unknown",
+                    "action": "reload",
+                },
+            )
+            logger.info(
+                "Broadcasted skill reload notification from %s",
+                self._agent_id or "unknown",
+            )
+        except Exception:
+            logger.warning("Failed to broadcast skill reload notification", exc_info=True)
+
+    def broadcast_reload(self) -> None:
+        """Synchronous facade to broadcast a reload notification.
+
+        Schedules :meth:`_notify_reload` on the running event loop if one is present.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("No running event loop; cannot broadcast skill reload")
+            return
+        loop.create_task(self._notify_reload())
+
     def load_all(self) -> list[Skill]:
         self._skills.clear()
         self.load_errors.clear()
@@ -94,39 +142,83 @@ class SkillRegistry:
             logger.info("Skills directory %s does not exist", self._skills_dir)
             return []
 
-        # Reconcile registry.json against disk
-        disk_files = {p.name for p in self._skills_dir.glob("*.py") if not p.name.startswith("_")}
         registry_path = self._skills_dir / "registry.json"
+        registry: dict = {"skills": []}
         if registry_path.exists():
             try:
-                reg = json.loads(registry_path.read_text())
-                reg_files = {s.get("file") for s in reg.get("skills", []) if s.get("file")}
-                if disk_files != reg_files:
-                    logger.warning(
-                        "registry.json out of sync with disk (disk=%s, registry=%s). Regenerating.",
-                        sorted(disk_files),
-                        sorted(reg_files),
-                    )
+                registry = json.loads(registry_path.read_text())
+                if not isinstance(registry, dict):
+                    logger.warning("registry.json root is not a dict, resetting")
+                    registry = {"skills": []}
             except Exception as exc:
-                logger.warning("Failed to read registry.json for reconciliation: %s", exc)
+                logger.warning("Failed to read registry.json: %s", exc)
+                registry = {"skills": []}
 
-        for skill_file in sorted(self._skills_dir.glob("*.py")):
-            if skill_file.name.startswith("_"):
+        reg_entries = registry.get("skills", [])
+        if not isinstance(reg_entries, list):
+            reg_entries = []
+            registry["skills"] = reg_entries
+
+        reg_files = {e.get("file") for e in reg_entries if e.get("file")}
+
+        # Scan disk for .py files not tracked in registry.json
+        disk_files = {p.name for p in self._skills_dir.glob("*.py") if not p.name.startswith("_")}
+        missing_from_reg = disk_files - reg_files
+
+        if missing_from_reg:
+            logger.warning(
+                "registry.json out of sync with disk (missing entries: %s). Adding them.",
+                sorted(missing_from_reg),
+            )
+            for fname in sorted(missing_from_reg):
+                fpath = self._skills_dir / fname
+                try:
+                    skill = self._load_skill_file(fpath)
+                    if skill is not None:
+                        reg_entries.append({
+                            "name": skill.name,
+                            "description": skill.description,
+                            "file": fname,
+                        })
+                    else:
+                        logger.warning("Could not load skill %s to add to registry", fname)
+                except Exception as exc:
+                    err_msg = f"Failed to auto-register skill {fname}: {exc}"
+                    logger.warning(err_msg, exc_info=True)
+                    self.load_errors.append(err_msg)
+            self._write_registry_json(registry)
+            # Update reg_entries after rewrite
+            reg_entries = registry.get("skills", [])
+
+        # Load skills from registry entries (source of truth)
+        for entry in reg_entries:
+            fname = entry.get("file")
+            if not fname:
+                continue
+            fpath = self._skills_dir / fname
+            if not fpath.exists():
+                err_msg = f"Skill file listed in registry.json but missing on disk: {fname}"
+                logger.error(err_msg)
+                self.load_errors.append(err_msg)
                 continue
             try:
-                skill = self._load_skill_file(skill_file)
+                skill = self._load_skill_file(fpath)
                 if skill is not None:
                     self._skills[skill.name] = skill
                     logger.info("Loaded skill: %s", skill.name)
             except Exception as exc:
-                err_msg = f"Failed to load skill from {skill_file}: {exc}"
+                err_msg = f"Failed to load skill from {fpath}: {exc}"
                 logger.error(err_msg, exc_info=True)
                 self.load_errors.append(err_msg)
 
-        # Ensure registry.json reflects the filesystem truth
-        self._sync_registry_json()
-
         return list(self._skills.values())
+
+    def _write_registry_json(self, registry: dict) -> None:
+        """Atomically write the registry dict to registry.json."""
+        registry_path = self._skills_dir / "registry.json"
+        tmp_path = self._skills_dir / "registry.json.tmp"
+        tmp_path.write_text(json.dumps(registry, indent=2))
+        os.replace(str(tmp_path), str(registry_path))
 
     def _sync_registry_json(self) -> None:
         """Rebuild registry.json from the in-memory skills dict.
@@ -134,7 +226,6 @@ class SkillRegistry:
         This makes the filesystem the primary source of truth and
         keeps registry.json consistent for any external consumers.
         """
-        registry_path = self._skills_dir / "registry.json"
         registry = {
             "skills": [
                 {
@@ -145,9 +236,7 @@ class SkillRegistry:
                 for name, skill in sorted(self._skills.items())
             ]
         }
-        tmp_path = self._skills_dir / "registry.json.tmp"
-        tmp_path.write_text(json.dumps(registry, indent=2))
-        os.replace(str(tmp_path), str(registry_path))
+        self._write_registry_json(registry)
 
     def _load_skill_file(self, path: Path) -> Optional[Skill]:
         spec = importlib.util.spec_from_file_location(path.stem, path)
@@ -196,17 +285,23 @@ class SkillRegistry:
         skill_path.write_text(code)
 
         registry_path = self._skills_dir / "registry.json"
-        registry = {}
+        registry: dict = {"skills": []}
         if registry_path.exists():
-            registry = json.loads(registry_path.read_text())
+            try:
+                registry = json.loads(registry_path.read_text())
+                if not isinstance(registry, dict):
+                    registry = {"skills": []}
+            except Exception:
+                registry = {"skills": []}
         existing = registry.get("skills", [])
+        if not isinstance(existing, list):
+            existing = []
+            registry["skills"] = existing
         if name not in [s["name"] for s in existing]:
             existing.append({"name": name, "description": meta.get("description", ""), "file": f"{name}.py"})
         registry["skills"] = existing
 
-        tmp_path = self._skills_dir / "registry.json.tmp"
-        tmp_path.write_text(json.dumps(registry, indent=2))
-        os.replace(str(tmp_path), str(registry_path))
+        self._write_registry_json(registry)
 
         skill = self._load_skill_file(skill_path)
         if skill is not None:

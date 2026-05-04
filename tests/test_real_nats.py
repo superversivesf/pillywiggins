@@ -93,8 +93,8 @@ async def test_broadcast_pub_sub(nats_url):
 
     received = []
 
-    async def handler(msg_type, data):
-        received.append((msg_type, data))
+    async def handler(msg_type, data, from_agent, timestamp):
+        received.append((msg_type, data, from_agent, timestamp))
 
     await bus_b.subscribe_broadcast(handler)
     await asyncio.sleep(0.5)
@@ -105,6 +105,8 @@ async def test_broadcast_pub_sub(nats_url):
     assert len(received) == 1
     assert received[0][0] == "skill_published"
     assert received[0][1]["skill"] == "web_search"
+    assert received[0][2] == "agent_a"
+    assert received[0][3]
 
     await bus_a.close()
     await bus_b.close()
@@ -126,8 +128,8 @@ async def test_direct_message_routing(nats_url):
 
     received_b = []
 
-    async def handler_b(msg_type, data):
-        received_b.append((msg_type, data))
+    async def handler_b(msg_type, data, from_agent, timestamp):
+        received_b.append((msg_type, data, from_agent, timestamp))
         await bus_b.publish_direct("agent_a", "reply", {"text": "got it"})
 
     await bus_b.subscribe_direct(handler_b)
@@ -135,8 +137,8 @@ async def test_direct_message_routing(nats_url):
 
     received_a = []
 
-    async def handler_a(msg_type, data):
-        received_a.append((msg_type, data))
+    async def handler_a(msg_type, data, from_agent, timestamp):
+        received_a.append((msg_type, data, from_agent, timestamp))
 
     await bus_a.subscribe_direct(handler_a)
     await asyncio.sleep(0.5)
@@ -150,6 +152,8 @@ async def test_direct_message_routing(nats_url):
     assert len(received_a) == 1
     assert received_a[0][0] == "reply"
     assert received_a[0][1]["text"] == "got it"
+    assert received_a[0][2] == "agent_b"
+    assert received_a[0][3]
 
     await bus_a.close()
     await bus_b.close()
@@ -177,8 +181,8 @@ async def test_reconnection(nats_url, nats_container_name):
     # Subscribe before the outage
     received = []
 
-    async def handler(msg_type, data):
-        received.append((msg_type, data))
+    async def handler(msg_type, data, from_agent, timestamp):
+        received.append((msg_type, data, from_agent, timestamp))
 
     await bus.subscribe_broadcast(handler)
     await asyncio.sleep(0.3)
@@ -218,7 +222,7 @@ async def test_reconnection(nats_url, nats_container_name):
     await asyncio.sleep(1.0)
 
     assert len(received) >= 1
-    assert any(r[0] == "after_reconnect" and r[1]["status"] == "ok" for r in received)
+    assert any(r[0] == "after_reconnect" and r[1]["status"] == "ok" and r[2] == "publisher" and r[3] for r in received)
 
     await bus.close()
     await bus2.close()

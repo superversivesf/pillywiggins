@@ -9,16 +9,16 @@
 Pillywiggins is a system that runs multiple AI agents — one per communication channel — that work together as a team while keeping their own identities. Think of it like a group of helpful assistants who share a common noticeboard but have their own desks, their own notebooks, and their own personalities.
 
 ```
-  Discord ──► Puck (playful trickster)      ─┐
-     Slack ──► Ariel (efficient professional) ─┤
- Telegram ──► Robin (warm companion)         ─┼── Shared Noticeboard + Shared Toolbox
+Telegram ──► Robin (warm companion)         ─┐
+  Discord ──► Puck (playful trickster)      ─┤
+    Slack ──► Ariel (efficient professional) ─┼── Shared Noticeboard + Shared Toolbox
    Matrix ──► Cobweb (quiet thinker)         ─┤
     Email ──► Moth (formal correspondent)    ─┘
 ```
 
 Each agent:
 
-- Has its **own personality** (Puck is playful on Discord; Moth is formal over email)
+- Has its **own personality** (Robin is warm on Telegram; Moth is formal over email)
 - Keeps its **own private memory** (what you said on Slack stays on Slack)
 - Runs as its **own process** (if Telegram crashes, Discord keeps working)
 - Has its **own cron schedule** (Puck greets you at 9am, Moth checks email every 2 minutes)
@@ -153,16 +153,16 @@ MCP is available as an optional add-on for connecting to external tool ecosystem
 Every agent has its own scheduler. This is a first-class feature, not an afterthought.
 
 ```yaml
-# personalities/discord.yaml
+# personalities/telegram.yaml
 scheduling:
   morning_greeting:
     cron: "0 9 * * *"              # Every day at 9am
-    action: "Send a cheerful morning greeting to the general channel"
-  
+    action: "Send a cheerful morning greeting to the main chat"
+
   fun_fact_friday:
     cron: "0 15 * * 5"             # Every Friday at 3pm
     action: "Share a random fun fact"
-  
+
   memory_cleanup:
     cron: "0 3 * * 0"             # Every Sunday at 3am
     action: "Review and consolidate old memories"
@@ -187,13 +187,13 @@ This is different from most frameworks where cron is either global (one schedule
 
 ## How a Message Gets Processed
 
-Here's what happens when someone sends "Hey Puck, what's the weather?" on Discord:
+Here's what happens when someone sends "Hey Robin, what's the weather?" on Telegram:
 
 ```
-1. Discord sends the message to the Discord adapter
+1. Telegram sends the message to the Telegram adapter
 2. The adapter normalizes it into a standard format
-3. The adapter hands this to Puck's agent process
-4. Puck's agent:
+3. The adapter hands this to Robin's agent process
+4. Robin's agent:
    a. Grabs recent conversation from Redis cache
    b. Searches private memory for relevant context
    c. Searches council memory for anything useful
@@ -203,12 +203,11 @@ Here's what happens when someone sends "Hey Puck, what's the weather?" on Discor
    g. The LLM might call a skill (e.g., check_weather)
    h. Gets a response back
    i. Saves the exchange to conversation cache + private memory
-5. The adapter translates the response back to Discord format
-5. The adapter translates the response back to Discord format
-6. Discord shows the reply
+5. The adapter translates the response back to Telegram format
+6. Telegram shows the reply
 ```
 
-When another agent deploys a new skill, Puck receives a NATS `skill_published` announcement and calls `_refresh_brain_tools()` to dynamically rebuild its tool set — no container restart required.
+When another agent deploys a new skill, Robin receives a NATS `skill_published` announcement and calls `_refresh_brain_tools()` to dynamically rebuild its tool set — no container restart required.
 
 The same flow works for every channel — only step 1 (receive) and step 6 (send) are platform-specific. Cron-triggered actions follow the same path, just with a synthetic "scheduled task" message instead of a user message.
 
@@ -241,7 +240,7 @@ Here's what's inside:
 │                                                 │
 │  Agents (one container each):                   │
 │  ┌─────────┐ ┌─────────┐ ┌─────────┐          │
-│  │ Discord │ │  Slack  │ │Telegram │          │
+│  │Telegram │ │ Discord │ │  Slack  │          │
 │  │  Agent  │ │  Agent  │ │  Agent  │          │
 │  └─────────┘ └─────────┘ └─────────┘          │
 │  ┌─────────┐ ┌─────────┐                       │

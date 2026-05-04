@@ -4,6 +4,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -423,13 +424,14 @@ async def publish_skill(
     if nats_bus is not None:
         try:
             await nats_bus.publish_broadcast(
-                "skill_published",
+                "skill_deployed",
                 {
                     "skill_name": draft.name,
-                    "meta": draft.meta,
+                    "agent_id": getattr(nats_bus, "_agent_id", "unknown"),
+                    "deployed_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
         except Exception:
-            logger.warning("Failed to broadcast skill_published for %s", draft.name, exc_info=True)
+            logger.warning("Failed to broadcast skill_deployed for %s", draft.name, exc_info=True)
 
     return f"Skill '{draft.name}' published successfully."

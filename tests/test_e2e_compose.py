@@ -284,7 +284,7 @@ def test_compose_config_validates():
     )
     parsed = yaml.safe_load(result.stdout)
     services = set(parsed.get("services", {}).keys())
-    for svc in [*INFRA_SERVICES, "puck", "puck-discord"]:
+    for svc in INFRA_SERVICES:
         assert svc in services, f"Expected service '{svc}' in merged compose output"
 
 

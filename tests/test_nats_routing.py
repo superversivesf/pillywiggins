@@ -43,11 +43,13 @@ async def test_insight_routes_to_council_memory(agent):
             "tags": ["idea"],
             "embedding": [0.1, 0.2, 0.3],
         },
+        from_agent="mustardseed",
+        timestamp="2025-01-01T00:00:00+00:00",
     )
 
     mock_council.write_entry.assert_awaited_once_with(
         content="Teams should document their schemas",
-        tags=["idea"],
+        tags=["mustardseed", "2025-01-01T00:00:00+00:00", "idea"],
         embedding=[0.1, 0.2, 0.3],
         message_type="insight",
         confidence=1.0,
@@ -59,11 +61,11 @@ async def test_insight_routing_defaults(agent):
     mock_council = AsyncMock()
     agent._council_memory = mock_council
 
-    await agent._on_nats_message("insight", {})
+    await agent._on_nats_message("insight", {}, from_agent="", timestamp="")
 
     mock_council.write_entry.assert_awaited_once_with(
         content="",
-        tags=[],
+        tags=["", ""],
         embedding=[],
         message_type="insight",
         confidence=1.0,
@@ -93,12 +95,32 @@ async def test_skill_published_routes_to_skill_registry(agent):
 
 
 @pytest.mark.asyncio
+async def test_skill_deployed_routes_to_skill_registry(agent):
+    """skill_deployed message triggers registry reload."""
+    mock_registry = MagicMock()
+    agent._skill_registry = mock_registry
+
+    await agent._on_nats_message("skill_deployed", {"skill_name": "web_search", "agent_id": "puck", "deployed_at": "2024-01-01T00:00:00+00:00"})
+
+    mock_registry.load_all.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_skill_published_skipped_when_no_registry(agent):
     """skill_published message is ignored when no registry is set."""
     assert agent._skill_registry is None
 
     # Should not raise even though _skill_registry is None
     await agent._on_nats_message("skill_published", {"skill": "web_search"})
+
+
+@pytest.mark.asyncio
+async def test_skill_deployed_skipped_when_no_registry(agent):
+    """skill_deployed message is ignored when no registry is set."""
+    assert agent._skill_registry is None
+
+    # Should not raise even though _skill_registry is None
+    await agent._on_nats_message("skill_deployed", {"skill_name": "web_search", "agent_id": "puck", "deployed_at": "2024-01-01T00:00:00+00:00"})
 
 
 @pytest.mark.asyncio

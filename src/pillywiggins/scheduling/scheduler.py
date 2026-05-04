@@ -1,10 +1,12 @@
 import json
 import logging
 from pathlib import Path
+from functools import partial
 from typing import Any, Callable, Coroutine, Optional
 from urllib.parse import urlparse
 
 from apscheduler.jobstores.memory import MemoryJobStore
+from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
 from apscheduler.jobstores.redis import RedisJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -51,10 +53,12 @@ class AgentScheduler:
         redis_url: str,
         agent_id: str,
         schedules_dir: str = "/app/skills",
+        channel: str = "",
     ):
         self._redis_url = redis_url
         self._agent_id = agent_id
         self._schedules_dir = Path(schedules_dir)
+        self._channel = channel
         self._scheduler: Optional[AsyncIOScheduler] = None
         self._action_handlers: dict[str, Callable[..., Coroutine]] = {}
         self._yaml_schedules: dict = {}
@@ -131,6 +135,8 @@ class AgentScheduler:
     def _load_schedules(self, schedules: dict) -> list[dict]:
         jobs = []
         for name, config in schedules.items():
+            if not isinstance(config, dict):
+                continue
             job = {
                 "name": name,
                 "action": config.get("action", "custom"),
@@ -138,8 +144,10 @@ class AgentScheduler:
             }
             if "interval_seconds" in config:
                 job["interval_seconds"] = config["interval_seconds"]
-            if "cron" in config:
-                job["cron"] = config["cron"]
+            # Support both "cron" and "cron_expr" for backwards compatibility
+            cron_val = config.get("cron", config.get("cron_expr"))
+            if cron_val:
+                job["cron"] = cron_val
             if "args" in config:
                 job["args"] = config["args"]
             jobs.append(job)
@@ -172,6 +180,29 @@ class AgentScheduler:
             seen[job["name"]] = job
         return list(seen.values())
 
+    def _synthetic_unified_message(self, job: dict) -> UnifiedMessage:
+        """Create a synthetic UnifiedMessage for scheduled callbacks.
+
+        Provides a minimal message context so handlers can expect
+        a UnifiedMessage even when the trigger was cron/interval.
+        """
+        channel_str = self._channel or "telegram"
+        try:
+            channel = ChannelType(channel_str)
+        except ValueError:
+            channel = ChannelType.TELEGRAM
+        conversation_key = ""
+        args = job.get("args") or {}
+        if isinstance(args, dict):
+            conversation_key = args.get("conversation_key", "")
+        return UnifiedMessage(
+            channel=channel,
+            channel_user_id="scheduler",
+            content=f"Scheduled task '{job.get('name', 'unknown')}' triggered.",
+            conversation_key=conversation_key,
+            metadata={"trigger": "scheduled", "action": job.get("action", "custom")},
+        )
+
     def _add_job_to_scheduler(self, job: dict) -> None:
         if self._scheduler is None:
             return
@@ -182,6 +213,12 @@ class AgentScheduler:
         kwargs = {"action": action, "agent_id": self._agent_id}
         if "args" in job:
             kwargs["args"] = job["args"]
+
+        # Wrap non-send_message scheduled callbacks with a synthetic message context
+        if action != "send_message":
+            synthetic_msg = self._synthetic_unified_message(job)
+            kwargs["message"] = synthetic_msg
+            kwargs["synthetic_unified_message"] = synthetic_msg
 
         trigger_kwargs: dict[str, Any] = {
             "id": job_id,

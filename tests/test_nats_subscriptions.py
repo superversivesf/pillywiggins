@@ -81,7 +81,7 @@ async def test_nats_message_routes_to_process_message(nats_mocks):
         assert msg.channel == ChannelType.TELEGRAM
         assert msg.content == "Hello from NATS"
         assert msg.conversation_key == "456"
-        assert msg.metadata == {"chat_id": "789"}
+        assert msg.metadata == {"chat_id": "789", "from_agent": "", "timestamp": ""}
 
 
 @pytest.mark.asyncio
@@ -113,11 +113,11 @@ async def test_nats_insight_routes_to_council(nats_mocks):
 
     handler = handler_holder[0]
     data = {"content": "New idea", "tags": ["idea"], "embedding": [0.1, 0.2]}
-    await handler("insight", data)
+    await handler("insight", data, "mustardseed", "2025-01-01T00:00:00+00:00")
 
     mock_council.write_entry.assert_awaited_once_with(
         content="New idea",
-        tags=["idea"],
+        tags=["mustardseed", "2025-01-01T00:00:00+00:00", "idea"],
         embedding=[0.1, 0.2],
         message_type="insight",
         confidence=1.0,
@@ -150,6 +150,19 @@ async def test_nats_skill_published_routes_to_reload(nats_mocks):
 
 
 @pytest.mark.asyncio
+async def test_nats_skill_deployed_routes_to_reload(nats_mocks):
+    agent, _, handler_holder = nats_mocks
+    mock_registry = MagicMock()
+    agent._skill_registry = mock_registry
+    await agent.start()
+
+    handler = handler_holder[0]
+    await handler("skill_deployed", {"skill_name": "web_search", "agent_id": "puck", "deployed_at": "2024-01-01T00:00:00+00:00"})
+
+    mock_registry.load_all.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_nats_skill_published_skipped_when_no_registry(nats_mocks):
     agent, _, handler_holder = nats_mocks
     assert agent._skill_registry is None
@@ -157,6 +170,18 @@ async def test_nats_skill_published_skipped_when_no_registry(nats_mocks):
 
     handler = handler_holder[0]
     await handler("skill_published", {"skill": "web_search"})
+
+    # Should not raise
+
+
+@pytest.mark.asyncio
+async def test_nats_skill_deployed_skipped_when_no_registry(nats_mocks):
+    agent, _, handler_holder = nats_mocks
+    assert agent._skill_registry is None
+    await agent.start()
+
+    handler = handler_holder[0]
+    await handler("skill_deployed", {"skill_name": "web_search", "agent_id": "puck", "deployed_at": "2024-01-01T00:00:00+00:00"})
 
     # Should not raise
 

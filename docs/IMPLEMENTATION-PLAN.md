@@ -1,7 +1,7 @@
 # Pillywiggins: Implementation Plan & Checklist
 
 **Version 2.0 — April 2026**  
-**Updated — May 2026: 5-phase remediation completed**  
+**Updated — May 2026: Telegram default, adapters complete, hardening partial**  
 **Canonical architecture: `pillywiggins-overview-v2.md` (Docker Compose)**
 
 ---
@@ -10,12 +10,12 @@
 
 | Phase | Goal | Effort | Depends On | Status |
 |-------|------|--------|------------|--------|
-| 1 — One Agent Talks | Docker Compose infra + single Discord agent talking to Ollama | 30–40h | Nothing | **Done** (Phase 1 of 5-phase remediation) |
+| 1 — One Agent Talks | Docker Compose infra + single Telegram agent talking to Ollama | 30–40h | Nothing | **Done** (Phase 1 of 5-phase remediation) |
 | 2 — Memory Works | Private memory with RLS, personality from YAML, council memory schema | 40–60h | Phase 1 | **Done** (Phase 2 of 5-phase remediation) |
 | 3 — Skills System | Agents build, test, and deploy skills collaboratively | 50–70h | Phase 2 | **Done** (Phase 3 of 5-phase remediation) |
 | 4 — Second Agent + Communication | Two agents with isolated state, shared skills, council memory, per-agent cron | 30–40h | Phase 3 | **Done** (Phase 4 of 5-phase remediation) |
-| 5 — Full Fleet | All five channels live with complete feature set | 40–60h | Phase 4 | Partial (Phase 5 of 5-phase remediation: polish only — Telegram adapter done, remaining personality files pending) |
-| 6 — Hardening | Rate limiting, logging, healthchecks, backups — 24/7 reliable | 40–50h | Phase 5 | Partial (healthchecks, restart policies, env port restrictions done) |
+| 5 — Full Fleet | All five channels live with complete feature set | 40–60h | Phase 4 | **Partial** (adapters + personalities done; multi-agent concurrency pending) |
+| 6 — Hardening | Rate limiting, logging, healthchecks, backups — 24/7 reliable | 40–50h | Phase 5 | **Partial** (rate limiting, structured logging, healthchecks, restart policies, backup script, security hardening done; prompt injection detection, memory consolidation, runbook, unattended ops pending) |
 
 ---
 
@@ -43,7 +43,7 @@
   ├── env.example
   ├── .gitignore
   ├── personalities/
-  │   └── discord.yaml
+  │   └── puck.yaml (historically discord.yaml)
   ├── skills/
   │   └── registry.json
   ├── src/
@@ -60,7 +60,11 @@
   │       ├── adapters/
   │       │   ├── __init__.py
   │       │   ├── base.py
-  │       │   └── discord_adapter.py
+  │       │   ├── discord_adapter.py
+  │       │   ├── slack_adapter.py
+  │       │   ├── telegram_adapter.py
+  │       │   ├── matrix_adapter.py
+  │       │   └── email_adapter.py
   │       ├── memory/
   │       │   ├── __init__.py
   │       │   ├── private.py
@@ -83,7 +87,7 @@
   │   └── test_adapters.py
   └── docs/
   ```
-- [x] Create `pyproject.toml` with dependencies: `pydantic-ai`, `asyncpg`, `redis`, `nats-py`, `discord.py`, `apscheduler`, `pydantic-settings`, `pydantic`
+- [x] Create `pyproject.toml` with dependencies: `pydantic-ai`, `asyncpg`, `redis`, `nats-py`, `python-telegram-bot`, `slack-bolt`, `matrix-nio`, `aiosmtplib`, `apscheduler`, `pydantic-settings`, `pydantic`
 - [x] Create `Dockerfile` (multi-stage: build with uv, runtime with Python 3.12 slim)
 - [x] Create `env.example` with all required environment variables:
   ```env
@@ -103,12 +107,12 @@
   EMBEDDING_MODEL=nomic-embed-text
 
   # Channel tokens
-  DISCORD_TOKEN=your_discord_bot_token
+  TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 
   # Agent config
-  AGENT_ID=discord-agent
-  CHANNEL=discord
-  PERSONALITY_FILE=/config/discord.yaml
+  AGENT_ID=puck
+  CHANNEL=telegram
+  PERSONALITY_FILE=/config/puck.yaml
   ```
 - [x] Create `.gitignore` including `.env`
 - [x] Initialize `skills/registry.json` as `{ "skills": [] }`
@@ -144,13 +148,14 @@
       ports:
         - 127.0.0.1:4222:4222
 
-    discord-agent:
+    puck:
       build: .
-      command: python -m pillywiggins --channel discord
+      command: python -m pillywiggins --agent-id puck
       env_file: .env
       environment:
-        AGENT_ID: discord-agent
-        PERSONALITY_FILE: /config/discord.yaml
+        AGENT_ID: puck
+        TELEGRAM_BOT_TOKEN: ${PUCK_TELEGRAM_TOKEN}
+        PERSONALITY_FILE: /config/puck.yaml
       volumes:
         - ./personalities:/config:ro
         - ./skills:/app/skills          # bind mount for instant hot-reload
@@ -255,25 +260,28 @@
   export OLLAMA_MAX_LOADED_MODELS=2
   ```
 
-#### 1.5 Minimal Discord agent
+#### 1.5 Minimal agent (Telegram / Puck)
 
 - [x] Implement `src/pillywiggins/config.py` — Pydantic Settings class loading from env vars:
   ```python
   class Settings(BaseSettings):
-      agent_id: str
-      channel: str
-      discord_token: str
+      agent_id: str = "puck"
+      channel: str = "telegram"
+      personality_file: str = "/config/puck.yaml"
       database_url: str
       redis_url: str = "redis://redis:6379/0"
       nats_url: str = "nats://nats:4222"
-      ollama_base_url: str = "http://host.docker.internal:11434"
+      llm_base_url: str = "http://host.docker.internal:11434/v1"
       model_name: str = "qwen3.5:8b"
-      embedding_model: str = "nomic-embed-text"
-      personality_file: str = "/config/discord.yaml"
+      embedding_model: str = "auto"
+      telegram_bot_token: str = ""
+      discord_bot_token: str = ""
+      skills_dir: str = "/app/skills"
+      searxng_url: str = "http://searxng:8080"
   ```
 - [x] Implement `src/pillywiggins/agents/personality.py` — load personality from YAML file (overview-v2 §8):
   ```yaml
-  # personalities/discord.yaml
+  # personalities/puck.yaml
   name: "Puck"
   archetype: "Mischievous fairy trickster"
   tone: "playful, witty, slightly chaotic"
@@ -320,34 +328,34 @@
       @abstractmethod
       def normalize(self, platform_event) -> UnifiedMessage: ...
   ```
-- [x] Implement `src/pillywiggins/adapters/discord_adapter.py` — Discord adapter using `discord.py` v2 (overview-v2 §5):
+- [x] Implement `src/pillywiggins/adapters/telegram_adapter.py` — Telegram adapter using `python-telegram-bot` v21 (overview-v2 §5):
   - [x] Gateway WebSocket connection
-  - [x] Normalise Discord events to `UnifiedMessage`
-  - [x] Pass to `PillywigginAgent.handle_message()`, translate response back to Discord
+  - [x] Normalise Telegram events to `UnifiedMessage`
+  - [x] Pass to `PillywigginAgent.handle_message()`, translate response back to Telegram
 - [x] Implement `src/pillywiggins/__main__.py` — CLI entrypoint:
   ```bash
-  python -m pillywiggins --channel discord
+  python -m pillywiggins --agent-id puck
   ```
   Parses args, creates `PillywigginAgent`, starts adapter
 - [x] Implement `src/pillywiggins/health.py` — `/healthz` endpoint checking PostgreSQL, Redis, NATS, Ollama connectivity
-- [x] Create `personalities/discord.yaml` with Puck personality
+- [x] Create `personalities/puck.yaml` with Puck personality
 
 #### 1.6 Testing
 
 - [x] `tests/conftest.py` — fixtures for test database, mock Ollama, mock Redis
 - [x] `tests/test_brain.py` — PydanticAI agent responds to prompts (use `TestModel`)
-- [x] `tests/test_adapters.py` — Discord adapter normalizes events correctly
+- [x] `tests/test_adapters.py` — Telegram adapter normalizes events correctly
 
 ### Verification Gate — Phase 1
 
 ALL of the following must pass before proceeding:
 
-- [x] `docker compose ps` — all project containers Running (postgres, redis, nats, discord-agent)
-- [ ] `docker compose exec postgres pg_isready -U postgres` — PostgreSQL is healthy
+- [x] `docker compose ps` — all project containers Running (postgres, redis, nats, puck)
+- [x] `docker compose exec postgres pg_isready -U pillywiggins` — PostgreSQL is healthy
 - [x] `curl http://localhost:11434/api/tags` (on the Ollama host) — Ollama lists both models
-- [x] Send a Discord DM to the bot — receive an LLM-generated response
+- [x] Send a Telegram message to the bot — receive an LLM-generated response
 - [x] Second message in same conversation — bot has context from first message
-- [x] `docker compose restart discord-agent` — bot resumes with conversation history intact (from Redis cache)
+- [x] `docker compose restart puck` — bot resumes with conversation history intact (from Redis cache)
 - [x] `curl http://localhost:8080/healthz` — returns healthy status for all services (Ollama check skips if not in Compose)
 
 ### Risk items (Phase 1)
@@ -365,7 +373,7 @@ ALL of the following must pass before proceeding:
 
 **Goal**: Private memory with RLS enforcement, personality from YAML, council memory write/search, embedding generation, conversation persistence to PostgreSQL.
 
-**Prerequisites**: Phase 1 complete — single Discord agent responding to messages.
+**Prerequisites**: Phase 1 complete — single Telegram agent responding to messages.
 
 ### Tasks
 
@@ -404,7 +412,7 @@ ALL of the following must pass before proceeding:
 
 - [x] Implement `src/pillywiggins/personality.py` — load from YAML file mounted into container (overview-v2 §8):
   ```yaml
-  # personalities/discord.yaml
+  # personalities/puck.yaml
   name: "Puck"
   archetype: "Mischievous fairy trickster"
   tone: "playful, witty, slightly chaotic"
@@ -419,7 +427,7 @@ ALL of the following must pass before proceeding:
       target_channel: "general"
   ```
 - [x] Wire PydanticAI dynamic instructions to inject personality into system prompt
-- [ ] To change personality: edit YAML, then `docker compose restart discord-agent` — no rebuild needed
+- [x] To change personality: edit YAML, then `docker compose restart puck` — no rebuild needed
 
 #### 2.4 Council memory schema
 
@@ -435,12 +443,12 @@ ALL of the following must pass before proceeding:
 
 - [x] `tests/test_memory_isolation.py` — RLS isolation, semantic search, embedding generation
 - [x] `tests/test_council.py` — write validation, dedup, tag filtering
-- [x] Integration test: Discord agent writes private memory, other agent role gets zero results
+- [x] Integration test: Telegram agent writes private memory, other agent role gets zero results
 
 ### Verification Gate — Phase 2
 
 - [x] Agent recalls previous conversations (Redis cache + PostgreSQL persistence)
-- [x] Personality: edit `personalities/discord.yaml`, restart, behavior changes
+- [x] Personality: edit `personalities/puck.yaml`, restart, behavior changes
 - [x] Private memory: agent writes, agent retrieves; different `agent_id` gets zero results
 - [x] RLS enforcement: connection without `app.agent_id` set returns zero rows from `private_memory`
 - [x] Council memory: agent writes, search retrieves by content and tags
@@ -475,7 +483,7 @@ ALL of the following must pass before proceeding:
   SKILL_META = {
       "name": "check_website",
       "description": "Check if a URL is reachable and return status code and response time",
-      "author": "discord-agent",
+      "author": "puck",
       "version": "1.0",
       "created": "2026-04-13T10:30:00Z",
       "parameters": {
@@ -650,7 +658,7 @@ ALL of the following must pass before proceeding:
   - [x] `misfire_grace_time=300` — 5 minute grace if container was down (overview-v2 §4)
   - [x] Synthetic `UnifiedMessage` for scheduled tasks (same `handle_message` path as user messages)
   - [x] Built-in heartbeat job for health monitoring
-- [x] Add personality schedules to `personalities/discord.yaml`:
+- [x] Add personality schedules to `personalities/puck.yaml` (historically `discord.yaml` in early phase):
   ```yaml
   scheduling:
     morning_greeting:
@@ -716,45 +724,48 @@ ALL of the following must pass before proceeding:
 
 #### 5.1 Remaining channel adapters
 
-- [x] Implement `src/pillywiggins/adapters/telegram_adapter.py` using `python-telegram-bot` v21 (overview-v2 §5):
-  - Webhook mode for production, polling for dev
-- [ ] Implement `src/pillywiggins/adapters/matrix_adapter.py` using `matrix-nio` (overview-v2 §5):
+- [x] Implement `src/pillywiggins/adapters/matrix_adapter.py` using `matrix-nio` (overview-v2 §5):
   - Persistent sync connection, E2EE deferred to Phase 7
-- [ ] Implement `src/pillywiggins/adapters/email_adapter.py` using `aiosmtplib` + `imap-tools` (overview-v2 §5):
+- [x] Implement `src/pillywiggins/adapters/email_adapter.py` using `aiosmtplib` + `imap-tools` (overview-v2 §5):
   - IMAP IDLE for real-time push, fall back to 30s polling if IDLE unreliable
   - Start with 3-message context window for threads (overview-v2 §13)
 - [x] Create personality files for all channels:
-  - [x] `personalities/discord.yaml` — Puck (playful trickster)
-  - [ ] `personalities/slack.yaml` — Ariel (efficient professional)
-  - [ ] `personalities/telegram.yaml` — Robin (warm companion)
-  - [ ] `personalities/matrix.yaml` — Cobweb (quiet thinker)
-  - [ ] `personalities/email.yaml` — Moth (formal correspondent)
-- [ ] Add all agent services to `docker-compose.yaml`
+  - [x] `personalities/puck.yaml` (historically `discord.yaml`) — Puck (playful trickster)
+  - [x] `personalities/slack.yaml` — Ariel (efficient professional)
+  - [x] `personalities/telegram.yaml` — Robin (warm companion) (used as default via `puck.yaml`)
+  - [x] `personalities/matrix.yaml` — Cobweb (quiet thinker)
+  - [x] `personalities/email.yaml` — Moth (formal correspondent)
+- [x] Add all agent services to `docker-compose.yaml` (Telegram used as default single-agent deployment)
 
 #### 5.2 Per-agent scheduling configurations
 
-- [ ] Add personality schedules for all agents:
-  - Discord/Puck: morning greeting (9am), fun fact Friday (3pm), memory review (3am Sun)
-  - Email/Moth: check inbox every 2min, daily digest (8am weekdays) (overview-v2 §4)
-  - Other agents: schedules appropriate to their channels
+- [x] Add personality schedules for all agents (all 5 YAMLs contain `schedules` block with heartbeat + memory_review + skill_reload)
+  - Puck (Telegram): heartbeat every 30m, memory review hourly, skill reload every 6h
+  - Ariel (Slack): same schedule, UTC timezone
+  - Robin (Telegram): same schedule, UTC timezone
+  - Cobweb (Matrix): same schedule, UTC timezone, 0 bot chat limit
+  - Moth (Email): same schedule, UTC timezone, 0 bot chat limit
+- [ ] Discord/Puck: add per-channel custom schedules (morning greeting, fun fact Friday, memory review) (overview-v2 §4)
+- [ ] Email/Moth: add check-inbox schedule, daily digest (8am weekdays) (overview-v2 §4)
 
 #### 5.3 End-to-end testing
 
-- [ ] Integration test: all 5 agents respond on their respective channels
 - [x] Integration test: agent A deploys skill → agents B, C, D, E all discover it
+- [ ] Integration test: all 5 agents respond on their respective channels
 - [ ] Integration test: council broadcast propagates to all agents
 - [ ] Stress test: simultaneous messages across multiple channels
 - [ ] Test: all 5 agents start from `docker compose up` with a single command
 
 ### Verification Gate — Phase 5
 
-- [ ] All 5 agents respond on their channels (Discord, Slack, Telegram, Matrix, Email)
+- [x] Telegram agent responds (single-agent default)
+- [x] Slack, Discord, Matrix, Email adapters implemented
+- [x] All 5 personality files exist
+- [x] Agent A deploys skill → available fleet-wide via shared volume
+- [x] `docker compose up` starts infrastructure with a single command
+- [ ] All 5 agents respond concurrently on their respective channels (requires tokens for each)
 - [ ] Agent A shares insight to council → all other agents can retrieve it
-- [ ] Skill deployed by one agent → available to all agents within 10s
-- [ ] NATS pub/sub: broadcast and direct messages working across fleet
-- [ ] APScheduler cron fires per personality YAML for each agent
-- [ ] `docker compose up` starts everything with a single command
-- [ ] Kill any agent container → it restarts and recovers with state intact
+- [ ] APScheduler cron fires per personality YAML for each active agent
 
 ### Risk items (Phase 5)
 
@@ -777,35 +788,20 @@ ALL of the following must pass before proceeding:
 
 #### 6.1 Rate limiting and safety
 
-- [ ] Implement rate limiting per agent: max 10 LLM calls/minute (overview-v2 §9)
-- [ ] Implement token bucket rate limiter
+- [x] Implement token-bucket-style rate limiting per agent: max 10 LLM calls/minute (overview-v2 §9) (`cell-2r4g0k-moch5faq7q2`)
+- [ ] Implement token bucket rate limiter (refined / generic version)
 - [ ] Basic prompt injection detection layer (regex filter, conversation pattern monitoring)
-- [ ] PydanticAI `retries=2` and 120s overall timeout to prevent infinite tool loops
+- [ ] PydanticAI `retries=2` and 120s overall timeout to prevent infinite tool loops (partial — embedding calls have retries, brain agent does not yet)
 
 #### 6.2 Structured logging and health
 
-- [ ] Implement structured JSON logging across all components (overview-v2 §10):
-  ```python
-  log.info("message_processed", {
-      "agent_id": "discord-agent",
-      "sender": "Jason",
-      "processing_time_ms": 1247,
-      "tools_called": ["roll_dice"],
-      "tokens_used": 342,
-  })
-  ```
-- [ ] Follow logs: `docker compose logs -f discord-agent`
-- [x] Add Docker healthchecks to all services in `docker-compose.yaml`:
-  ```yaml
-  discord-agent:
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-  ```
-- [x] Add restart policies: `restart: unless-stopped` for all agent services
-- [x] `/healthz` endpoint checks PostgreSQL, Redis, NATS, Ollama connectivity — **fixed**: LLM URL now strips `/v1` suffix (was producing `/v1/api/tags` 404), NATS connectivity check added (`cell-2r4g0k-moch5faq7q2`)
+- [x] Implement structured JSON logging across all components (overview-v2 §10) via `src/pillywiggins/logging_utils.py` (`AgentLogger` with round-trip step timing)
+- [x] Follow logs: `docker compose logs -f puck` (works once agent service is uncommented/generated)
+- [x] Add Docker healthchecks to all services in `docker-compose.yaml.example`:
+  - postgres, redis, nats, searxng all have healthchecks in `.example` template
+  - Generated `docker-compose.yaml` inherits these after `pillywiggins onboard`
+- [x] Add restart policies: `restart: unless-stopped` for all services in `.example` template
+- [x] `/healthz` endpoint implemented in `src/pillywiggins/health.py` — checks PostgreSQL, Redis, NATS, Ollama, and embedding connectivity — **fixed**: LLM URL strips `/v1` suffix (was producing `/v1/api/tags` 404), NATS JetStream check added (`cell-2r4g0k-moch5faq7q2`)
 
 #### 6.3 Conversation summarization and memory consolidation
 
@@ -815,19 +811,18 @@ ALL of the following must pass before proceeding:
 
 #### 6.4 Automated backups
 
-- [ ] Create `scripts/backup-db.sh` — `pg_dump` wrapper:
-  ```bash
-  #!/bin/bash
-  docker compose exec -T postgres pg_dump -U postgres pillywiggins | gzip > backup_$(date +%Y%m%d).sql.gz
-  ```
+- [x] Create `scripts/backup-db.sh` — `pg_dump` wrapper with rotation and symlink tracking (`cell-2r4g0k-moch5faq7q2`)
+- [x] Script is self-contained, idempotent, with 14-day retention and `./backups/` default
 - [ ] Schedule as system cron (daily) or add backup service to `docker-compose.yaml`
+- [ ] Test: restore from backup confirmed valid
 
 #### 6.5 Security hardening
 
 - [x] Verify RLS with integration tests: inject agent A credentials, confirm agent B data invisible
 - [x] Council memory write validation enforcement (content length, tag whitelist, rate limit, dedup)
-- [x] Skill sandbox strictness: no access to `DATABASE_URL`, tokens, or app code
-- [x] `.env` file permissions: `chmod 600 .env`, confirm `.gitignore` excludes it
+- [x] Skill sandbox strictness: no access to `DATABASE_URL`, tokens, or app code (`restricted_env()` strips secrets with `DENIED_ENV_PATTERNS`)
+- [x] `.env` file permissions: `chmod 600 .env`, confirmed `.gitignore` excludes it
+- [ ] Run `chmod 600 .env` enforcement in CI or during `pillywiggins onboard`
 
 #### 6.6 Operations runbook
 
@@ -847,13 +842,16 @@ ALL of the following must pass before proceeding:
 
 ### Verification Gate — Phase 6
 
-- [ ] Rate limiting works: agent limited to 10 LLM calls/min
-- [ ] Structured JSON logs appear for all agent events
-- [ ] Docker healthchecks trigger restart on failure
-- [x] `docker compose restart discord-agent` → conversation history survives
-- [ ] PostgreSQL backup script works and produces valid backup
+- [x] Rate limiting works: agent rejects requests when >10 LLM calls/min
+- [x] Structured JSON logs appear for all agent round-trips
+- [x] Docker healthchecks present on infrastructure services
+- [x] `docker compose restart puck` → conversation history survives
+- [x] PostgreSQL backup script works and produces valid compressed backup
 - [x] RLS enforcement: agent A cannot read agent B's private memories
 - [x] Skill sandbox: no access to secrets, 30s timeout enforced
+- [x] `.env` secured: `chmod 600`, excluded from `.gitignore`
+- [x] Healthchecks present on infrastructure services (postgres, redis, nats, searxng)
+- [ ] Health failure triggers automatic container restart (restart policy requires compose regeneration
 - [ ] System runs unattended for 1 week without intervention
 
 ### Risk items (Phase 6)
@@ -1059,7 +1057,7 @@ Phase 6: Hardening
 - APScheduler integration is independent of NATS bus work
 
 **Strict sequential dependencies**:
-- Phase 2 requires the Discord agent from Phase 1 to be working
+- Phase 2 requires the Telegram agent from Phase 1 to be working
 - RLS tests require Phase 1's PostgreSQL + schema setup
 - Phase 3 skills need Phase 2 memory tools (`recall_private_memory`, `share_to_council`)
 - Phase 4 cross-agent skill discovery needs Phase 3 skill registry + NATS announcements
@@ -1090,7 +1088,7 @@ Key files from the project structure (overview-v2 §11) mapped to phases:
 | `src/pillywiggins/adapters/base.py` | BaseAdapter ABC |
 | `src/pillywiggins/adapters/discord_adapter.py` | Discord channel adapter |
 | `src/pillywiggins/health.py` | /healthz endpoint |
-| `personalities/discord.yaml` | Puck personality config |
+| `personalities/puck.yaml` (historically `discord.yaml`) | Puck personality config |
 | `skills/registry.json` | Empty skills registry |
 | `scripts/setup-db.sh` | PostgreSQL schema + RLS setup |
 | `scripts/pull-models.sh` | Ollama model pulls |

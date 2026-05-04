@@ -8,7 +8,8 @@ from nats.js.api import ConsumerConfig, StreamConfig
 
 logger = logging.getLogger(__name__)
 
-COUNCIL_STREAM = "COUNCIL"
+COUNCIL_STREAM = "pillywiggins"
+OLD_COUNCIL_STREAM = "COUNCIL"
 BROADCAST_SUBJECT = "council.broadcast"
 DIRECT_SUBJECT_PREFIX = "council.direct"
 
@@ -110,23 +111,43 @@ class NatsBus:
         raise NatsConnectError(self._nats_url, self._reconnect_attempts, last_error)
 
     async def _ensure_stream(self, js) -> None:
-        """Ensure the COUNCIL JetStream stream exists."""
+        """Ensure the pillywiggins JetStream stream exists, migrating from COUNCIL if needed."""
+        # Check if the new stream already exists
         try:
             await js.stream_info(COUNCIL_STREAM)
             logger.info("JetStream stream %s already exists (OK)", COUNCIL_STREAM)
+            return
         except nats.js.errors.NotFoundError:
-            try:
-                await js.add_stream(
-                    config=StreamConfig(
-                        name=COUNCIL_STREAM,
-                        subjects=[BROADCAST_SUBJECT, f"{DIRECT_SUBJECT_PREFIX}.>"],
-                    ),
-                )
-                logger.info("JetStream stream %s created for %s", COUNCIL_STREAM, self._agent_id)
-            except Exception as e:
-                logger.error("JetStream add_stream failed for %s: %s", self._agent_id, e, exc_info=True)
+            pass
         except Exception as e:
             logger.error("JetStream stream_info failed for %s: %s", self._agent_id, e, exc_info=True)
+            return
+
+        # If new stream doesn't exist, check for old "COUNCIL" stream and migrate subjects
+        try:
+            old_info = await js.stream_info(OLD_COUNCIL_STREAM)
+            logger.info(
+                "Found old stream '%s', creating '%s' with same subjects for %s",
+                OLD_COUNCIL_STREAM, COUNCIL_STREAM, self._agent_id,
+            )
+            subjects = old_info.config.subjects if hasattr(old_info, "config") else [BROADCAST_SUBJECT, f"{DIRECT_SUBJECT_PREFIX}.>"]
+        except nats.js.errors.NotFoundError:
+            subjects = [BROADCAST_SUBJECT, f"{DIRECT_SUBJECT_PREFIX}.>"]
+        except Exception as e:
+            logger.error("JetStream old stream check failed for %s: %s", self._agent_id, e, exc_info=True)
+            subjects = [BROADCAST_SUBJECT, f"{DIRECT_SUBJECT_PREFIX}.>"]
+
+        # Create the new stream
+        try:
+            await js.add_stream(
+                config=StreamConfig(
+                    name=COUNCIL_STREAM,
+                    subjects=subjects,
+                ),
+            )
+            logger.info("JetStream stream %s created for %s", COUNCIL_STREAM, self._agent_id)
+        except Exception as e:
+            logger.error("JetStream add_stream failed for %s: %s", self._agent_id, e, exc_info=True)
 
     async def connect_or_log(self) -> bool:
         """Try to connect to NATS, logging a warning on failure.
@@ -180,10 +201,15 @@ class NatsBus:
         }
         return json.dumps(payload, default=str).encode()
 
-    def _parse_payload(self, msg) -> tuple[str, dict]:
+    def _parse_payload(self, msg) -> tuple[str, dict, str, str]:
         raw = msg.data
         payload = json.loads(raw)
-        return payload["type"], payload["data"]
+        return (
+            payload["type"],
+            payload["data"],
+            payload.get("from", ""),
+            payload.get("timestamp", ""),
+        )
 
     async def publish_broadcast(self, message_type: str, data: dict):
         if self._js is None:
@@ -231,9 +257,9 @@ class NatsBus:
         async def _cb(msg):
             try:
                 logger.debug("Broadcast message received on %s for %s", msg.subject, self._agent_id)
-                msg_type, data = self._parse_payload(msg)
-                logger.info("Broadcast %s received by %s from %s", msg_type, self._agent_id, data.get("from", "?"))
-                await handler(msg_type, data)
+                msg_type, data, from_agent, timestamp = self._parse_payload(msg)
+                logger.info("Broadcast %s received by %s from %s", msg_type, self._agent_id, from_agent or "?")
+                await handler(msg_type, data, from_agent, timestamp)
                 await msg.ack()
                 logger.debug("Broadcast message acked by %s", self._agent_id)
             except Exception:
@@ -263,9 +289,9 @@ class NatsBus:
         async def _cb(msg):
             try:
                 logger.debug("Direct message received on %s for %s", msg.subject, self._agent_id)
-                msg_type, data = self._parse_payload(msg)
-                logger.info("Direct %s received by %s from %s", msg_type, self._agent_id, data.get("from", "?"))
-                await handler(msg_type, data)
+                msg_type, data, from_agent, timestamp = self._parse_payload(msg)
+                logger.info("Direct %s received by %s from %s", msg_type, self._agent_id, from_agent or "?")
+                await handler(msg_type, data, from_agent, timestamp)
                 await msg.ack()
                 logger.debug("Direct message acked by %s", self._agent_id)
             except Exception:

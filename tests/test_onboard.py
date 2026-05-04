@@ -881,8 +881,9 @@ class TestAddAgentToDockerCompose:
                 token_env="PUCK_TELEGRAM_TOKEN",
             )
         data = yaml.safe_load(compose_path.read_text())
-        for vol in ["pgdata", "redisdata", "searxng_data", "skills"]:
+        for vol in ["pgdata", "redisdata", "searxng_data"]:
             assert vol in data["volumes"]
+        # skills uses a bind mount (./skills:/app/skills), not a named volume
 
 
 # ---------------------------------------------------------------------------
@@ -922,13 +923,13 @@ class TestAddTokenToEnv:
 
     def test_inserts_after_telegram_section_header(self, tmp_path):
         env_path = tmp_path / ".env"
-        env_path.write_text("# --- Telegram Bot Tokens ---\nEXISTING_TOKEN=x\n")
+        env_path.write_text("# --- Agent Credentials ---\nEXISTING_TOKEN=x\n")
         add_token_to_env("puck", "12345:abcd", env_path)
         content = env_path.read_text()
         lines = content.split("\n")
         # New token should be inserted right after the header
         for i, line in enumerate(lines):
-            if "Telegram Bot Token" in line:
+            if "Agent Credentials" in line:
                 assert "PUCK_TELEGRAM_TOKEN" in lines[i + 1]
                 break
 
@@ -945,7 +946,7 @@ class TestAddTokenToEnv:
         add_token_to_env("puck", "12345:abcd", env_path)
         content = env_path.read_text()
         assert "PUCK_TELEGRAM_TOKEN=12345:abcd" in content
-        assert "# --- Telegram Bot Tokens ---" in content
+        assert "# --- Agent Credentials ---" in content
 
 
 # ---------------------------------------------------------------------------
@@ -1163,7 +1164,7 @@ class TestAddAgentToConfigs:
             )
             mock_yaml.assert_called_once()
             mock_compose.assert_called_once()
-            mock_env.assert_called_once_with("puck", "12345:abcd")
+            mock_env.assert_called_once_with("puck", "12345:abcd", channel="telegram")
             mock_llm_env.assert_called_once_with("puck", "sk-test")
 
     def test_skips_token_when_empty(self):
@@ -1713,7 +1714,7 @@ class TestReconfigureAgentFlow:
 
         select_responses = iter(["puck", "UTC", "ollama"])
         text_responses = iter(["all", "", "http://localhost:11434/v1", "qwen3.5:8b"])
-        confirm_responses = iter([True, False])
+        confirm_responses = iter([False])
 
         mock_q.select = MagicMock(
             side_effect=lambda *a, **kw: MagicMock(
@@ -1736,6 +1737,7 @@ class TestReconfigureAgentFlow:
                 "id": "puck",
                 "personality": "/config/puck.yaml",
                 "allowed_user_ids": "all",
+                "channel": "telegram",
                 "environment": {
                     "TELEGRAM_BOT_TOKEN": "${PUCK_TELEGRAM_TOKEN}",
                     "LLM_PROVIDER": "ollama",
@@ -1756,10 +1758,12 @@ class TestReconfigureAgentFlow:
                 },
             ),
             patch("pillywiggins.onboard.DOCKER_COMPOSE", Path("/tmp/nonexistent-dc.yaml")),
+            patch("pillywiggins.onboard.subprocess.run") as mock_sub,
         ):
             from pillywiggins.onboard import _reconfigure_agent_flow
 
             await _reconfigure_agent_flow()
+            mock_sub.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_no_agents(self):
@@ -2597,7 +2601,7 @@ class TestTimezoneInReconfigureAgentFlow:
 
         select_responses = iter(["puck", "America/Chicago", "ollama"])
         text_responses = iter(["all", "", "http://localhost:11434/v1", "qwen3.5:8b"])
-        confirm_responses = iter([True, False])
+        confirm_responses = iter([False])
 
         mock_q.select = MagicMock(
             side_effect=lambda *a, **kw: MagicMock(
@@ -2621,6 +2625,7 @@ class TestTimezoneInReconfigureAgentFlow:
                 "personality": "/config/puck.yaml",
                 "allowed_user_ids": "all",
                 "timezone": "UTC",
+                "channel": "telegram",
                 "environment": {
                     "TELEGRAM_BOT_TOKEN": "${PUCK_TELEGRAM_TOKEN}",
                     "LLM_PROVIDER": "ollama",
@@ -2641,10 +2646,12 @@ class TestTimezoneInReconfigureAgentFlow:
                 },
             ),
             patch("pillywiggins.onboard.DOCKER_COMPOSE", Path("/tmp/nonexistent-dc.yaml")),
+            patch("pillywiggins.onboard.subprocess.run") as mock_sub,
         ):
             from pillywiggins.onboard import _reconfigure_agent_flow
 
             await _reconfigure_agent_flow()
+            mock_sub.assert_not_called()
 
             saved_data = mock_save.call_args[0][1]
             saved_agent = saved_data["agents"][0]
@@ -2660,7 +2667,7 @@ class TestTimezoneInReconfigureAgentFlow:
         text_responses = iter(
             ["all", "Europe/Helsinki", "", "http://localhost:11434/v1", "qwen3.5:8b"]
         )
-        confirm_responses = iter([True, False])
+        confirm_responses = iter([False])
 
         mock_q.select = MagicMock(
             side_effect=lambda *a, **kw: MagicMock(
@@ -2684,6 +2691,7 @@ class TestTimezoneInReconfigureAgentFlow:
                 "personality": "/config/puck.yaml",
                 "allowed_user_ids": "all",
                 "timezone": "UTC",
+                "channel": "telegram",
                 "environment": {
                     "TELEGRAM_BOT_TOKEN": "${PUCK_TELEGRAM_TOKEN}",
                     "LLM_PROVIDER": "ollama",
@@ -2704,10 +2712,12 @@ class TestTimezoneInReconfigureAgentFlow:
                 },
             ),
             patch("pillywiggins.onboard.DOCKER_COMPOSE", Path("/tmp/nonexistent-dc.yaml")),
+            patch("pillywiggins.onboard.subprocess.run") as mock_sub,
         ):
             from pillywiggins.onboard import _reconfigure_agent_flow
 
             await _reconfigure_agent_flow()
+            mock_sub.assert_not_called()
 
             saved_data = mock_save.call_args[0][1]
             saved_agent = saved_data["agents"][0]

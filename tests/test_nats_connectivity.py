@@ -16,6 +16,10 @@ from pillywiggins.config import Settings
 from pillywiggins.messaging.nats_bus import NatsBus, NatsConnectError, COUNCIL_STREAM
 
 
+def test_council_stream_is_pillywiggins():
+    assert COUNCIL_STREAM == "pillywiggins"
+
+
 # ---------------------------------------------------------------------------
 # Config tests
 # ---------------------------------------------------------------------------

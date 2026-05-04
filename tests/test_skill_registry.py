@@ -530,6 +530,120 @@ async def test_watch_loop_detects_new_file_and_reloads(tmp_path):
     reg.stop_watching()
 
 
+@pytest.mark.asyncio
+async def test_watch_loop_syncs_registry_json_on_change(tmp_path):
+    """When a change is detected the watcher must also rewrite registry.json."""
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    reg = SkillRegistry(skills_dir=skills_dir)
+    reg._last_snapshot = reg._snapshot_skills()  # baseline empty
+    reg._watcher_running = True
+
+    sync_calls = 0
+    original_sync = reg._sync_registry_json
+
+    def tracking_sync():
+        nonlocal sync_calls
+        sync_calls += 1
+        return original_sync()
+
+    reg._sync_registry_json = tracking_sync
+
+    (skills_dir / "auto.py").write_text(
+        'SKILL_META = {"name": "auto", "description": "auto", "version": "1.0", "parameters": {}, "permissions": {"network": False, "subprocess": False, "file_write": False}}\n'
+        "async def run():\n    return 'ok'\n"
+    )
+
+    sleep_count = 0
+
+    async def fake_sleep(_):
+        nonlocal sleep_count
+        sleep_count += 1
+        if sleep_count >= 2:
+            raise asyncio.CancelledError()
+
+    with patch("pillywiggins.skills.registry.asyncio.sleep", fake_sleep):
+        await reg._watch_loop(interval=0.001)
+
+    assert sync_calls >= 1
+    reg.stop_watching()
+
+
+@pytest.mark.asyncio
+async def test_watch_for_changes_delegates_to_start_watching(tmp_path):
+    """watch_for_changes should invoke start_watching with a 10-second default."""
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    reg = SkillRegistry(skills_dir=skills_dir)
+
+    start_calls = []
+
+    def fake_start_watching(interval):
+        start_calls.append(interval)
+        reg._watcher_running = True
+        reg._last_snapshot = reg._snapshot_skills()
+
+    reg.start_watching = fake_start_watching
+    reg.watch_for_changes()
+
+    assert len(start_calls) == 1
+    assert start_calls[0] == 10.0
+
+    reg.stop_watching()
+
+
+@pytest.mark.asyncio
+async def test_notify_reload_with_nats_bus(tmp_path):
+    """_notify_reload should call publish_broadcast when a NATS bus is available."""
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    mock_bus = AsyncMock()
+    reg = SkillRegistry(skills_dir=skills_dir, agent_id="test-agent", nats_bus=mock_bus)
+    await reg._notify_reload()
+
+    mock_bus.publish_broadcast.assert_awaited_once_with(
+        "skill_published",
+        {"agent_id": "test-agent", "action": "reload"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_notify_reload_without_nats_bus(tmp_path):
+    """_notify_reload should silently return when no NATS bus is configured."""
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    reg = SkillRegistry(skills_dir=skills_dir)
+    await reg._notify_reload()  # should not raise
+
+
+@pytest.mark.asyncio
+async def test_broadcast_reload_schedules_task(tmp_path):
+    """broadcast_reload should schedule _notify_reload on the running event loop."""
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    mock_bus = AsyncMock()
+    reg = SkillRegistry(skills_dir=skills_dir, agent_id="agent-42", nats_bus=mock_bus)
+
+    reg.broadcast_reload()
+    # Give the loop a chance to execute the spawned task
+    await asyncio.sleep(0.05)
+
+    mock_bus.publish_broadcast.assert_awaited_once_with(
+        "skill_published",
+        {"agent_id": "agent-42", "action": "reload"},
+    )
+
+
+def test_broadcast_reload_no_loop_warns(caplog):
+    """broadcast_reload should log a warning when no event loop is running."""
+    import logging
+
+    reg = SkillRegistry(agent_id="agent-x")
+    with caplog.at_level(logging.WARNING, logger="pillywiggins.skills.registry"):
+        reg.broadcast_reload()
+    assert any("No running event loop" in rec.message for rec in caplog.records)
+
+
 # ---------------------------------------------------------------------------
 # Atomic registry.json write tests
 # ---------------------------------------------------------------------------

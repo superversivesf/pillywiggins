@@ -346,11 +346,18 @@ def add_agent_to_docker_compose(
         "build": ".",
         "command": f"python -m pillywiggins --agent-id {agent_id}",
         "env_file": ".env",
+        "restart": "unless-stopped",
         "extra_hosts": ["host.docker.internal:host-gateway"],
         "environment": service_env,
         "volumes": list(COMPOSE_VOLUMES),
         "depends_on": dict(COMPOSE_DEPENDS_ON),
         "networks": list(COMPOSE_NETWORKS),
+        "healthcheck": {
+            "test": ["CMD-SHELL", "ps aux | grep -v grep | grep pillywiggins || exit 1"],
+            "interval": "10s",
+            "timeout": "5s",
+            "retries": 3,
+        },
     }
 
     compose["services"][agent_id] = service
@@ -363,7 +370,7 @@ def add_agent_to_docker_compose(
 
     if "volumes" not in compose:
         compose["volumes"] = {}
-    for vol in ["pgdata", "redisdata", "searxng_data", "skills"]:
+    for vol in ["pgdata", "redisdata", "searxng_data"]:
         if vol not in compose["volumes"]:
             compose["volumes"][vol] = None
 
@@ -1008,8 +1015,9 @@ async def _reconfigure_agent_flow() -> None:
     save_yaml(AGENTS_YAML, data)
     print(f"Updated '{agent_id}' in agents.yaml")
 
+    channel = agent_data.get("channel", "telegram")
     if new_token:
-        add_token_to_env(agent_id, new_token, channel=channel)
+        add_token_to_env(agent_id, new_token)
 
     if llm_api_key:
         add_llm_api_key_to_env(agent_id, llm_api_key)

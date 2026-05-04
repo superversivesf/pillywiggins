@@ -174,8 +174,8 @@ class PillywigginAgent:
                     conversation_key,
                 )
 
-    async def _on_nats_message(self, msg_type: str, data: dict) -> None:
-        logger.info("Agent %s handling NATS message type=%s from=%s", self.agent_id, msg_type, data.get("from", "?"))
+    async def _on_nats_message(self, msg_type: str, data: dict, from_agent: str = "", timestamp: str = "") -> None:
+        logger.info("Agent %s handling NATS message type=%s from=%s", self.agent_id, msg_type, from_agent or "?")
         if msg_type == "message":
             try:
                 channel = ChannelType(data.get("channel", "telegram"))
@@ -186,15 +186,14 @@ class PillywigginAgent:
                 channel_user_id=data.get("channel_user_id", ""),
                 content=data.get("content", ""),
                 conversation_key=data.get("conversation_key", ""),
-                metadata=data.get("metadata", {}),
+                metadata={"from_agent": from_agent, "timestamp": timestamp, **data.get("metadata", {})},
             )
-            logger.info("Agent %s processing inbound direct message from %s", self.agent_id, data.get("from", "?"))
+            logger.info("Agent %s processing inbound direct message from %s", self.agent_id, from_agent or "?")
             response = await self.process_message(msg)
             if response and self._nats_bus is not None:
-                sender = data.get("from")
-                if sender:
+                if from_agent:
                     await self._nats_bus.publish_direct(
-                        target_agent_id=sender,
+                        target_agent_id=from_agent,
                         message_type="direct_reply",
                         data={"reply": response},
                     )
@@ -202,12 +201,12 @@ class PillywigginAgent:
             if self._council_memory is not None:
                 await self._council_memory.write_entry(
                     content=data.get("content", ""),
-                    tags=data.get("tags", []),
+                    tags=[from_agent, timestamp, *data.get("tags", [])],
                     embedding=data.get("embedding", []),
                     message_type="insight",
                     confidence=1.0,
                 )
-        elif msg_type == "skill_published":
+        elif msg_type in ("skill_published", "skill_deployed"):
             if self._skill_registry is not None:
                 self._skill_registry.load_all()
                 self._refresh_brain_tools()
@@ -256,7 +255,7 @@ class PillywigginAgent:
                     for s in self.personality.schedules:
                         name = s.get("name", "unnamed")
                         schedules[name] = s
-                scheduler = AgentScheduler(settings.redis_url, self.agent_id)
+                scheduler = AgentScheduler(settings.redis_url, self.agent_id, channel=self.personality.channel)
                 await scheduler.start(yaml_schedules=schedules)
                 self._scheduler = scheduler
                 self._register_scheduler_handlers()

@@ -102,7 +102,7 @@ async def test_connect_adds_council_stream(bus):
 
     js.add_stream.assert_called_once()
     call_kwargs = js.add_stream.call_args
-    assert call_kwargs.kwargs["config"].name == COUNCIL_STREAM
+    assert call_kwargs.kwargs["config"].name == "pillywiggins"
     subjects = call_kwargs.kwargs["config"].subjects
     assert BROADCAST_SUBJECT in subjects
     assert f"{DIRECT_SUBJECT_PREFIX}.>" in subjects
@@ -500,10 +500,12 @@ async def test_parse_payload_extracts_type_and_data(bus):
     mock_msg = MagicMock()
     mock_msg.data = original_payload
 
-    msg_type, data = bus._parse_payload(mock_msg)
+    msg_type, data, from_agent, timestamp = bus._parse_payload(mock_msg)
 
     assert msg_type == "skill_announcement"
     assert data == {"skill": "web_search"}
+    assert from_agent == "puck"
+    assert timestamp
 
 
 # ---------------------------------------------------------------------------
@@ -515,8 +517,8 @@ async def test_parse_payload_extracts_type_and_data(bus):
 async def test_broadcast_subscription_callback_parses_message(bus):
     received = []
 
-    async def handler(msg_type, data):
-        received.append((msg_type, data))
+    async def handler(msg_type, data, from_agent, timestamp):
+        received.append((msg_type, data, from_agent, timestamp))
 
     nc, js = _mock_nats_connection()
 
@@ -542,14 +544,16 @@ async def test_broadcast_subscription_callback_parses_message(bus):
     assert len(received) == 1
     assert received[0][0] == "proposal"
     assert received[0][1] == {"text": "new idea"}
+    assert received[0][2] == "puck"
+    assert received[0][3]
 
 
 @pytest.mark.asyncio
 async def test_direct_subscription_callback_parses_message(bus):
     received = []
 
-    async def handler(msg_type, data):
-        received.append((msg_type, data))
+    async def handler(msg_type, data, from_agent, timestamp):
+        received.append((msg_type, data, from_agent, timestamp))
 
     nc, js = _mock_nats_connection()
 
@@ -575,6 +579,8 @@ async def test_direct_subscription_callback_parses_message(bus):
     assert len(received) == 1
     assert received[0][0] == "question"
     assert received[0][1] == {"text": "anyone tried this?"}
+    assert received[0][2] == "puck"
+    assert received[0][3]
 
 
 # ---------------------------------------------------------------------------
@@ -645,7 +651,12 @@ def test_direct_subject_prefix_constant():
 
 
 def test_council_stream_constant():
-    assert COUNCIL_STREAM == "COUNCIL"
+    assert COUNCIL_STREAM == "pillywiggins"
+
+
+def test_old_council_stream_constant():
+    from pillywiggins.messaging.nats_bus import OLD_COUNCIL_STREAM
+    assert OLD_COUNCIL_STREAM == "COUNCIL"
 
 
 def test_default_connect_timeout():
