@@ -742,9 +742,11 @@ async def _add_agent_flow() -> None:
         bot_info = "(unknown channel)"
 
     # Optional Brave Search API key (prompt alongside credentials — can skip)
+    env = _read_env_dict(ENV_FILE)
+    existing_brave_key = env.get("BRAVE_API_KEY", "")
     brave_api_key = await questionary.text(
         "Brave Search API key (optional — press Enter to skip):",
-        default="",
+        default=existing_brave_key,
     ).ask_async()
     if brave_api_key:
         add_brave_api_key_to_env(brave_api_key)
