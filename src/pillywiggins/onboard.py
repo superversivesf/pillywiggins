@@ -482,6 +482,39 @@ def add_llm_api_key_to_env(agent_id: str, api_key: str, env_path: Path = ENV_FIL
     print(f"Added {key_env} to {env_path}")
 
 
+def add_brave_api_key_to_env(api_key: str, env_path: Path = ENV_FILE) -> None:
+    key_line = f"BRAVE_API_KEY={api_key}"
+
+    if not env_path.exists():
+        return
+
+    content = read_text(env_path)
+    lines = content.split("\n")
+
+    # Update existing key
+    for i, line in enumerate(lines):
+        if line.strip().startswith("BRAVE_API_KEY="):
+            lines[i] = key_line
+            write_text(env_path, "\n".join(lines))
+            print(f"Updated BRAVE_API_KEY in {env_path}")
+            return
+
+    # Insert after search-related section
+    for i, line in enumerate(lines):
+        if "Search" in line or "SEARXNG" in line or "BRAVE" in line:
+            lines.insert(i + 1, key_line)
+            write_text(env_path, "\n".join(lines))
+            print(f"Added BRAVE_API_KEY to {env_path}")
+            return
+
+    # Append at end with header
+    lines.append("")
+    lines.append("# --- Search Configuration ---")
+    lines.append(key_line)
+    write_text(env_path, "\n".join(lines))
+    print(f"Added BRAVE_API_KEY to {env_path}")
+
+
 def add_agent_to_configs(
     agent_id: str,
     personality_filename: str,
@@ -707,6 +740,14 @@ async def _add_agent_flow() -> None:
     else:
         token = ""
         bot_info = "(unknown channel)"
+
+    # Optional Brave Search API key (prompt alongside credentials — can skip)
+    brave_api_key = await questionary.text(
+        "Brave Search API key (optional — press Enter to skip):",
+        default="",
+    ).ask_async()
+    if brave_api_key:
+        add_brave_api_key_to_env(brave_api_key)
 
     # 5. LLM provider + model — default to first agent's config if available
     existing_llm = get_first_agent_llm_config()

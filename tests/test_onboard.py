@@ -12,6 +12,7 @@ from pillywiggins.onboard import (
     add_agent_to_agents_yaml,
     add_agent_to_configs,
     add_agent_to_docker_compose,
+    add_brave_api_key_to_env,
     add_llm_api_key_to_env,
     add_token_to_env,
     agent_ids_in_use,
@@ -992,6 +993,45 @@ class TestAddLlmApiKeyToEnv:
 
 
 # ---------------------------------------------------------------------------
+# add_brave_api_key_to_env
+# ---------------------------------------------------------------------------
+
+
+class TestAddBraveApiKeyToEnv:
+    def test_skips_if_file_missing(self, tmp_path):
+        env_path = tmp_path / ".env"
+        from pillywiggins.onboard import add_brave_api_key_to_env
+        # Doesn't exist — should not raise
+        add_brave_api_key_to_env("brave-key", env_path)
+
+    def test_updates_existing_key(self, tmp_path):
+        env_path = tmp_path / ".env"
+        env_path.write_text("BRAVE_API_KEY=old-key\n")
+        from pillywiggins.onboard import add_brave_api_key_to_env
+        add_brave_api_key_to_env("new-key", env_path)
+        content = env_path.read_text()
+        assert "BRAVE_API_KEY=new-key" in content
+        assert "old-key" not in content
+
+    def test_inserts_after_search_section(self, tmp_path):
+        env_path = tmp_path / ".env"
+        env_path.write_text("# --- Search Configuration ---\nSEARXNG_URL=http://searxng:8080\n")
+        from pillywiggins.onboard import add_brave_api_key_to_env
+        add_brave_api_key_to_env("brave-key", env_path)
+        content = env_path.read_text()
+        assert "BRAVE_API_KEY=brave-key" in content
+
+    def test_appends_with_section_header(self, tmp_path):
+        env_path = tmp_path / ".env"
+        env_path.write_text("UNRELATED=value\n")
+        from pillywiggins.onboard import add_brave_api_key_to_env
+        add_brave_api_key_to_env("brave-key", env_path)
+        content = env_path.read_text()
+        assert "BRAVE_API_KEY=brave-key" in content
+        assert "# --- Search Configuration ---" in content
+
+
+# ---------------------------------------------------------------------------
 # remove_agent_from_agents_yaml
 # ---------------------------------------------------------------------------
 
@@ -1249,6 +1289,7 @@ class TestAddAgentFlow:
             [
                 "puck",
                 "123456:ABC-DEF1234",
+                "",
                 "http://host.docker.internal:11434/v1",
                 "qwen3.5:8b",
                 "all",
@@ -1388,6 +1429,7 @@ class TestAddAgentFlow:
             [
                 "puck",
                 "123456:ABC-DEF1234",
+                "",
                 "http://host.docker.internal:11434/v1",
                 "qwen3.5:8b",
                 "all",
@@ -1456,6 +1498,7 @@ class TestAddAgentFlow:
             [
                 "puck",
                 "badtoken1234567890",
+                "",
                 "http://host.docker.internal:11434/v1",
                 "qwen3.5:8b",
                 "all",
@@ -1522,7 +1565,7 @@ class TestAddAgentFlow:
 
         select_responses = iter(["Puck — mischievous", "telegram", "ollama", "qwen3.5:8b", "UTC"])
         text_responses = iter(
-            ["puck", "123456:ABC-DEF1234", "http://host.docker.internal:11434/v1", "all", "3"]
+            ["puck", "123456:ABC-DEF1234", "", "http://host.docker.internal:11434/v1", "all", "3"]
         )
         confirm_responses = iter([True, False])
 
@@ -1582,6 +1625,7 @@ class TestAddAgentFlow:
             [
                 "puck",
                 "123456:ABC-DEF1234",
+                "",
                 "https://api.openai.com/v1",
                 "sk-testkey",
                 "gpt-4o",
@@ -1650,6 +1694,7 @@ class TestAddAgentFlow:
             [
                 "puck",
                 "123456:ABC-DEF1234",
+                "",
                 "http://host.docker.internal:11434/v1",
                 "qwen3.5:8b",
                 "all",
@@ -2170,6 +2215,7 @@ class TestAddAgentFlowCancellations:
             [
                 "puck",
                 "123456:ABC-DEF1234",
+                "",
                 "http://host.docker.internal:11434/v1",
                 "qwen3.5:8b",
                 "all",
@@ -2391,6 +2437,7 @@ class TestTimezoneInAddAgentFlow:
             [
                 "puck",
                 "123456:ABC-DEF1234",
+                "",
                 "http://host.docker.internal:11434/v1",
                 "qwen3.5:8b",
                 "all",
@@ -2468,6 +2515,7 @@ class TestTimezoneInAddAgentFlow:
             [
                 "puck",
                 "123456:ABC-DEF1234",
+                "",
                 "http://host.docker.internal:11434/v1",
                 "qwen3.5:8b",
                 "all",
@@ -2543,6 +2591,7 @@ class TestTimezoneInAddAgentFlow:
             [
                 "puck",
                 "123456:ABC-DEF1234",
+                "",
                 "http://host.docker.internal:11434/v1",
                 "qwen3.5:8b",
                 "all",
