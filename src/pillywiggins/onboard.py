@@ -378,8 +378,8 @@ def add_agent_to_docker_compose(
     print(f"Added '{agent_id}' service to docker-compose.yaml")
 
 
-def add_token_to_env(agent_id: str, token_value: str, env_path: Path = ENV_FILE) -> None:
-    token_env = _token_env_for_agent(agent_id)
+def add_token_to_env(agent_id: str, token_value: str, env_path: Path = ENV_FILE, channel: str = "telegram") -> None:
+    token_env = _token_env_for_agent(agent_id, channel)
     token_line = f"{token_env}={token_value}"
 
     if not env_path.exists():
@@ -1017,7 +1017,7 @@ async def _reconfigure_agent_flow() -> None:
 
     channel = agent_data.get("channel", "telegram")
     if new_token:
-        add_token_to_env(agent_id, new_token)
+        add_token_to_env(agent_id, new_token, channel=channel)
 
     if llm_api_key:
         add_llm_api_key_to_env(agent_id, llm_api_key)
