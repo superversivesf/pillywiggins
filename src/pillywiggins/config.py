@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     llm_base_url: str = "http://host.docker.internal:11434/v1"
     llm_api_key: str = ""
     model_name: str = "qwen3.5:8b"
-    embedding_model: str = "auto"  # "auto" = discover from Ollama, "" = use HF
+    embedding_model: str = "nomic-embed-text"  # default for Ollama embedding
     embedding_dimension: int = 768  # updated at startup by resolve_embedding_config
     telegram_bot_token: str = ""
     discord_bot_token: str = ""

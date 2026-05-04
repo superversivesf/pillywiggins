@@ -78,102 +78,98 @@ def _make_skill(
 
 
 def test_create_brain_ollama_sets_base_url(monkeypatch):
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     agent = create_brain(
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="http://ollama-host:11434",
         api_key="",
     )
-    assert os.environ["OPENAI_BASE_URL"] == "http://ollama-host:11434/v1"
-    assert os.environ["OPENAI_API_KEY"] == "ollama"
+    assert agent.model.provider.base_url == "http://ollama-host:11434/v1/"
+    assert agent.model.provider.client.api_key == "ollama"
 
 
 def test_create_brain_ollama_default_base_url(monkeypatch):
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    create_brain(
+    agent = create_brain(
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="",
         api_key="",
     )
-    assert os.environ["OPENAI_BASE_URL"] == "http://host.docker.internal:11434/v1"
+    assert agent.model.provider.base_url == "http://host.docker.internal:11434/v1/"
 
 
 def test_create_brain_ollama_no_double_v1(monkeypatch):
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    create_brain(
+    agent = create_brain(
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="http://localhost:11434/v1",
         api_key="",
     )
-    assert os.environ["OPENAI_BASE_URL"] == "http://localhost:11434/v1"
+    assert agent.model.provider.base_url == "http://localhost:11434/v1/"
 
 
 def test_create_brain_ollama_sets_api_key(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    create_brain(
+    agent = create_brain(
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="http://localhost:11434",
         api_key="sk-ollama-key",
     )
-    assert os.environ["OPENAI_API_KEY"] == "sk-ollama-key"
+    assert agent.model.provider.client.api_key == "sk-ollama-key"
 
 
 def test_create_brain_ollama_no_api_key_uses_ollama(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    create_brain(
+    agent = create_brain(
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="http://localhost:11434",
         api_key="",
     )
-    assert os.environ["OPENAI_API_KEY"] == "ollama"
+    assert agent.model.provider.client.api_key == "ollama"
 
 
 def test_create_brain_openai_sets_api_key(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     agent = create_brain(
         model_name="gpt-4o",
         provider="openai",
         base_url="",
         api_key="sk-test-key",
     )
-    assert os.environ["OPENAI_API_KEY"] == "sk-test-key"
-    assert "OPENAI_BASE_URL" not in os.environ
+    assert agent.model.provider.client.api_key == "sk-test-key"
 
 
 def test_create_brain_openai_sets_base_url(monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    create_brain(
+    agent = create_brain(
         model_name="gpt-4o",
         provider="openai",
         base_url="https://api.custom-openai.com/v1",
         api_key="sk-test-key",
     )
-    assert os.environ["OPENAI_BASE_URL"] == "https://api.custom-openai.com/v1"
+    assert agent.model.provider.base_url == "https://api.custom-openai.com/v1/"
 
 
 def test_create_brain_openai_no_base_url_when_empty(monkeypatch):
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    create_brain(
+    agent = create_brain(
         model_name="gpt-4o",
         provider="openai",
         base_url="",
         api_key="sk-test-key",
     )
-    assert "OPENAI_BASE_URL" not in os.environ
+    assert "custom" not in agent.model.provider.base_url
+
+
+def test_create_brain_openai_no_base_url_when_none(monkeypatch):
+    agent = create_brain(
+        model_name="gpt-4o",
+        provider="openai",
+        base_url="",
+        api_key="sk-test-key",
+    )
+    # Default OpenAI base URL should be used
+    assert "openai.com" in agent.model.provider.base_url
 
 
 def test_create_brain_dynamic_system_prompt(monkeypatch):
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     agent = create_brain(
         model_name="qwen3.5:8b",
         provider="ollama",
@@ -201,21 +197,18 @@ def test_create_brain_dynamic_system_prompt(monkeypatch):
     assert "curious" in result
 
 
-def test_create_brain_env_vars_cleanup(monkeypatch):
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+def test_create_brain_does_not_mutate_os_environ(monkeypatch):
     create_brain(
         model_name="qwen3.5:8b",
         provider="ollama",
         base_url="http://my-ollama:11434",
         api_key="key123",
     )
-    assert os.environ["OPENAI_BASE_URL"] == "http://my-ollama:11434/v1"
-    assert os.environ["OPENAI_API_KEY"] == "key123"
+    assert "OPENAI_BASE_URL" not in os.environ
+    assert "OPENAI_API_KEY" not in os.environ
 
 
 def test_create_brain_registers_builtin_tools(monkeypatch):
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     agent = create_brain(
         model_name="qwen3.5:8b",
         provider="ollama",
@@ -234,7 +227,6 @@ def test_create_brain_registers_builtin_tools(monkeypatch):
 
 
 def test_create_brain_registers_skill_tools(monkeypatch):
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     registry = MagicMock(spec=SkillRegistry)
     skill = _make_skill(name="weather_check", description="Checks weather")
     registry.list_skills.return_value = [skill]
@@ -250,7 +242,6 @@ def test_create_brain_registers_skill_tools(monkeypatch):
 
 
 def test_create_brain_no_skill_registry_no_skill_tools(monkeypatch):
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     agent = create_brain(
         model_name="qwen3.5:8b",
         provider="ollama",
@@ -277,7 +268,6 @@ def test_create_brain_no_skill_registry_no_skill_tools(monkeypatch):
 
 
 def test_create_brain_empty_skill_registry(monkeypatch):
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     registry = MagicMock(spec=SkillRegistry)
     registry.list_skills.return_value = []
     agent = create_brain(
@@ -292,7 +282,6 @@ def test_create_brain_empty_skill_registry(monkeypatch):
 
 
 def test_create_brain_multiple_skill_tools(monkeypatch):
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     registry = MagicMock(spec=SkillRegistry)
     skill1 = _make_skill(name="weather", description="Weather skill")
     skill2 = _make_skill(name="calculator", description="Calc skill")
@@ -314,7 +303,6 @@ def test_create_brain_multiple_skill_tools(monkeypatch):
 
 
 def test_create_brain_deps_type_is_agent_deps(monkeypatch):
-    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     agent = create_brain(
         model_name="qwen3.5:8b",
         provider="ollama",
@@ -1273,8 +1261,6 @@ class TestListScheduledTasks:
 
 class TestPersonalityPromptNone:
     def test_none_personality_returns_default(self, monkeypatch):
-        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         agent = create_brain(
             model_name="qwen3.5:8b",
             provider="ollama",
@@ -1385,8 +1371,6 @@ class TestGetConversationInfo:
 
 class TestTimezoneInSystemPrompt:
     def test_timezone_in_prompt(self, monkeypatch):
-        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         agent = create_brain(
             model_name="qwen3.5:8b",
             provider="ollama",
@@ -1414,8 +1398,6 @@ class TestTimezoneInSystemPrompt:
         assert "Current time is" in result
 
     def test_utc_timezone_in_prompt(self, monkeypatch):
-        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         agent = create_brain(
             model_name="qwen3.5:8b",
             provider="ollama",
@@ -1440,8 +1422,6 @@ class TestTimezoneInSystemPrompt:
         assert "Your timezone is UTC" in result
 
     def test_no_timezone_in_default_prompt(self, monkeypatch):
-        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
-        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         agent = create_brain(
             model_name="qwen3.5:8b",
             provider="ollama",
@@ -1461,7 +1441,6 @@ class TestTimezoneInSystemPrompt:
 
 class TestGetCurentTimeToolRegistered:
     def test_get_current_time_tool_registered(self, monkeypatch):
-        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
         agent = create_brain(
             model_name="qwen3.5:8b",
             provider="ollama",
@@ -1472,7 +1451,6 @@ class TestGetCurentTimeToolRegistered:
         assert "get_current_time" in tool_names
 
     def test_get_conversation_info_tool_registered(self, monkeypatch):
-        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
         agent = create_brain(
             model_name="qwen3.5:8b",
             provider="ollama",

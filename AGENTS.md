@@ -18,6 +18,18 @@ docker compose up -d --build
 
 Config files (`agents.yaml`, `docker-compose.yaml`, `.env`) are copied from `.example` templates on first run of `pillywiggins onboard`. They are gitignored — your local config is never committed.
 
+## Workflow Rules
+
+### Small-Step Workflow (MANDATORY)
+
+All agents **MUST** follow a strict small-step workflow:
+
+1. **Do ONE small step at a time** — Make a single, focused change.
+2. **Verify it works** — Run tests, check for errors, confirm the change is correct.
+3. **ONLY THEN move to the next step** — Never chain multiple unverified changes together.
+
+This is essential for stability and must never be forgotten. Violating this rule leads to cascading failures, lost memory, and broken deployments.
+
 ## Project State
 
 **Post-implementation.** The onboard wizard (`pillywiggins onboard`) is the entry point for adding agents. Install via `pipx install -e .`. Config files (`agents.yaml`, `docker-compose.yaml`, `.env`) are generated from `.example` templates on first run and are gitignored.
@@ -120,3 +132,4 @@ These recommend Dapr/K8s — the architecture we chose not to build. Kept for re
 - **`.env` must never be committed** — `.gitignore` must include `.env`. Use `env.example` as the template.
 - **`agents.yaml` and `docker-compose.yaml` are gitignored** — They're generated from `.example` templates by `pillywiggins onboard`. Edit `.example` files for defaults; edit real files for deployment.
 - **Skill sandbox has limits** — Restricted subprocess with timeouts is not as strong as gVisor. Don't run untrusted code without user approval. See overview-v2 §9.
+- **Never skip the small-step workflow** — Chaining unverified changes causes cascading failures and silent memory loss. One step, verify, then next.

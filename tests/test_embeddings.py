@@ -16,12 +16,13 @@ from pillywiggins.memory.embeddings import (
 
 @pytest.fixture(autouse=True)
 def clear_embedding_cache(monkeypatch):
-    """Clear the global embedding cache before every test so tests are isolated."""
+    """Clear the global embedding cache and session before every test so tests are isolated."""
     from pillywiggins.memory import embeddings as emb_mod
 
     emb_mod._embedding_cache.clear()
     monkeypatch.setattr(emb_mod, "_CACHE_TTL_SECONDS", 3600)
     monkeypatch.setattr(emb_mod, "_MAX_RETRIES", 3)
+    emb_mod._session = None
 
 
 @pytest.fixture

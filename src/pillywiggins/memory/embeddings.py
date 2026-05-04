@@ -33,6 +33,25 @@ KNOWN_EMBEDDING_DIMENSIONS: dict[str, int] = {
 # Lazy-initialized HF fallback provider instance.
 _hf_provider: Optional[object] = None
 
+# Module-level reusable aiohttp session
+_session: aiohttp.ClientSession | None = None
+
+
+def _get_session() -> aiohttp.ClientSession:
+    """Return the shared aiohttp ClientSession, creating it if necessary."""
+    global _session
+    if _session is None:
+        _session = aiohttp.ClientSession()
+    return _session
+
+
+async def close_embedding_session() -> None:
+    """Close the shared aiohttp ClientSession if it exists."""
+    global _session
+    if _session is not None:
+        await _session.close()
+        _session = None
+
 
 def _get_hf_provider():
     """Return (or create) the HuggingFaceEmbeddingProvider singleton."""
@@ -102,27 +121,27 @@ async def _do_embed_request(
     headers: dict,
 ) -> dict | None:
     """Execute a single HTTP POST and return parsed JSON or None."""
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload, headers=headers) as resp:
-            body = await resp.text()
-            if resp.status != 200:
-                logger.error(
-                    "Embedding request failed: status=%s url=%s body=%s",
-                    resp.status,
-                    url,
-                    body[:500],
-                )
-                return {"_error_status": resp.status, "_error_body": body[:500]}
-            try:
-                return await resp.json()
-            except Exception:
-                logger.exception(
-                    "Embedding response is not valid JSON (status=%s url=%s body=%s)",
-                    resp.status,
-                    url,
-                    body[:500],
-                )
-                return None
+    session = _get_session()
+    async with session.post(url, json=payload, headers=headers) as resp:
+        body = await resp.text()
+        if resp.status != 200:
+            logger.error(
+                "Embedding request failed: status=%s url=%s body=%s",
+                resp.status,
+                url,
+                body[:500],
+            )
+            return {"_error_status": resp.status, "_error_body": body[:500]}
+        try:
+            return await resp.json()
+        except Exception:
+            logger.exception(
+                "Embedding response is not valid JSON (status=%s url=%s body=%s)",
+                resp.status,
+                url,
+                body[:500],
+            )
+            return None
 
 
 async def _embed_with_retry(
@@ -225,7 +244,11 @@ async def _extract_embedding(
     if isinstance(result, list):
         return result
     if provider == "ollama":
-        return result.get("embeddings", [None])[0]
+        embeddings = result.get("embeddings", [])
+        if not embeddings:
+            logger.warning("Ollama returned empty embeddings list for model %s", model)
+            return None
+        return embeddings[0]
     data = result.get("data", [])
     if data:
         return data[0].get("embedding")

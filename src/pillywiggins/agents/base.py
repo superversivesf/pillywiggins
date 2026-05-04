@@ -20,7 +20,7 @@ from pillywiggins.agents.deps import AgentDeps
 from pillywiggins.agents.personality import Personality
 from pillywiggins.logging_utils import AgentLogger
 from pillywiggins.memory.cache import ConversationCache
-from pillywiggins.memory.council import CouncilMemory
+from pillywiggins.memory.council import CouncilMemory, TAG_WHITELIST
 from pillywiggins.memory.private import PrivateMemory
 from pillywiggins.memory.store import ConversationStore
 from pillywiggins.skills.registry import SkillRegistry
@@ -173,7 +173,7 @@ class PillywigginAgent:
         if self._store is not None and conversation_key is not None:
             stored = await self._store.load(conversation_key)
             if stored is not None:
-                self._message_history = stored
+                self._conversation_histories[conversation_key] = stored
                 logger.info(
                     "Loaded %d messages from PostgreSQL for %s/%s",
                     len(stored),
@@ -206,13 +206,20 @@ class PillywigginAgent:
                     )
         elif msg_type == "insight":
             if self._council_memory is not None:
-                await self._council_memory.write_entry(
+                raw_tags = [from_agent, timestamp, *data.get("tags", [])]
+                filtered_tags = [t for t in raw_tags if t in TAG_WHITELIST]
+                result = await self._council_memory.write_entry(
                     content=data.get("content", ""),
-                    tags=[from_agent, timestamp, *data.get("tags", [])],
+                    tags=filtered_tags,
                     embedding=data.get("embedding", []),
                     message_type="insight",
                     confidence=1.0,
                 )
+                success = result.get("success") if isinstance(result, dict) else None
+                if not success:
+                    logger.warning(
+                        "Agent %s council write_entry failed: %s", self.agent_id, result.get("error") if isinstance(result, dict) else result
+                    )
         elif msg_type in ("skill_published", "skill_deployed"):
             if self._skill_registry is not None:
                 self._skill_registry.load_all()
@@ -236,6 +243,15 @@ class PillywigginAgent:
                     "Failed to connect council memory for %s", self.agent_id, exc_info=True
                 )
                 self._council_memory = None
+        if self._private_memory is not None:
+            try:
+                if self._private_memory._pool is None:
+                    await self._private_memory.connect()
+                    logger.info("Private memory connected for %s", self.agent_id)
+            except Exception:
+                logger.warning(
+                    "Failed to connect private memory for %s", self.agent_id, exc_info=True
+                )
         if self._nats_url is not None:
             try:
                 bus = NatsBus(
@@ -279,6 +295,12 @@ class PillywigginAgent:
             except Exception:
                 logger.warning("Error closing council memory for %s", self.agent_id, exc_info=True)
             self._council_memory = None
+        if self._private_memory is not None:
+            try:
+                await self._private_memory.close()
+            except Exception:
+                logger.warning("Error closing private memory for %s", self.agent_id, exc_info=True)
+            self._private_memory = None
         if self._nats_bus is not None:
             try:
                 await self._nats_bus.close()
@@ -291,6 +313,18 @@ class PillywigginAgent:
             except Exception:
                 logger.warning("Error stopping scheduler for %s", self.agent_id, exc_info=True)
             self._scheduler = None
+        if self._store is not None:
+            try:
+                await self._store.close()
+            except Exception:
+                logger.warning("Error closing store for %s", self.agent_id, exc_info=True)
+            self._store = None
+        if self._cache is not None:
+            try:
+                await self._cache.close()
+            except Exception:
+                logger.warning("Error closing cache for %s", self.agent_id, exc_info=True)
+            self._cache = None
 
     def set_adapter(self, adapter: Any) -> None:
         self._adapter = adapter

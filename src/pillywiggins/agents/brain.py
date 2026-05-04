@@ -1,10 +1,11 @@
-import os
 import time
 from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
 
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
 
 from pillywiggins.agents.deps import AgentDeps
 from pillywiggins.logging_utils import AgentLogger
@@ -711,14 +712,21 @@ def create_brain(
         url = url.rstrip("/")
         if not url.endswith("/v1"):
             url = f"{url}/v1"
-        os.environ["OPENAI_BASE_URL"] = url
-        os.environ["OPENAI_API_KEY"] = api_key or "ollama"
+        key = api_key or "ollama"
     else:
-        os.environ["OPENAI_API_KEY"] = api_key
-        if base_url:
-            os.environ["OPENAI_BASE_URL"] = base_url
+        url = base_url if base_url else None
+        key = api_key if api_key else None
 
-    model = f"openai:{model_name}"
+    provider_kwargs: dict[str, str] = {}
+    if url:
+        provider_kwargs["base_url"] = url
+    if key:
+        provider_kwargs["api_key"] = key
+
+    model = OpenAIChatModel(
+        model_name=model_name,
+        provider=OpenAIProvider(**provider_kwargs),
+    )
 
     agent = Agent(
         model=model,

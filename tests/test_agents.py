@@ -373,7 +373,7 @@ async def test_load_history_from_store_when_cache_missing(personality):
 
     await agent.load_history(conversation_key="chat_123")
 
-    assert len(agent._message_history) == 2
+    assert len(agent._conversation_histories["chat_123"]) == 2
     mock_store.load.assert_called_once_with("chat_123")
 
 

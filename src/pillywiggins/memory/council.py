@@ -33,6 +33,13 @@ class CouncilMemory:
         self._embedding_dimension = embedding_dimension or 768
         self._pool: Optional[asyncpg.Pool] = None
 
+    async def _ensure_agent_id(self, conn: asyncpg.Connection) -> None:
+        """Re-apply the agent_id GUC on every connection checkout."""
+        await conn.execute(
+            "SELECT set_config('app.agent_id', $1, false)",
+            self._agent_id,
+        )
+
     async def connect(self) -> None:
         async def _init_connection(conn):
             await register_vector(conn)
@@ -43,6 +50,7 @@ class CouncilMemory:
                 decoder=json.loads,
                 schema='pg_catalog',
             )
+            await self._ensure_agent_id(conn)
 
         self._pool = await asyncpg.create_pool(
             self._database_url,
@@ -106,68 +114,73 @@ class CouncilMemory:
                 "id": None,
             }
 
-        async with self._pool.acquire() as conn:
-            count = await conn.fetchval(
-                """SELECT COUNT(*) FROM council_memory
-                   WHERE contributing_agent = $1
-                   AND created_at >= now() - interval '1 hour'""",
-                self._agent_id,
-            )
-            if count >= RATE_LIMIT_PER_HOUR:
-                return {
-                    "success": False,
-                    "error": f"Rate limit exceeded: {RATE_LIMIT_PER_HOUR} writes/hour",
-                    "id": None,
-                }
-
-            # Dedup check: only run when we have an embedding to compare against.
-            if embedding is not None:
-                recent = await conn.fetch(
-                    """SELECT embedding FROM council_memory
+        try:
+            async with self._pool.acquire() as conn:
+                await self._ensure_agent_id(conn)
+                count = await conn.fetchval(
+                    """SELECT COUNT(*) FROM council_memory
                        WHERE contributing_agent = $1
-                       AND created_at >= now() - interval '1 hour'
-                       ORDER BY created_at DESC
-                       LIMIT 50""",
+                       AND created_at >= now() - interval '1 hour'""",
                     self._agent_id,
                 )
-                for row in recent:
-                    stored = row["embedding"]
-                    sim = self._cosine_similarity(embedding, stored)
-                    if sim > DEDUP_SIMILARITY_THRESHOLD:
-                        return {
-                            "success": False,
-                            "error": "Duplicate entry: similarity exceeds threshold",
-                            "id": None,
-                        }
+                if count >= RATE_LIMIT_PER_HOUR:
+                    return {
+                        "success": False,
+                        "error": f"Rate limit exceeded: {RATE_LIMIT_PER_HOUR} writes/hour",
+                        "id": None,
+                    }
 
-            if embedding is not None:
-                row = await conn.fetchrow(
-                    """INSERT INTO council_memory
-                           (contributing_agent, content, tags, embedding, message_type, confidence)
-                       VALUES ($1, $2, $3, $4::vector, $5, $6)
-                       RETURNING id""",
-                    self._agent_id,
-                    content,
-                    tags,
-                    embedding,
-                    message_type,
-                    confidence,
-                )
-            else:
-                # Insert with NULL embedding — entry won't be searchable via
-                # vector similarity but will still be retrievable by tags.
-                row = await conn.fetchrow(
-                    """INSERT INTO council_memory
-                           (contributing_agent, content, tags, embedding, message_type, confidence)
-                       VALUES ($1, $2, $3, NULL, $4, $5)
-                       RETURNING id""",
-                    self._agent_id,
-                    content,
-                    tags,
-                    message_type,
-                    confidence,
-                )
-            return {"success": True, "error": None, "id": str(row["id"])}
+                # Dedup check: only run when we have an embedding to compare against.
+                if embedding is not None:
+                    recent = await conn.fetch(
+                        """SELECT embedding FROM council_memory
+                           WHERE contributing_agent = $1
+                           AND created_at >= now() - interval '1 hour'
+                           ORDER BY created_at DESC
+                           LIMIT 50""",
+                        self._agent_id,
+                    )
+                    for row in recent:
+                        stored = row["embedding"]
+                        sim = self._cosine_similarity(embedding, stored)
+                        if sim > DEDUP_SIMILARITY_THRESHOLD:
+                            return {
+                                "success": False,
+                                "error": "Duplicate entry: similarity exceeds threshold",
+                                "id": None,
+                            }
+
+                if embedding is not None:
+                    row = await conn.fetchrow(
+                        """INSERT INTO council_memory
+                               (contributing_agent, content, tags, embedding, message_type, confidence)
+                           VALUES ($1, $2, $3, $4::vector, $5, $6)
+                           RETURNING id""",
+                        self._agent_id,
+                        content,
+                        tags,
+                        embedding,
+                        message_type,
+                        confidence,
+                    )
+                else:
+                    # Insert with NULL embedding — entry won't be searchable via
+                    # vector similarity but will still be retrievable by tags.
+                    row = await conn.fetchrow(
+                        """INSERT INTO council_memory
+                               (contributing_agent, content, tags, embedding, message_type, confidence)
+                           VALUES ($1, $2, $3, NULL, $4, $5)
+                           RETURNING id""",
+                        self._agent_id,
+                        content,
+                        tags,
+                        message_type,
+                        confidence,
+                    )
+                return {"success": True, "error": None, "id": str(row["id"])}
+        except Exception as exc:
+            logger.exception("Council memory write_entry failed for agent %s", self._agent_id)
+            return {"success": False, "error": str(exc), "id": None}
 
     async def search(
         self,
@@ -187,6 +200,7 @@ class CouncilMemory:
             return []
         try:
             async with self._pool.acquire() as conn:
+                await self._ensure_agent_id(conn)
                 if tags:
                     rows = await conn.fetch(
                         """SELECT id, contributing_agent, content, tags, message_type,
@@ -236,6 +250,7 @@ class CouncilMemory:
             return False
         try:
             async with self._pool.acquire() as conn:
+                await self._ensure_agent_id(conn)
                 result = await conn.execute(
                     "DELETE FROM council_memory WHERE id = $1::uuid",
                     entry_id,
@@ -250,6 +265,7 @@ class CouncilMemory:
             return None
         try:
             async with self._pool.acquire() as conn:
+                await self._ensure_agent_id(conn)
                 row = await conn.fetchrow(
                     """SELECT id, contributing_agent, content, tags, message_type,
                               confidence, created_at
@@ -277,6 +293,7 @@ class CouncilMemory:
             return []
         try:
             async with self._pool.acquire() as conn:
+                await self._ensure_agent_id(conn)
                 rows = await conn.fetch(
                     """SELECT id, contributing_agent, content, tags, message_type,
                               confidence, created_at

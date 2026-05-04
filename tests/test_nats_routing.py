@@ -49,7 +49,7 @@ async def test_insight_routes_to_council_memory(agent):
 
     mock_council.write_entry.assert_awaited_once_with(
         content="Teams should document their schemas",
-        tags=["mustardseed", "2025-01-01T00:00:00+00:00", "idea"],
+        tags=["idea"],
         embedding=[0.1, 0.2, 0.3],
         message_type="insight",
         confidence=1.0,
@@ -65,7 +65,7 @@ async def test_insight_routing_defaults(agent):
 
     mock_council.write_entry.assert_awaited_once_with(
         content="",
-        tags=["", ""],
+        tags=[],
         embedding=[],
         message_type="insight",
         confidence=1.0,

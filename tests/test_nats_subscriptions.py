@@ -117,7 +117,7 @@ async def test_nats_insight_routes_to_council(nats_mocks):
 
     mock_council.write_entry.assert_awaited_once_with(
         content="New idea",
-        tags=["mustardseed", "2025-01-01T00:00:00+00:00", "idea"],
+        tags=["idea"],
         embedding=[0.1, 0.2],
         message_type="insight",
         confidence=1.0,
