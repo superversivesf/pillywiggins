@@ -104,12 +104,6 @@ class SlackAdapter(BaseAdapter):
             logger.info("Unauthorized Slack user: %s", user)
             return
 
-        is_bot = event.get("bot_id") is not None
-        if not self._should_respond_to_bot(channel, is_bot):
-            return
-        if is_bot:
-            self._bot_chat_counts[channel] = self._bot_chat_counts.get(channel, 0) + 1
-
         # Normalize to UnifiedMessage
         msg = self.normalize({
             "user": user,
@@ -118,7 +112,11 @@ class SlackAdapter(BaseAdapter):
             "ts": ts,
             "thread_ts": event.get("thread_ts"),
             "is_group": event.get("channel_type") in ("channel", "group"),
+            "is_bot": event.get("bot_id") is not None,
         })
+
+        if not self.agent.should_process_message(msg):
+            return
 
         # Slash commands
         if text.strip().startswith("!"):

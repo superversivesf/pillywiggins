@@ -1,7 +1,10 @@
 import asyncio
+import hashlib
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
+from typing import Set
 
 import nats
 from nats.js.api import ConsumerConfig, StreamConfig
@@ -17,6 +20,9 @@ DEFAULT_CONNECT_TIMEOUT = 5  # seconds
 DEFAULT_RECONNECT_ATTEMPTS = 5
 DEFAULT_RETRY_DELAY = 1.0  # seconds (initial)
 DEFAULT_RETRY_MAX_DELAY = 60.0  # seconds
+DEFAULT_MAX_DELIVER = 5
+DEFAULT_ACK_WAIT = 30  # seconds
+DEFAULT_MAX_ACK_PENDING = 100
 
 
 class NatsConnectError(Exception):
@@ -55,6 +61,9 @@ class NatsBus:
         self._broadcast_handler = None
         self._direct_handler = None
         self._monitor_task: asyncio.Task | None = None
+        self._seen_message_ids: Set[str] = set()
+        self._max_seen_ids = 4096
+        self._uuid = uuid.uuid4().hex[:8]
 
     @property
     def is_connected(self) -> bool:
@@ -211,6 +220,30 @@ class NatsBus:
             payload.get("timestamp", ""),
         )
 
+    def _is_duplicate(self, msg) -> bool:
+        seq = getattr(msg, "sequence", None)
+        if seq is not None:
+            identifier = f"seq:{seq}"
+        else:
+            # Compute stable hash over data + metadata
+            h = hashlib.sha256()
+            h.update(msg.data)
+            subject = getattr(msg, "subject", "")
+            h.update(subject.encode())
+            ts = getattr(msg, "time", "")
+            h.update(str(ts).encode())
+            identifier = h.hexdigest()
+        if identifier in self._seen_message_ids:
+            return True
+        self._seen_message_ids.add(identifier)
+        # Prevent memory explosion; drop oldest when set grows large
+        while len(self._seen_message_ids) > self._max_seen_ids:
+            try:
+                self._seen_message_ids.pop()
+            except KeyError:
+                break
+        return False
+
     async def publish_broadcast(self, message_type: str, data: dict):
         if self._js is None:
             logger.warning("NATS not connected, skipping broadcast publish for %s", message_type)
@@ -255,6 +288,13 @@ class NatsBus:
             return
 
         async def _cb(msg):
+            if self._is_duplicate(msg):
+                logger.debug("Broadcast message deduplicated on %s for %s", msg.subject, self._agent_id)
+                try:
+                    await msg.ack()
+                except Exception:
+                    pass
+                return
             try:
                 logger.debug("Broadcast message received on %s for %s", msg.subject, self._agent_id)
                 msg_type, data, from_agent, timestamp = self._parse_payload(msg)
@@ -269,16 +309,23 @@ class NatsBus:
                 except Exception:
                     pass
 
-        durable = f"pillywiggins-{self._agent_id}-broadcast"
-        sub = await self._js.subscribe(
-            subject=BROADCAST_SUBJECT,
-            queue=durable,
-            durable=durable,
-            cb=_cb,
-            config=ConsumerConfig(max_deliver=3),
-        )
-        self._subs.append(sub)
-        logger.info("Broadcast subscription created for %s (durable=%s)", self._agent_id, durable)
+        consumer_name = f"pillywiggins-{self._agent_id}-{self._uuid}-broadcast"
+        try:
+            sub = await self._js.subscribe(
+                subject=BROADCAST_SUBJECT,
+                durable=consumer_name,
+                cb=_cb,
+                config=ConsumerConfig(
+                    max_deliver=DEFAULT_MAX_DELIVER,
+                    ack_wait=DEFAULT_ACK_WAIT,
+                    max_ack_pending=DEFAULT_MAX_ACK_PENDING,
+                ),
+            )
+            self._subs.append(sub)
+            logger.info("Broadcast subscription created for %s (durable=%s)", self._agent_id, consumer_name)
+        except Exception:
+            logger.exception("Failed to create broadcast subscription for %s", self._agent_id)
+            raise
 
     async def subscribe_direct(self, handler):
         self._direct_handler = handler
@@ -287,6 +334,13 @@ class NatsBus:
             return
 
         async def _cb(msg):
+            if self._is_duplicate(msg):
+                logger.debug("Direct message deduplicated on %s for %s", msg.subject, self._agent_id)
+                try:
+                    await msg.ack()
+                except Exception:
+                    pass
+                return
             try:
                 logger.debug("Direct message received on %s for %s", msg.subject, self._agent_id)
                 msg_type, data, from_agent, timestamp = self._parse_payload(msg)
@@ -302,16 +356,23 @@ class NatsBus:
                     pass
 
         subject = f"{DIRECT_SUBJECT_PREFIX}.{self._agent_id}"
-        durable = f"pillywiggins-{self._agent_id}-direct"
-        sub = await self._js.subscribe(
-            subject=subject,
-            queue=durable,
-            durable=durable,
-            cb=_cb,
-            config=ConsumerConfig(max_deliver=3),
-        )
-        self._subs.append(sub)
-        logger.info("Direct subscription created for %s on %s (durable=%s)", self._agent_id, subject, durable)
+        consumer_name = f"pillywiggins-{self._agent_id}-{self._uuid}-direct"
+        try:
+            sub = await self._js.subscribe(
+                subject=subject,
+                durable=consumer_name,
+                cb=_cb,
+                config=ConsumerConfig(
+                    max_deliver=DEFAULT_MAX_DELIVER,
+                    ack_wait=DEFAULT_ACK_WAIT,
+                    max_ack_pending=DEFAULT_MAX_ACK_PENDING,
+                ),
+            )
+            self._subs.append(sub)
+            logger.info("Direct subscription created for %s on %s (durable=%s)", self._agent_id, subject, consumer_name)
+        except Exception:
+            logger.exception("Failed to create direct subscription for %s", self._agent_id)
+            raise
 
     async def close(self):
         self._connected = False

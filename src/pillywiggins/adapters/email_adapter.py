@@ -191,6 +191,9 @@ class EmailAdapter(BaseAdapter):
             "date": msg.date,
         })
 
+        if not self.agent.should_process_message(unified):
+            return
+
         # Slash commands
         if content.startswith("!"):
             response = await self._handle_command(content, conversation_key)

@@ -216,18 +216,12 @@ class DiscordAdapter(BaseAdapter):
         unified = self.normalize(message)
         if not self.agent.should_process_message(unified):
             return
-        channel_id = unified.conversation_key
-        is_bot = unified.metadata.get("is_bot", False)
-        if not self._should_respond_to_bot(channel_id, is_bot):
-            return
-        if is_bot:
-            self._bot_chat_counts[channel_id] = self._bot_chat_counts.get(channel_id, 0) + 1
         logger.info(
             "Message from %s: %s", unified.metadata.get("username", "?"), unified.content[:80]
         )
         try:
             done = asyncio.Event()
-            typing_task = asyncio.create_task(self._keep_typing(channel_id, done))
+            typing_task = asyncio.create_task(self._keep_typing(unified.conversation_key, done))
             try:
                 response = await self.agent.handle_message(unified)
             finally:

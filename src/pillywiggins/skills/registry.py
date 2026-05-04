@@ -26,8 +26,15 @@ class Skill:
     def __repr__(self):
         return f"Skill(name={self.name!r})"
 
-    async def execute(self, **kwargs) -> Any:
-        return await self.run_func(**kwargs)
+    async def execute(self, *, agent_id: str = "unknown", channel: str = "unknown", **kwargs) -> Any:
+        from pillywiggins.skills.logger import log_skill_execution
+        try:
+            result = await self.run_func(**kwargs)
+        except Exception as exc:
+            log_skill_execution(agent_id, channel, self.name, kwargs, result=None, exception=str(exc))
+            raise
+        log_skill_execution(agent_id, channel, self.name, kwargs, result=result)
+        return result
 
     def as_tool(self) -> "Tool":
         """Return a PydanticAI Tool wrapping this skill.

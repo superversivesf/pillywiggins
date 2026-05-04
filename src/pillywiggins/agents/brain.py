@@ -26,14 +26,14 @@ async def _run_sandboxed_skill(skill, kwargs: dict, agent_id: str, channel: str,
 
     if skill.file_path is None:
         err = f"Error: skill {skill.name} has no source file for sandbox execution"
-        log_skill_execution(agent_id, channel, skill.name, kwargs, error=err, council_memory=council_memory)
+        log_skill_execution(agent_id, channel, skill.name, kwargs, result=None, exception=err)
         return err
 
     try:
         code = skill.file_path.read_text()
     except Exception as e:
         err = f"Error reading skill source for {skill.name}: {e}"
-        log_skill_execution(agent_id, channel, skill.name, kwargs, error=err, council_memory=council_memory)
+        log_skill_execution(agent_id, channel, skill.name, kwargs, result=None, exception=err)
         return err
 
     sandbox_result = await run_sandboxed(
@@ -45,13 +45,13 @@ async def _run_sandboxed_skill(skill, kwargs: dict, agent_id: str, channel: str,
     if not sandbox_result.success:
         err = f"Sandbox error in {skill.name}: {sandbox_result.error}"
         log_skill_execution(
-            agent_id, channel, skill.name, kwargs, error=err, council_memory=council_memory
+            agent_id, channel, skill.name, kwargs, result=None, exception=err
         )
         return err
 
     result = sandbox_result.result
     log_skill_execution(
-        agent_id, channel, skill.name, kwargs, result=result, council_memory=council_memory
+        agent_id, channel, skill.name, kwargs, result=result
     )
     if isinstance(result, str):
         return result
@@ -204,8 +204,10 @@ async def save_to_private_memory(ctx: RunContext[AgentDeps], content: str) -> st
         expected_dimension=settings.embedding_dimension,
     )
     if embedding is None:
-        return "Could not generate embedding — memory not saved."
-    await ctx.deps.private_memory.save(content, embedding)
+        return "Could not generate embedding \u2014 memory not saved."
+    saved = await ctx.deps.private_memory.save(content, embedding)
+    if not saved:
+        return "Memory save failed. This can happen when the database is unreachable or the embedding dimension is mis-configured (check EMBEDDING_DIMENSION)."
     return f"Remembered: {content}"
 
 
@@ -662,35 +664,30 @@ def _make_skill_tool(skill):
 
     async def skill_tool(ctx: RunContext[AgentDeps], **kwargs) -> str:
         import json
-        from pillywiggins.skills.logger import log_skill_execution
 
         agent_id = ctx.deps.agent_id
         channel = ctx.deps.channel
-        council_memory = ctx.deps.council_memory
         agent_logger = ctx.deps.logger
 
         if _should_sandbox(skill.name):
-            return await _run_sandboxed_skill(skill, kwargs, agent_id, channel, council_memory)
+            return await _run_sandboxed_skill(skill, kwargs, agent_id, channel, ctx.deps.council_memory)
         start = time.perf_counter()
         try:
-            result = await skill.execute(**kwargs)
+            result = await skill.execute(agent_id=agent_id, channel=channel, **kwargs)
         except TypeError as e:
             duration_ms = (time.perf_counter() - start) * 1000
             available = ", ".join(skill.meta.get("parameters", {}).keys())
             err = f"Error calling skill {skill.name}: {e}. Available parameters: {available}"
-            log_skill_execution(agent_id, channel, skill.name, kwargs, error=err, council_memory=council_memory)
             if agent_logger is not None:
                 agent_logger.log_tool_error(skill.name, err, duration_ms)
             return err
         except Exception as e:
             duration_ms = (time.perf_counter() - start) * 1000
             err = f"Error calling skill {skill.name}: {e}"
-            log_skill_execution(agent_id, channel, skill.name, kwargs, error=err, council_memory=council_memory)
             if agent_logger is not None:
                 agent_logger.log_tool_error(skill.name, err, duration_ms)
             return err
         duration_ms = (time.perf_counter() - start) * 1000
-        log_skill_execution(agent_id, channel, skill.name, kwargs, result=result, council_memory=council_memory)
         if agent_logger is not None:
             agent_logger.log_tool_result(skill.name, result, duration_ms)
         if isinstance(result, str):

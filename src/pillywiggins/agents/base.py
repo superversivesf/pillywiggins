@@ -41,6 +41,12 @@ _ADDRESS_PATTERN = re.compile(
     re.UNICODE,
 )
 
+# Matches @mentions anywhere in the message body
+_MENTION_PATTERN = re.compile(
+    r"@([a-zA-Z0-9_\-]+)",
+    re.UNICODE,
+)
+
 
 async def _builtin_heartbeat_handler(**kwargs: Any) -> None:
     agent_id = kwargs.get("agent_id", "")
@@ -144,6 +150,7 @@ class PillywigginAgent:
             api_key,
             skill_registry=skill_registry,
         )
+        self._seen_mentions_this_limit_cycle: dict[str, int] = {}
         self._message_history: list[ModelMessage] = []
         self._conversation_histories: dict[str, list[ModelMessage]] = {}
 
@@ -429,10 +436,26 @@ class PillywigginAgent:
         self._set_history(new_history, conversation_key)
         return f"Compacted {len(old_messages)} messages into summary. Keeping {keep_count} recent."
 
-    def should_process_message(self, message: UnifiedMessage) -> bool:
+    def _is_addressed_to_me(self, content: str) -> bool:
+        """Check if the text contains an explicit mention/address of this agent."""
+        mentions = {m.group(1).lower() for m in _MENTION_PATTERN.finditer(content)}
+        addressed_to = None
+        match = _ADDRESS_PATTERN.match(content)
+        if match:
+            addressed_to = (match.group(1) or match.group(2)).lower()
+        return (
+            self.agent_id.lower() in mentions
+            or addressed_to == self.agent_id.lower()
+        )
+
+    def should_process_message(
+        self,
+        message: UnifiedMessage,
+        bot_chat_limit: int | None = None,
+    ) -> bool:
         """Decide whether this agent should process the given message.
 
-        Returns ``False`` only when the message is explicitly addressed to
+        Returns ``False`` when the message is explicitly addressed to
         another agent by name (e.g. "@wormwood …").  Messages with no
         explicit mention, or with an explicit mention of this agent, are
         processed normally.
@@ -448,6 +471,7 @@ class PillywigginAgent:
         if not content:
             return True
 
+        addressed_to = None
         match = _ADDRESS_PATTERN.match(content)
         if match:
             addressed_to = match.group(1) or match.group(2)
@@ -457,6 +481,37 @@ class PillywigginAgent:
                     "Agent %s ignoring message addressed to %s", self.agent_id, addressed_to
                 )
                 return False
+
+        # bot_chat_limit governs how many consecutive bot messages we join in
+        # on when NOT explicitly addressed.  It does NOT apply to DMs or when
+        # the user directly addresses us.
+        limit = bot_chat_limit
+        if limit is None:
+            limit = getattr(self.personality, "bot_chat_limit", None)
+        if limit is None:
+            limit = 3  # sensible default
+
+        convo = message.conversation_key
+        is_bot = message.metadata.get("is_bot", False)
+
+        if not is_bot:
+            # Human spoke — reset the bot-chatter counter.
+            self._seen_mentions_this_limit_cycle[convo] = 0
+
+        if addressed_to is None and isinstance(limit, int) and limit >= 0:
+            count = self._seen_mentions_this_limit_cycle.get(convo, 0)
+            if is_bot and count >= limit:
+                logger.info(
+                    "Agent %s ignoring bot message in %s (bot_chat_limit %d reached)",
+                    self.agent_id,
+                    convo,
+                    limit,
+                )
+                return False
+            # We are going to process it; increment counter for bot messages
+            # that are not explicitly addressed to us.
+            if is_bot and not self._is_addressed_to_me(content):
+                self._seen_mentions_this_limit_cycle[convo] = count + 1
 
         return True
 

@@ -63,7 +63,12 @@ class Settings(BaseSettings):
         query Ollama for a local embedding model.  If none is found (or Ollama is
         unreachable) we fall back to the sentence-transformers Hugging Face
         provider and clear ``embedding_model`` (empty string signals HF).
+
+        Resolved values are also written back to ``os.environ`` so that any
+        subsequent ``Settings()`` instance (e.g. in agent tools) inherits the
+        correct model name and dimension without needing to be passed around.
         """
+        import os
         from pillywiggins.embeddings.resolver import (
             DEFAULT_HF_MODEL,
             discover_ollama_embedding_model,
@@ -80,7 +85,8 @@ class Settings(BaseSettings):
             dim = KNOWN_EMBEDDING_DIMENSIONS.get(self.embedding_model)
             if dim is not None:
                 self.embedding_dimension = dim
-                logger.info("Explicit embedding model '%s' with dimension %d", self.embedding_model, dim)
+                os.environ["EMBEDDING_DIMENSION"] = str(dim)
+            logger.info("Explicit embedding model '%s' with dimension %d", self.embedding_model, dim)
             return
 
         # Strip the /v1 suffix from llm_base_url so the Ollama native endpoint works
@@ -99,18 +105,22 @@ class Settings(BaseSettings):
 
         if discovered:
             self.embedding_model = discovered
+            os.environ["EMBEDDING_MODEL"] = discovered
             dim = KNOWN_EMBEDDING_DIMENSIONS.get(discovered)
             if dim is not None:
                 self.embedding_dimension = dim
+                os.environ["EMBEDDING_DIMENSION"] = str(dim)
                 logger.info("Discovered Ollama embedding model '%s' (%d-dim)", discovered, dim)
             else:
                 logger.info("Discovered Ollama embedding model '%s' (dimension unknown)", discovered)
         else:
             self.embedding_model = ""
+            os.environ["EMBEDDING_MODEL"] = ""
             dim = KNOWN_EMBEDDING_DIMENSIONS.get(DEFAULT_HF_MODEL)
             if dim is not None:
                 self.embedding_dimension = dim
-            logger.info("No Ollama embedding model found; falling back to Hugging Face '%s' (%d-dim)", DEFAULT_HF_MODEL, dim or 768)
+                os.environ["EMBEDDING_DIMENSION"] = str(dim)
+            logger.info("No Ollama embedding model found; falling back to HuggingFace '%s' (%d-dim)", DEFAULT_HF_MODEL, dim or 768)
 
 
 # Top-level settings instance used by legacy imports.

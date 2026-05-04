@@ -213,16 +213,11 @@ class TelegramAdapter(BaseAdapter):
         unified = self.normalize(update)
         if not self.agent.should_process_message(unified):
             return
-        is_bot = unified.metadata.get("is_bot", False)
-        chat_id = unified.metadata.get("chat_id", unified.conversation_key)
-        if not self._should_respond_to_bot(chat_id, is_bot):
-            return
-        if is_bot:
-            self._bot_chat_counts[chat_id] = self._bot_chat_counts.get(chat_id, 0) + 1
         logger.info(
             "Message from %s: %s", unified.metadata.get("username", "?"), unified.content[:80]
         )
         try:
+            chat_id = unified.metadata.get("chat_id", unified.conversation_key)
             done = asyncio.Event()
             typing_task = asyncio.create_task(self._keep_typing(chat_id, done))
             try:

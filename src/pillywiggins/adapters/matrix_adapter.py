@@ -113,11 +113,8 @@ class MatrixAdapter(BaseAdapter):
             logger.info("Unauthorized Matrix user: %s", sender)
             return
 
-        is_bot = sender.startswith("@bot") or sender.endswith(":bot")
-        if not self._should_respond_to_bot(room_id, is_bot):
+        if not self.agent.should_process_message(msg):
             return
-        if is_bot:
-            self._bot_chat_counts[room_id] = self._bot_chat_counts.get(room_id, 0) + 1
 
         # Slash commands
         text = msg.content.strip()
@@ -222,5 +219,7 @@ class MatrixAdapter(BaseAdapter):
                 "sender": raw_message["sender"],
                 "event_id": raw_message.get("event_id"),
                 "server_timestamp": raw_message.get("timestamp"),
+                "is_group": True,
+                "is_bot": raw_message["sender"].startswith("@bot") or raw_message["sender"].endswith(":bot"),
             },
         )

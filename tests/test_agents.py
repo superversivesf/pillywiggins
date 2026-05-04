@@ -929,3 +929,47 @@ def test_should_process_message_group_comma_after_name(agent):
         metadata={"is_group": True},
     )
     assert agent.should_process_message(msg) is False
+
+
+def test_should_process_message_bot_limit_ignores_after_limit(agent):
+    from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
+    agent.personality.bot_chat_limit = 2
+    # simulate two bot messages already seen (not addressed)
+    agent._seen_mentions_this_limit_cycle["grp_99"] = 2
+    msg = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="7",
+        content="just random chatter",
+        conversation_key="grp_99",
+        metadata={"is_group": True, "is_bot": True},
+    )
+    assert agent.should_process_message(msg) is False
+
+
+def test_should_process_message_human_resets_counter(agent):
+    from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
+    agent.personality.bot_chat_limit = 1
+    agent._seen_mentions_this_limit_cycle["grp_99"] = 5
+    msg = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="8",
+        content="human here",
+        conversation_key="grp_99",
+        metadata={"is_group": True, "is_bot": False},
+    )
+    assert agent.should_process_message(msg) is True
+    assert agent._seen_mentions_this_limit_cycle["grp_99"] == 0
+
+
+def test_should_process_message_addressed_bypasses_limit(agent):
+    from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
+    agent.personality.bot_chat_limit = 0
+    agent._seen_mentions_this_limit_cycle["grp_99"] = 99
+    msg = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="9",
+        content="@puck hello",
+        conversation_key="grp_99",
+        metadata={"is_group": True, "is_bot": True},
+    )
+    assert agent.should_process_message(msg) is True

@@ -14,6 +14,9 @@ from pillywiggins.messaging.nats_bus import (
     DEFAULT_RECONNECT_ATTEMPTS,
     DEFAULT_RETRY_DELAY,
     DEFAULT_RETRY_MAX_DELAY,
+    DEFAULT_MAX_DELIVER,
+    DEFAULT_ACK_WAIT,
+    DEFAULT_MAX_ACK_PENDING,
     DIRECT_SUBJECT_PREFIX,
     NatsBus,
     NatsConnectError,
@@ -355,8 +358,14 @@ async def test_subscribe_broadcast_creates_durable_subscription(bus):
     js.subscribe.assert_called_once()
     call_kwargs = js.subscribe.call_args.kwargs
     assert call_kwargs["subject"] == BROADCAST_SUBJECT
-    assert call_kwargs["durable"] == "pillywiggins-puck-broadcast"
-    assert call_kwargs["queue"] == "pillywiggins-puck-broadcast"
+    assert call_kwargs["durable"].startswith("pillywiggins-puck-")
+    assert call_kwargs["durable"].endswith("-broadcast")
+    # No shared queue so agents do not steal each other's messages
+    assert "queue" not in call_kwargs or call_kwargs.get("queue") is None
+    consumer_config = call_kwargs["config"]
+    assert consumer_config.max_deliver == DEFAULT_MAX_DELIVER
+    assert consumer_config.ack_wait == DEFAULT_ACK_WAIT
+    assert consumer_config.max_ack_pending == DEFAULT_MAX_ACK_PENDING
     assert len(bus._subs) == 1
 
 
@@ -374,8 +383,13 @@ async def test_subscribe_direct_creates_durable_subscription(bus):
     call_kwargs = js.subscribe.call_args.kwargs
     expected_subject = f"{DIRECT_SUBJECT_PREFIX}.puck"
     assert call_kwargs["subject"] == expected_subject
-    assert call_kwargs["durable"] == "pillywiggins-puck-direct"
-    assert call_kwargs["queue"] == "pillywiggins-puck-direct"
+    assert call_kwargs["durable"].startswith("pillywiggins-puck-")
+    assert call_kwargs["durable"].endswith("-direct")
+    assert "queue" not in call_kwargs or call_kwargs.get("queue") is None
+    consumer_config = call_kwargs["config"]
+    assert consumer_config.max_deliver == DEFAULT_MAX_DELIVER
+    assert consumer_config.ack_wait == DEFAULT_ACK_WAIT
+    assert consumer_config.max_ack_pending == DEFAULT_MAX_ACK_PENDING
     assert len(bus._subs) == 1
 
 
@@ -673,3 +687,85 @@ def test_default_retry_delay():
 
 def test_default_retry_max_delay():
     assert DEFAULT_RETRY_MAX_DELAY == 60.0
+
+
+def test_default_max_deliver():
+    assert DEFAULT_MAX_DELIVER == 5
+
+
+def test_default_ack_wait():
+    assert DEFAULT_ACK_WAIT == 30
+
+
+def test_default_max_ack_pending():
+    assert DEFAULT_MAX_ACK_PENDING == 100
+
+
+@pytest.mark.asyncio
+async def test_broadcast_subscription_callback_deduplicates_by_sequence(bus):
+    received = []
+
+    async def handler(msg_type, data, from_agent, timestamp):
+        received.append((msg_type, data, from_agent, timestamp))
+
+    nc, js = _mock_nats_connection()
+
+    inner_cb = None
+
+    async def capture_subscribe(**kwargs):
+        nonlocal inner_cb
+        inner_cb = kwargs["cb"]
+
+    js.subscribe = AsyncMock(side_effect=capture_subscribe)
+
+    with patch("pillywiggins.messaging.nats_bus.nats.connect", new_callable=AsyncMock, return_value=nc):
+        await bus.connect()
+        await bus.subscribe_broadcast(handler)
+
+    payload_bytes = bus._make_payload("proposal", {"text": "new idea"})
+    mock_msg = MagicMock()
+    mock_msg.data = payload_bytes
+    mock_msg.sequence = 42
+
+    assert inner_cb is not None
+    await inner_cb(mock_msg)
+    await inner_cb(mock_msg)  # duplicate
+
+    assert len(received) == 1
+    assert received[0][0] == "proposal"
+
+
+@pytest.mark.asyncio
+async def test_direct_subscription_callback_deduplicates_by_hash(bus):
+    received = []
+
+    async def handler(msg_type, data, from_agent, timestamp):
+        received.append((msg_type, data, from_agent, timestamp))
+
+    nc, js = _mock_nats_connection()
+
+    inner_cb = None
+
+    async def capture_subscribe(**kwargs):
+        nonlocal inner_cb
+        inner_cb = kwargs["cb"]
+
+    js.subscribe = AsyncMock(side_effect=capture_subscribe)
+
+    with patch("pillywiggins.messaging.nats_bus.nats.connect", new_callable=AsyncMock, return_value=nc):
+        await bus.connect()
+        await bus.subscribe_direct(handler)
+
+    payload_bytes = bus._make_payload("question", {"text": "anyone tried this?"})
+    mock_msg = MagicMock()
+    mock_msg.data = payload_bytes
+    mock_msg.sequence = None
+    mock_msg.subject = "council.direct.puck"
+    mock_msg.time = "2025-01-01T00:00:00+00:00"
+
+    assert inner_cb is not None
+    await inner_cb(mock_msg)
+    await inner_cb(mock_msg)  # duplicate without sequence
+
+    assert len(received) == 1
+    assert received[0][0] == "question"

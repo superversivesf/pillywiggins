@@ -60,17 +60,18 @@ class PrivateMemory:
 
     async def save(
         self, content: str, embedding: list[float], metadata: Optional[dict] = None
-    ) -> None:
+    ) -> bool:
+        """Save a memory row for this agent, returning True on success."""
         if self._pool is None:
             logger.error("Private memory not connected, cannot save")
-            return
+            return False
         if len(embedding) != self._embedding_dimension:
             logger.error(
                 "Private memory save rejected: embedding dimension %d does not match "
                 "pgvector column dimension %d (agent=%s, content=%r)",
                 len(embedding), self._embedding_dimension, self._agent_id, content[:100],
             )
-            return
+            return False
         try:
             async with self._pool.acquire() as conn:
                 await self._ensure_agent_id(conn)
@@ -82,8 +83,10 @@ class PrivateMemory:
                     embedding,
                     metadata or {},
                 )
+            return True
         except Exception:
             logger.exception("Private memory save failed for agent %s", self._agent_id)
+            return False
 
     async def search(self, query_embedding: list[float], limit: int = 5) -> list[dict]:
         if self._pool is None:
