@@ -124,6 +124,7 @@ class Settings(BaseSettings):
                 logger.info("Discovered Ollama embedding model '%s' (dimension unknown)", discovered)
         else:
             self.embedding_model = ""
+            os.environ["EMBEDDING_MODEL"] = ""
             dim = KNOWN_EMBEDDING_DIMENSIONS.get(DEFAULT_HF_MODEL)
             if dim is not None:
                 self.embedding_dimension = dim

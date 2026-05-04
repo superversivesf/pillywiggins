@@ -22,8 +22,9 @@ def test_settings_with_explicit_unknown_embedding_model_logs_warning(caplog):
     assert s.embedding_dimension == 768  # the default stays intact
 
 
-def test_settings_resolve_embedding_fallback_no_env_poisoning(monkeypatch, caplog):
-    """When falling back to HF, os.environ must NOT gain EMBEDDING_MODEL=''."""
+def test_settings_resolve_embedding_fallback_writes_empty_model_safely(monkeypatch, caplog):
+    """When falling back to HF, os.environ IS written with EMBEDDING_MODEL=''
+    (safe now that log guards dim). A second Settings() sees the empty string."""
     from unittest.mock import AsyncMock
 
     # Patch the resolver so that Ollama discovery returns nothing (fallback)
@@ -42,12 +43,18 @@ def test_settings_resolve_embedding_fallback_no_env_poisoning(monkeypatch, caplo
 
     # ensure fallback happened
     assert s.embedding_model == ""
-    # ensure env NOT poisoned with empty string
-    assert os.environ.get("EMBEDDING_MODEL", "NOT_SET") != ""
-    if "EMBEDDING_MODEL" in os.environ:
-        assert os.environ["EMBEDDING_MODEL"] != ""
+    # env IS written with empty string so later Settings() instances don't re-read 'auto'
+    assert os.environ.get("EMBEDDING_MODEL") == ""
     # ensure dimension was set from DEFAULT_HF_MODEL
     assert s.embedding_dimension == 384
+
+    # A fresh Settings() instance should read the empty string, not "auto"
+    s2 = Settings()
+    assert s2.embedding_model == ""
+    # Calling resolve again on the second instance must not crash
+    s2.resolve_embedding_config()
+    assert s2.embedding_model == ""
+
     # cleanup: remove env vars so subsequent tests aren't affected
     monkeypatch.delenv("EMBEDDING_DIMENSION", raising=False)
     monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
