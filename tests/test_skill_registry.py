@@ -362,9 +362,56 @@ def test_register_skill_returns_none_on_load_failure(tmp_path):
 
     code = "this is not valid python"
     meta = {"name": "bad_skill", "description": "bad", "version": "1.0", "parameters": {}}
-    import pytest
-    with pytest.raises(SyntaxError):
-        reg.register_skill("bad_skill", code, meta)
+    skill = reg.register_skill("bad_skill", code, meta)
+    assert skill is None
+
+
+def test_load_skill_file_logs_error_on_exception(tmp_path, caplog):
+    import logging
+
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    bad_path = skills_dir / "bad.py"
+    bad_path.write_text("def broken(:\n  pass")
+    reg = SkillRegistry(skills_dir=skills_dir)
+    with caplog.at_level(logging.ERROR, logger="pillywiggins.skills.registry"):
+        result = reg._load_skill_file(bad_path)
+
+    assert result is None
+    assert any("Failed to load skill" in rec.message for rec in caplog.records)
+    # exc_info=True should include traceback text in the formatted log output
+    assert "Traceback" in caplog.text
+
+
+def test_parse_permissions_string_single_quotes(tmp_path):
+    reg = SkillRegistry(skills_dir=tmp_path / "skills")
+    meta = {
+        "name": "str_perm",
+        "description": "string permissions",
+        "permissions": "{'network': true, 'subprocess': false, 'file_write': false}",
+    }
+    permissions = reg._parse_permissions(meta)
+
+    assert permissions == {"network": True, "subprocess": False, "file_write": False}
+
+
+def test_parse_permissions_unparseable_string_fallback(tmp_path, caplog):
+    import logging
+
+    reg = SkillRegistry(skills_dir=tmp_path / "skills")
+    meta = {
+        "name": "bad_perm",
+        "description": "bad permissions",
+        "permissions": "not valid json",
+    }
+    with caplog.at_level(logging.WARNING, logger="pillywiggins.skills.registry"):
+        permissions = reg._parse_permissions(meta)
+
+    assert permissions == {"network": False, "subprocess": False, "file_write": False}
+    assert any(
+        "bad_perm permissions value is not a dict" in rec.message
+        for rec in caplog.records
+    )
 
 
 def test_load_all_multiple_skills(tmp_path):

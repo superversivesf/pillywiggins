@@ -255,19 +255,16 @@ class SkillRegistry:
             )
             for fname in sorted(missing_from_reg):
                 fpath = self._skills_dir / fname
-                try:
-                    skill = self._load_skill_file(fpath)
-                    if skill is not None:
-                        reg_entries.append({
-                            "name": skill.name,
-                            "description": skill.description,
-                            "file": fname,
-                        })
-                    else:
-                        logger.warning("Could not load skill %s to add to registry", fname)
-                except Exception as exc:
-                    err_msg = f"Failed to auto-register skill {fname}: {exc}"
-                    logger.warning(err_msg, exc_info=True)
+                skill = self._load_skill_file(fpath)
+                if skill is not None:
+                    reg_entries.append({
+                        "name": skill.name,
+                        "description": skill.description,
+                        "file": fname,
+                    })
+                else:
+                    err_msg = f"Could not load skill {fname} to add to registry"
+                    logger.warning(err_msg)
                     self.load_errors.append(err_msg)
             self._write_registry_json(registry)
             # Update reg_entries after rewrite
@@ -284,14 +281,13 @@ class SkillRegistry:
                 logger.error(err_msg)
                 self.load_errors.append(err_msg)
                 continue
-            try:
-                skill = self._load_skill_file(fpath)
-                if skill is not None:
-                    self._skills[skill.name] = skill
-                    logger.info("Loaded skill: %s", skill.name)
-            except Exception as exc:
-                err_msg = f"Failed to load skill from {fpath}: {exc}"
-                logger.error(err_msg, exc_info=True)
+            skill = self._load_skill_file(fpath)
+            if skill is not None:
+                self._skills[skill.name] = skill
+                logger.info("Loaded skill: %s", skill.name)
+            else:
+                err_msg = f"Failed to load skill from {fpath}"
+                logger.error(err_msg)
                 self.load_errors.append(err_msg)
 
         return list(self._skills.values())
@@ -356,44 +352,67 @@ class SkillRegistry:
         return meta
 
     def _load_skill_file(self, path: Path) -> Optional[Skill]:
-        spec = importlib.util.spec_from_file_location(path.stem, path)
-        if spec is None or spec.loader is None:
-            return None
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        try:
+            spec = importlib.util.spec_from_file_location(path.stem, path)
+            if spec is None or spec.loader is None:
+                return None
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
 
-        meta = getattr(module, "SKILL_META", None)
-        if meta is None:
-            # Fallback: try parsing comment-format meta from source
-            try:
-                source = path.read_text(encoding="utf-8")
-            except OSError:
-                source = ""
-            comment_meta = self._extract_meta_from_comments(source)
-            if comment_meta:
-                meta = comment_meta
-            else:
-                logger.warning("Skill %s has no SKILL_META", path)
+            meta = getattr(module, "SKILL_META", None)
+            if meta is None:
+                # Fallback: try parsing comment-format meta from source
+                try:
+                    source = path.read_text(encoding="utf-8")
+                except OSError:
+                    source = ""
+                comment_meta = self._extract_meta_from_comments(source)
+                if comment_meta:
+                    meta = comment_meta
+                else:
+                    logger.warning("Skill %s has no SKILL_META", path)
+                    return None
+
+            run_func = getattr(module, "run", None)
+            if run_func is None:
+                logger.warning("Skill %s has no run() function", path)
                 return None
 
-        run_func = getattr(module, "run", None)
-        if run_func is None:
-            logger.warning("Skill %s has no run() function", path)
+            if not inspect.iscoroutinefunction(run_func):
+                logger.error("Skill %s run() is not a coroutine function", path)
+                return None
+
+            name = meta.get("name", path.stem)
+            description = meta.get("description", "")
+            permissions = self._parse_permissions(meta)
+
+            return Skill(name=name, description=description, run_func=run_func, meta=meta, permissions=permissions, file_path=path)
+        except Exception as exc:
+            logger.error("Failed to load skill %s: %s", path, exc, exc_info=True)
             return None
-
-        if not inspect.iscoroutinefunction(run_func):
-            logger.error("Skill %s run() is not a coroutine function", path)
-            return None
-
-        name = meta.get("name", path.stem)
-        description = meta.get("description", "")
-        permissions = self._parse_permissions(meta)
-
-        return Skill(name=name, description=description, run_func=run_func, meta=meta, permissions=permissions, file_path=path)
 
     def _parse_permissions(self, meta: dict) -> dict[str, bool]:
         legacy_network = meta.get("network_access", False)
         declared = meta.get("permissions", {})
+        if isinstance(declared, str):
+            parsed = None
+            try:
+                parsed = json.loads(declared)
+            except (json.JSONDecodeError, ValueError):
+                try:
+                    parsed = json.loads(declared.replace("'", '"'))
+                except (json.JSONDecodeError, ValueError):
+                    pass
+            if isinstance(parsed, dict):
+                declared = parsed
+            else:
+                name = meta.get("name", "<unknown>")
+                logger.warning(
+                    "Skill %s permissions value is not a dict: %r. Falling back to all-false.",
+                    name,
+                    declared,
+                )
+                declared = {}
         permissions = {p: declared.get(p, False) for p in VALID_PERMISSIONS}
         if legacy_network and not permissions.get("network"):
             permissions["network"] = True
