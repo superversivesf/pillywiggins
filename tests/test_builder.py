@@ -38,6 +38,35 @@ async def run(x: int = 0) -> dict:
     return {"result": x * 2}
 """
 
+COMMENT_FORMAT_SKILL_CODE = """\
+# SKILL_META
+# name: "double"
+# description: "Double a number"
+# parameters: {"x": {"type": "number", "description": "Number to double"}}
+# returns: "dict with result"
+# permissions: {"network": false, "subprocess": false, "file_write": false}
+
+async def run(x: int = 0) -> dict:
+    return {"result": x * 2}
+"""
+
+MIXED_FORMAT_SKILL_CODE = """\
+SKILL_META = {
+    "name": "dict_wins",
+    "description": "Dict format takes precedence",
+    "parameters": {"x": {"type": "number"}},
+    "returns": "dict",
+    "permissions": {"network": False, "subprocess": False, "file_write": False},
+}
+
+# SKILL_META
+# name: "comment_double"
+# description: "Comment description"
+
+async def run(x: int = 0) -> dict:
+    return {"result": x * 2}
+"""
+
 CODE_MISSING_RUN = """\
 SKILL_META = {
     "name": "broken",
@@ -331,6 +360,62 @@ class TestExtractMeta:
         assert "parameters" in meta
         assert "x" in meta["parameters"]
 
+    def test_extracts_comment_format_meta(self):
+        meta = _extract_meta(COMMENT_FORMAT_SKILL_CODE)
+        assert meta["name"] == "double"
+        assert meta["description"] == "Double a number"
+        assert meta["parameters"]["x"]["type"] == "number"
+        assert meta["returns"] == "dict with result"
+        assert meta["permissions"]["network"] is False
+
+    def test_comment_format_permissions_parsed_as_bool(self):
+        meta = _extract_meta(COMMENT_FORMAT_SKILL_CODE)
+        assert meta["permissions"]["subprocess"] is False
+
+    def test_dict_format_wins_over_comments(self):
+        meta = _extract_meta(MIXED_FORMAT_SKILL_CODE)
+        assert meta["name"] == "dict_wins"
+        assert meta["description"] == "Dict format takes precedence"
+
+    def test_comment_format_with_syntax_error_falls_back(self):
+        code = """\
+# SKILL_META
+# name: "bad_syntax"
+# description: "Has bad syntax"
+
+async def run(:
+    return {}
+"""
+        meta = _extract_meta(code)
+        assert meta.get("name") == "bad_syntax"
+        assert "description" in meta
+
+    def test_empty_comment_block_returns_empty(self):
+        code = """\
+# SKILL_META
+# name:
+"""
+        meta = _extract_meta(code)
+        assert meta.get("name") == ""
+
+    def test_comment_format_tags_parsed_as_string(self):
+        code = """\
+# SKILL_META
+# name: "tagged"
+# tags: "news, api"
+"""
+        meta = _extract_meta(code)
+        assert meta["tags"] == "news, api"
+
+    def test_comment_format_returns_empty_dict_no_block(self):
+        code = """\
+# This is a normal comment
+async def run():
+    pass
+"""
+        meta = _extract_meta(code)
+        assert meta == {}
+
 
 class TestDraftSkill:
     def test_creates_draft_with_correct_name(self):
@@ -368,6 +453,28 @@ class TestDraftSkill:
     def test_empty_test_results(self):
         draft = draft_skill("double", VALID_SKILL_CODE)
         assert draft.test_results == []
+
+    def test_comment_format_meta_passes_validation(self):
+        draft = draft_skill("comment_double", COMMENT_FORMAT_SKILL_CODE)
+        assert draft.status == DraftStatus.DRAFT
+        assert draft.meta["name"] == "double"
+
+    def test_comment_format_missing_run_fails(self):
+        code = """\
+# SKILL_META
+# name: "no_run"
+# description: "Missing run"
+
+def compute():
+    pass
+"""
+        draft = draft_skill("no_run", code)
+        assert draft.status == DraftStatus.ERROR
+
+    def test_mixed_format_uses_dict(self):
+        draft = draft_skill("dict_wins", MIXED_FORMAT_SKILL_CODE)
+        assert draft.status == DraftStatus.DRAFT
+        assert draft.meta["name"] == "dict_wins"
 
 
 class TestTestSkill:

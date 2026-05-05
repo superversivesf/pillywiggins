@@ -1,5 +1,6 @@
 import ast
 import enum
+import json
 import logging
 import os
 import re
@@ -88,10 +89,49 @@ def validate_skill_code(
     return True, ""
 
 
+def _extract_meta_from_comments(code: str) -> dict:
+    """Parse comment-format SKILL_META block into a dict.
+
+    Lines starting with ``# SKILL_META``, ``# name:``, ``# description:``,
+    etc.  Values are parsed as JSON when possible; otherwise kept as plain
+    strings.
+    """
+    meta: dict[str, Any] = {}
+    in_block = False
+    for line in code.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            if in_block:
+                break
+            continue
+        comment_text = stripped[1:].strip()
+        if comment_text.startswith("SKILL_META"):
+            in_block = True
+            continue
+        if not in_block:
+            continue
+        if ":" not in comment_text:
+            continue
+        key, value = comment_text.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        try:
+            parsed: Any = json.loads(value)
+            meta[key] = parsed
+        except (json.JSONDecodeError, ValueError):
+            meta[key] = value
+    return meta
+
+
 def _extract_meta(code: str) -> dict:
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
+        comment_meta = _extract_meta_from_comments(code)
+        if comment_meta:
+            return comment_meta
         return {"error": f"Syntax error in skill code: {e}"}
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
@@ -102,7 +142,8 @@ def _extract_meta(code: str) -> dict:
                         return eval(compiled)
                     except Exception:
                         pass
-    return {}
+    # AST didn't find a dict assignment; try comment-format fallback
+    return _extract_meta_from_comments(code)
 
 
 @dataclass

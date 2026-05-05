@@ -86,6 +86,77 @@ def test_load_all_skips_missing_meta(tmp_path):
     assert skills == []
 
 
+def test_load_all_loads_comment_format_skill(tmp_path):
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    skill_code = """\
+# SKILL_META
+# name: "comment_hello"
+# description: "Says hello from comments"
+# version: "1.0"
+# parameters: {}
+# permissions: {"network": false, "subprocess": false, "file_write": false}
+
+async def run():
+    return "Hello!"
+"""
+    (skills_dir / "comment_hello.py").write_text(skill_code)
+    reg = SkillRegistry(skills_dir=skills_dir)
+    skills = reg.load_all()
+
+    assert len(skills) == 1
+    assert skills[0].name == "comment_hello"
+    assert skills[0].description == "Says hello from comments"
+
+
+def test_load_all_dict_format_over_comment_format(tmp_path):
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    skill_code = """\
+SKILL_META = {
+    "name": "dict_wins",
+    "description": "Dict format wins",
+    "version": "1.0",
+    "parameters": {},
+    "permissions": {"network": False, "subprocess": False, "file_write": False},
+}
+
+# SKILL_META
+# name: "comment_loses"
+# description: "Comment description"
+
+async def run():
+    return "ok"
+"""
+    (skills_dir / "dict_wins.py").write_text(skill_code)
+    reg = SkillRegistry(skills_dir=skills_dir)
+    skills = reg.load_all()
+
+    assert len(skills) == 1
+    assert skills[0].name == "dict_wins"
+
+
+def test_load_all_comment_format_permissions_parsed(tmp_path):
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    skill_code = """\
+# SKILL_META
+# name: "perm_test"
+# description: "Permissions test"
+# permissions: {"network": true, "subprocess": false, "file_write": false}
+
+async def run():
+    return "ok"
+"""
+    (skills_dir / "perm_test.py").write_text(skill_code)
+    reg = SkillRegistry(skills_dir=skills_dir)
+    skills = reg.load_all()
+
+    assert len(skills) == 1
+    assert skills[0].permissions["network"] is True
+    assert skills[0].permissions["subprocess"] is False
+
+
 def test_load_all_skips_missing_run(tmp_path):
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()

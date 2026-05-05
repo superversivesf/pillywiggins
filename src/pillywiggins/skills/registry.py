@@ -321,6 +321,40 @@ class SkillRegistry:
         }
         self._write_registry_json(registry)
 
+    def _extract_meta_from_comments(self, code: str) -> dict[str, Any]:
+        """Parse comment-format SKILL_META block into a dict.
+
+        Lines starting with ``# SKILL_META``, ``# name:``, ``# description:``,
+        etc.  Values are parsed as JSON when possible; otherwise kept as plain
+        strings.
+        """
+        meta: dict[str, Any] = {}
+        in_block = False
+        for line in code.splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("#"):
+                if in_block:
+                    break
+                continue
+            comment_text = stripped[1:].strip()
+            if comment_text.startswith("SKILL_META"):
+                in_block = True
+                continue
+            if not in_block:
+                continue
+            if ":" not in comment_text:
+                continue
+            key, value = comment_text.split(":", 1)
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                continue
+            try:
+                meta[key] = json.loads(value)
+            except (json.JSONDecodeError, ValueError):
+                meta[key] = value
+        return meta
+
     def _load_skill_file(self, path: Path) -> Optional[Skill]:
         spec = importlib.util.spec_from_file_location(path.stem, path)
         if spec is None or spec.loader is None:
@@ -330,8 +364,17 @@ class SkillRegistry:
 
         meta = getattr(module, "SKILL_META", None)
         if meta is None:
-            logger.warning("Skill %s has no SKILL_META", path)
-            return None
+            # Fallback: try parsing comment-format meta from source
+            try:
+                source = path.read_text(encoding="utf-8")
+            except OSError:
+                source = ""
+            comment_meta = self._extract_meta_from_comments(source)
+            if comment_meta:
+                meta = comment_meta
+            else:
+                logger.warning("Skill %s has no SKILL_META", path)
+                return None
 
         run_func = getattr(module, "run", None)
         if run_func is None:
