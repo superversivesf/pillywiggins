@@ -6,6 +6,12 @@ from datetime import datetime, timezone
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
+try:
+    from telegram.error import TimedOut
+except Exception:  # pragma: no cover
+    class TimedOut(Exception):  # type: ignore[no-redef]
+        pass
+
 from pillywiggins.adapters.base import BaseAdapter
 from pillywiggins.adapters.models import list_models
 from pillywiggins.agents.base import PillywigginAgent
@@ -228,11 +234,17 @@ class TelegramAdapter(BaseAdapter):
             send_kwargs = {}
             if "chat_id" in unified.metadata:
                 send_kwargs["chat_id"] = unified.metadata["chat_id"]
-            await self.send(
-                unified.conversation_key,
-                response,
-                metadata=send_kwargs or None,
-            )
+            try:
+                await self.send(
+                    unified.conversation_key,
+                    response,
+                    metadata=send_kwargs or None,
+                )
+            except TimedOut:
+                logger.warning(
+                    "Timed out sending reply to Telegram chat %s; message may be retried automatically",
+                    chat_id,
+                )
         except Exception:
             logger.exception("Error handling Telegram message")
 
