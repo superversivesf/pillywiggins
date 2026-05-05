@@ -757,6 +757,9 @@ def create_brain(
             "When you learn important facts about the user or the world, save them to private memory so you can recall them later. "
             "If you're unsure whether you know something, try recalling from private memory first."
         )
+        parts.append(
+            "When retrieved memories contradict information in the conversation history, always trust the memory as the more up-to-date and authoritative source."
+        )
         return "\n\n".join(parts)
 
     agent.tool(recall_private_memory)

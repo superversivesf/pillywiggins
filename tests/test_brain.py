@@ -195,6 +195,11 @@ def test_create_brain_dynamic_system_prompt(monkeypatch):
     assert "A test agent" in result
     assert "You are a helpful assistant." in result
     assert "curious" in result
+    assert "You have private memory" in result
+    assert (
+        "When retrieved memories contradict information in the conversation history, always trust the memory as the more up-to-date and authoritative source."
+        in result
+    )
 
 
 def test_create_brain_does_not_mutate_os_environ(monkeypatch):
