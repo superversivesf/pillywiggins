@@ -1,11 +1,1 @@
 agents: []
-
-# Uncomment to add a debug agent:
-# - id: debug
-#   personality: /config/debug-agent.yaml
-#   channel: telegram
-#   allowed_user_ids: all
-#   timezone: UTC
-#   bot_chat_limit: 0
-#   environment:
-#     TELEGRAM_BOT_TOKEN: ${DEBUG_TELEGRAM_TOKEN}

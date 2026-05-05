@@ -24,9 +24,9 @@ Work through each section with both agents running. Many bugs only surface durin
 
 ## Phase 2 — Inter-Agent Communication (NATS / Config Bugs)
 
-- [ ] **Broadcast message**: Use `debug_ping_agent` or a custom message to `council.broadcast` from Agent A; verify Agent B receives it in logs
+- [ ] **Broadcast message**: Use a custom message to `council.broadcast` from Agent A; verify Agent B receives it in logs
 - [ ] **Direct message**: Send a direct message to `council.direct.{agent_id}` → verify only the target agent receives it
-- [ ] **Agent ping**: Use `debug_ping_agent` skill to ping the other agent by name
+- [ ] **Agent ping**: Use any built-in skill that sends a NATS message to the other agent by name
 - [ ] **NATS reconnect**: Restart the NATS container (`docker compose restart nats`) → verify both agents reconnect automatically in logs
 
 ---
@@ -39,17 +39,9 @@ Work through each section with both agents running. Many bugs only surface durin
 - [ ] **Dice roll**: "Roll a d20"
 - [ ] **Word count**: "Count the words in this message"
 
-### Debug Skills (use these to diagnose issues)
-- [ ] **`debug_show_config`**: Verify agent sees correct config values (embedding_model, dimension, base_url, etc.)
-- [ ] **`debug_memory_check`**: Verify memory connectivity and table status
-- [ ] **`debug_nats_ping`**: Verify NATS connectivity
-- [ ] **`debug_redis_ping`**: Verify Redis connectivity
-- [ ] **`debug_council_memory`**: Inspect current council memory entries
-- [ ] **`debug_reload_skills`**: Trigger skill reload and verify no errors in logs
-
 ### Skill Registry
 - [ ] **Skill loading**: Check startup logs that all skills loaded without errors
-- [ ] **Dynamic skill add**: Add a new `.py` file to the `skills/` volume and verify the agent picks it up (may need `debug_reload_skills` or wait for auto-reload)
+- [ ] **Dynamic skill add**: Add a new `.py` file to the `skills/` volume and verify the agent picks it up (wait for auto-reload or restart the agent)
 
 ---
 
@@ -81,7 +73,7 @@ Work through each section with both agents running. Many bugs only surface durin
 
 ## Phase 6 — Database & Storage
 
-- [ ] **RLS enforcement**: Verify Agent A cannot read Agent B's `private_memory` rows (use `debug_memory_check` or raw DB inspection)
+- [ ] **RLS enforcement**: Verify Agent A cannot read Agent B's `private_memory` rows (inspect DB directly: `docker compose exec postgres psql -U pillywiggins -d pillywiggins -c "SELECT * FROM private_memory WHERE agent_id = '{other_agent_id}';"`)
 - [ ] **Vector search quality**: Query with an embedding and verify results are ordered by similarity correctly
 - [ ] **Conversation cache**: Have a long back-and-forth conversation → verify history loads correctly on next message
 - [ ] **DB reconnect**: Restart the PostgreSQL container (`docker compose restart postgres`) → verify agents reconnect and resume
@@ -103,7 +95,7 @@ Work through each section with both agents running. Many bugs only surface durin
 
 - [ ] **Healthz endpoint**: `curl http://localhost:8080/healthz` → should return HTTP 200
 - [ ] **Ollama health**: `curl http://localhost:11434/api/tags` → should list available models
-- [ ] **Model list**: Use the `debug_show_config` skill to confirm the agent sees the correct model list
+- [ ] **Model list**: Run `curl http://localhost:11434/api/tags` and verify Ollama reports available models
 - [ ] **Resource usage**: Run `docker stats` and monitor for memory/CPU bloat over a 30-minute window
 
 ---
