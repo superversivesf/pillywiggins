@@ -760,6 +760,9 @@ def create_brain(
         parts.append(
             "When retrieved memories contradict information in the conversation history, always trust the memory as the more up-to-date and authoritative source."
         )
+        parts.append(
+            "When asked to build or publish a skill, ALWAYS acknowledge the request immediately before calling any tools — e.g., 'Aye, I'll forge that spell!' or 'On it!'. After each step (draft created, tests run, review complete), briefly update the user on progress so they know the task is advancing and nothing has crashed."
+        )
         return "\n\n".join(parts)
 
     agent.tool(recall_private_memory)

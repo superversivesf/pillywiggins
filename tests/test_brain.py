@@ -200,6 +200,9 @@ def test_create_brain_dynamic_system_prompt(monkeypatch):
         "When retrieved memories contradict information in the conversation history, always trust the memory as the more up-to-date and authoritative source."
         in result
     )
+    assert "ALWAYS acknowledge the request immediately" in result
+    assert "forge that spell" in result
+    assert "update the user on progress" in result
 
 
 def test_create_brain_does_not_mutate_os_environ(monkeypatch):
