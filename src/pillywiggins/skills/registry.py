@@ -394,6 +394,8 @@ class SkillRegistry:
     def _parse_permissions(self, meta: dict) -> dict[str, bool]:
         legacy_network = meta.get("network_access", False)
         declared = meta.get("permissions", {})
+        if isinstance(declared, list):
+            declared = {k: True for k in declared}
         if isinstance(declared, str):
             parsed = None
             try:
@@ -405,10 +407,12 @@ class SkillRegistry:
                     pass
             if isinstance(parsed, dict):
                 declared = parsed
+            elif isinstance(parsed, list):
+                declared = {k: True for k in parsed}
             else:
                 name = meta.get("name", "<unknown>")
                 logger.warning(
-                    "Skill %s permissions value is not a dict: %r. Falling back to all-false.",
+                    "Skill %s permissions value is not a dict or list: %r. Falling back to all-false.",
                     name,
                     declared,
                 )

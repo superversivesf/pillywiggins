@@ -157,6 +157,8 @@ class SkillDraft:
     @property
     def permissions(self) -> dict[str, bool]:
         perm_meta = self.meta.get("permissions", {})
+        if isinstance(perm_meta, list):
+            perm_meta = {k: True for k in perm_meta}
         legacy_network = self.meta.get("network_access", False)
         permissions = {
             "network": perm_meta.get("network", False) or legacy_network,
@@ -194,11 +196,14 @@ def draft_skill(name: str, code: str) -> SkillDraft:
                 ],
             )
 
+    perm_meta = meta.get("permissions", {})
+    if isinstance(perm_meta, list):
+        perm_meta = {k: True for k in perm_meta}
     permissions = {
-        "network": meta.get("permissions", {}).get("network", False)
+        "network": perm_meta.get("network", False)
         or meta.get("network_access", False),
-        "subprocess": meta.get("permissions", {}).get("subprocess", False),
-        "file_write": meta.get("permissions", {}).get("file_write", False),
+        "subprocess": perm_meta.get("subprocess", False),
+        "file_write": perm_meta.get("file_write", False),
     }
     valid, error = validate_skill_code(sanitized, permissions)
     if not valid:
