@@ -140,20 +140,57 @@ def discover_personalities() -> list[dict]:
     results = []
     if not PERSONALITIES_DIR.exists():
         return results
-    for yml in sorted(PERSONALITIES_DIR.glob("*.yaml")):
+    for yml in sorted(PERSONALITIES_DIR.rglob("*.yaml")):
+        if yml.name == "pack.yaml":
+            continue
         with open(yml) as f:
             data = yaml.safe_load(f)
         if data and "name" in data:
+            rel = yml.relative_to(PERSONALITIES_DIR)
+            pack = rel.parent.as_posix() if rel.parent != Path(".") else None
             results.append(
                 {
-                    "filename": yml.name,
+                    "filename": str(rel),
                     "stem": yml.stem,
                     "name": data["name"],
                     "description": data.get("description", ""),
                     "channel": data.get("channel", "telegram"),
                     "bot_chat_limit": data.get("bot_chat_limit", 3),
+                    "pack": pack,
                 }
             )
+    return results
+
+
+def discover_packs() -> list[dict]:
+    results = []
+    if not PERSONALITIES_DIR.exists():
+        return results
+    for sub in sorted(PERSONALITIES_DIR.iterdir()):
+        if not sub.is_dir() or sub.name.startswith("_"):
+            continue
+        pack_manifest = sub / "pack.yaml"
+        pack_name = sub.name.replace("_", " ").title()
+        pack_desc = ""
+        pack_category = ""
+        if pack_manifest.exists():
+            with open(pack_manifest) as f:
+                data = yaml.safe_load(f) or {}
+            pack_name = data.get("name", pack_name)
+            pack_desc = data.get("description", "")
+            pack_category = data.get("category", "")
+        personality_count = sum(1 for y in sub.glob("*.yaml") if y.name != "pack.yaml")
+        if personality_count == 0:
+            continue
+        results.append(
+            {
+                "name": pack_name,
+                "description": pack_desc,
+                "category": pack_category,
+                "path": sub.name,
+                "personality_count": personality_count,
+            }
+        )
     return results
 
 
@@ -238,8 +275,7 @@ def _token_env_for_agent(agent_id: str, channel: str = "telegram") -> str:
 
 
 def _personality_path_for(personality_filename: str) -> str:
-    stem = Path(personality_filename).stem
-    return f"/config/{stem}.yaml"
+    return f"/config/{personality_filename}"
 
 
 def add_agent_to_agents_yaml(
@@ -602,14 +638,57 @@ async def _add_agent_flow() -> None:
         print("No personality files found in personalities/")
         return
 
-    # 1. Personality selection
-    choices = [f"{p['name']} — {p['description']}" for p in personalities]
-    choice = await questionary.select("Select a personality:", choices=choices).ask_async()
-    if choice is None:
-        return
+    personality = None  # initialise to avoid UnboundLocalError
+    is_blank = False
 
-    idx = choices.index(choice)
-    personality = personalities[idx]
+    # 0. Pack selection
+    packs = discover_packs()
+    selected_pack = None
+    if packs:
+        pack_choices = [
+            questionary.Choice(title=f"{p['name']} ({p['personality_count']} personalities) — {p['description']}", value=p["path"])
+            for p in packs
+        ]
+        pack_choices.append(questionary.Choice(title="Browse all personalities", value="__all__"))
+        pack_choices.append(questionary.Choice(title="Start blank (no personality)", value="__blank__"))
+        pack_choice = await questionary.select(
+            "Choose a personality pack:",
+            choices=pack_choices,
+        ).ask_async()
+        if pack_choice is None:
+            return
+        if pack_choice == "__blank__":
+            is_blank = True
+        elif pack_choice != "__all__":
+            selected_pack = pack_choice
+    else:
+        pack_choice = await questionary.select(
+            "No packs found. Choose:",
+            choices=[
+                questionary.Choice(title="Browse all personalities", value="__all__"),
+                questionary.Choice(title="Start blank (no personality)", value="__blank__"),
+            ],
+        ).ask_async()
+        if pack_choice is None:
+            return
+        if pack_choice == "__blank__":
+            is_blank = True
+
+    # 1. Personality selection
+    if is_blank:
+        pass  # blank — no personality to select
+    else:
+        if selected_pack:
+            filtered = [p for p in personalities if p.get("pack") == selected_pack]
+        else:
+            filtered = personalities
+        choices = [f"{p['name']} — {p['description']}" for p in filtered]
+        choice = await questionary.select("Select a personality:", choices=choices).ask_async()
+        if choice is None:
+            return
+
+        idx = choices.index(choice)
+        personality = filtered[idx]
 
     # 2. Channel selection
     channel = await questionary.select(
@@ -626,7 +705,7 @@ async def _add_agent_flow() -> None:
         return
 
     # 3. Agent ID — default to personality stem, user can override
-    default_agent_id = personality["stem"]
+    default_agent_id = personality["stem"] if personality else ""
     agent_id = await questionary.text(
         "Agent ID (lowercase, used as service name):",
         default=default_agent_id,

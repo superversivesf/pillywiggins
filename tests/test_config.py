@@ -66,7 +66,7 @@ def test_settings_defaults():
     s = Settings()
     assert s.agent_id == "puck"
     assert s.channel == "telegram"
-    assert s.personality_file == "/config/puck.yaml"
+    assert s.personality_file == "/config/fey_court/puck.yaml"
     assert s.database_url == "postgresql://pillywiggins:changeme@postgres:5432/pillywiggins"
     assert s.pg_password == "changeme"
     assert s.redis_url == "redis://redis:6379/0"

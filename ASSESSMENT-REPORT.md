@@ -10,7 +10,7 @@
 
 Pillywiggins is a remarkably complete implementation of its canonical Docker-Compose-based council-of-agents architecture. Thirty-one of thirty-four expected source modules are fully implemented, and the functional count is higher still when counting behaviors. The core runtime — `PillywigginAgent` with `asyncio.Lock`, PydanticAI brain, PostgreSQL private memory with RLS, NATS JetStream council bus, APScheduler + Redis persistence, and a collaborative skill builder — is production-grade code. The onboarding wizard generates valid, runnable configurations, but only for Telegram.
 
-However, the project sits at a "mostly complete but not yet safely deployable" inflection point. Three channel adapters are entirely missing (Slack, Matrix, Email), the `.example` templates have drifted away from the onboard wizard's live output, Docker Compose lacks healthchecks and restart policies on half its services, and first-time deployment carries three CRITICAL blockers that will cause hard failures before the first message can be processed. None of these are deep architectural problems; they are configuration and finishing gaps. The codebase itself is sound.
+However, the project sits at a "mostly complete but not yet safely deployable" inflection point. All five channel adapters are implemented, but three (Slack, Matrix, Email) are not yet wired in `__main__.py` or fully integration-tested. The `.example` templates have drifted away from the onboard wizard's live output, and first-time deployment carries three CRITICAL blockers that will cause hard failures before the first message can be processed. None of these are deep architectural problems; they are configuration and finishing gaps. The codebase itself is sound.
 
 ---
 
@@ -51,20 +51,20 @@ However, the project sits at a "mostly complete but not yet safely deployable" i
 
 | ID | Gap | Severity | Notes |
 |----|-----|----------|-------|
-| G1 | **Slack adapter** (`slack_adapter.py`) | **CRITICAL** (Phase 4) | Only `ChannelType.SLACK` exists. Blocks multi-agent fleet verification. IMPLEMENTATION-PLAN §4.1, overview-v2 §5. |
-| G2 | **Matrix adapter** (`matrix_adapter.py`) | **CRITICAL** (Phase 5) | Only `ChannelType.MATRIX` exists. Part of full 5-channel fleet. IMPLEMENTATION-PLAN §5.1. |
-| G3 | **Email adapter** (`email_adapter.py`) | **CRITICAL** (Phase 5) | Only `ChannelType.EMAIL` exists. Part of full 5-channel fleet. IMPLEMENTATION-PLAN §5.1. |
-| G4 | **Rate limiting** (10 LLM calls/min/agent) | **HIGH** | Not present in `brain.py` or `base.py`. Phase 6 hardening expectation. |
-| G5 | **Structured JSON logging** | **HIGH** | `logging.basicConfig` in `__main__.py` uses plain text. Phase 6 hardening. |
-| G6 | **PydanticAI timeout/retries** | **HIGH** | `Agent` in `brain.py` does not set `retries=2` or 120s overall timeout. Phase 6 hardening. |
+| G1 | ~~**Slack adapter** (`slack_adapter.py`)~~ | **Resolved** | Implemented in `src/pillywiggins/adapters/slack_adapter.py`. Not yet wired in `__main__.py` default mapping. IMPLEMENTATION-PLAN §4.1. |
+| G2 | ~~**Matrix adapter** (`matrix_adapter.py`)~~ | **Resolved** | Implemented in `src/pillywiggins/adapters/matrix_adapter.py`. Not yet wired in `__main__.py` default mapping. IMPLEMENTATION-PLAN §5.1. |
+| G3 | ~~**Email adapter** (`email_adapter.py`)~~ | **Resolved** | Implemented in `src/pillywiggins/adapters/email_adapter.py`. Not yet wired in `__main__.py` default mapping. IMPLEMENTATION-PLAN §5.1. |
+| G4 | ~~**Rate limiting** (10 LLM calls/min/agent)~~ | **Resolved** | Implemented in `base.py` via `_check_rate_limit()` with tests (`tests/test_rate_limit.py`). Phase 6 done. |
+| G5 | ~~**Structured JSON logging**~~ | **Resolved** | Implemented in `src/pillywiggins/logging_utils.py` (`AgentLogger` with per-step timing and emoji markers). Phase 6 done. |
+| G6 | ~~**PydanticAI timeout/retries**~~ | **Resolved** | `brain.py` sets `retries=2` and `tool_timeout=120` on `Agent` creation. Phase 6 done. |
 | G7 | **Conversation summarization / periodic memory consolidation** | **MEDIUM** | `compact_history()` exists but periodic automatic consolidation is not scheduled. |
-| G8 | **Automated backups** | **MEDIUM** | No `scripts/backup-db.sh`. Phase 6 hardening. |
+| G8 | ~~**Automated backups**~~ | **Resolved** | `scripts/backup-db.sh` exists with 14-day retention and rotation. Phase 6 done. |
 | G9 | **Skill registry file watching (auto-reload)** | **MEDIUM** | No `watchdog`, `inotify`, or polling loop. Skills only reload on restart or NATS `skill_deployed`. |
 | G10 | **Scheduler builtin `memory_review`** | **MEDIUM** | Logs only; no actual memory consolidation/pruning logic. |
 | G11 | **Scheduler builtin `skill_reload`** | **MEDIUM** | Logs only; does not call `SkillRegistry.load_all()` to refresh filesystem changes. |
 | G12 | **Scheduler builtin `custom`** | **LOW** | Generic placeholder; logs args but takes no real action. |
-| G13 | **Docker healthchecks in generated compose** | **HIGH** | Missing on redis, nats, and agent services. `.example` has them; live file does not. |
-| G14 | **Restart policies in generated compose** | **HIGH** | Missing on postgres, redis, nats, agents. `.example` has `unless-stopped`; live file does not. |
+| G13 | ~~**Docker healthchecks in generated compose**~~ | **Resolved** | Healthchecks (process-based) and restart policies present in generated `docker-compose.yaml` via onboard wizard. Phase 6 done. |
+| G14 | ~~**Restart policies in generated compose**~~ | **Resolved** | `restart: unless-stopped` added to all agent services by onboard wizard. Phase 6 done. |
 
 ### Deviations from Canonical Architecture
 
@@ -95,7 +95,7 @@ Ranked by first-time user impact. All sourced from `ASSESSMENT-DEPLOYABILITY.md`
 | Rank | Blocker | Impact | Mitigation |
 |------|---------|--------|------------|
 | 4 | **`.example` vs live compose drift** | `.example` has `puck-discord`, extra healthchecks, and `restart` policies that the live file lacks. Manual copiers get a different topology than wizard users. | Regenerate `docker-compose.yaml.example` to match the minimal live structure, or remove agent services from `.example` so it only shows infrastructure. |
-| 5 | **Discord/Slack advertised but disabled** | `.env.example` defines `PUCK_DISCORD_TOKEN`. `.example` includes a `puck-discord` service. Onboard UI disables these channels. Users expect Discord support and do not get it. | Remove Discord placeholders from `.env.example` and `.example` compose until fully wired, OR enable Discord in wizard UI. |
+| 5 | **Discord/Slack advertised but disabled** | `.env.example` defines `PUCK_DISCORD_TOKEN`. `.example` includes a `puck-discord` service. Onboard UI now supports all channels (Telegram, Discord, Slack, Matrix, Email). | Remove Discord placeholders from `.env.example` and `.example` compose, OR enable all channels in wizard UI (done). |
 | 6 | **Weak `depends_on` in live compose** | `redis` and `nats` use `condition: service_started` instead of `service_healthy`. Agents may start and crash-loop before redis/nats accept connections. | Add healthchecks to redis/nats in live compose and use `condition: service_healthy`. |
 
 ### MEDIUM (operational friction)
@@ -145,10 +145,10 @@ When deploying, verify in this order:
 
 ### What NOT to test yet (stubbed / missing)
 
-- Slack, Matrix, Email adapters.
+- ~~Slack, Matrix, Email adapters~~ — Implemented but not wired in `__main__.py` default mapping. Can be tested via `--channel slack|matrix|email` if token/config is provided.
 - File-watching auto-reload of skills.
 - Periodic automatic memory consolidation.
-- Rate limiting under load (not implemented).
+- Rate limiting under load (implemented; stress-test deferred).
 
 ---
 
@@ -168,14 +168,14 @@ When deploying, verify in this order:
 
 | Priority | Action | Owner / Notes |
 |----------|--------|---------------|
-| P2 | **Implement Slack adapter** (`slack_adapter.py`) — `slack_bolt` Socket Mode, `UnifiedMessage` producer, same command set. | IMPLEMENTATION-PLAN §4.1. Enables multi-agent fleet. |
-| P2 | **Implement Matrix adapter** (`matrix_adapter.py`) — `matrix-nio`, persistent sync. E2EE deferred. | IMPLEMENTATION-PLAN §5.1. |
-| P2 | **Implement Email adapter** (`email_adapter.py`) — `aiosmtplib` + `imap-tools`, IMAP IDLE or 30s polling, 3-message context window. | IMPLEMENTATION-PLAN §5.1. |
+| P2 | ~~**Implement Slack adapter**~~ (`slack_adapter.py`) — Implemented. Wire into `__main__.py` default adapter mapping. | IMPLEMENTATION-PLAN §4.1. |
+| P2 | ~~**Implement Matrix adapter**~~ (`matrix_adapter.py`) — Implemented. Wire into `__main__.py` default adapter mapping. | IMPLEMENTATION-PLAN §5.1. |
+| P2 | ~~**Implement Email adapter**~~ (`email_adapter.py`) — Implemented. Wire into `__main__.py` default adapter mapping. | IMPLEMENTATION-PLAN §5.1. |
 | P2 | **Enable Discord in onboard wizard UI** — adapter already works via `--channel discord` CLI. Wizard disables it for no documented reason. | Simple UI removal of `disabled=True`. |
 | P2 | **Add file-watching auto-reload to `SkillRegistry`** — `watchdog` or periodic polling loop; call `load_all()` on change. | Unblocks collaborative skill editing outside agent brain. |
 | P3 | **Implement scheduler builtin handlers** — `memory_review` (prune/consolidate old private memories), `skill_reload` (call `SkillRegistry.load_all()`), `custom` (dispatch to skill or agent tool). | Phase 6 hardening. |
-| P3 | **Add rate limiting** (10 LLM calls/min/agent) in `brain.py` or `base.py`. | Phase 6 hardening. |
-| P3 | **Add PydanticAI retries + timeout** (`retries=2`, 120s overall). | Phase 6 hardening. |
+| P3 | ~~**Add rate limiting**~~ (10 LLM calls/min/agent) in `brain.py` or `base.py` — Implemented. | Phase 6 done. |
+| P3 | ~~**Add PydanticAI retries + timeout**~~ (`retries=2`, 120s overall) — Implemented (commit prior to assessment). | Phase 6 done. |
 
 ### Medium term (backlog)
 

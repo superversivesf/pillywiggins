@@ -74,6 +74,35 @@ Sandbox (`skills/sandbox.py`): Isolated subprocess with stripped env vars, permi
 
 `Settings` (`config.py`): pydantic-settings BaseSettings loading from env vars + `.env`. Multi-agent Docker: each container sets `--agent-id`, `agents_config.py` loads per-agent env from `agents.yaml` and injects into `os.environ` before Settings re-instantiation. `resolve_embedding_config()` probes Ollama for embedding models, falls back to HuggingFace sentence-transformers.
 
+### Personality packs
+
+Personality YAML files live in `personalities/` organized into pack subdirectories:
+
+```
+personalities/
+  fey_court/          # whimsical fairy/botanical
+    pack.yaml         # name, description, category
+    puck.yaml
+    wormwood.yaml
+    ...
+  workshop/           # pragmatic coworkers
+    pack.yaml
+    foreman.yaml
+    ...
+  study/              # academic/intellectual
+  ship/               # nautical project management
+  kitchen/            # cozy domestic life management
+  tavern/             # fantasy-RPG with practical roles
+  studio/             # creative-process for artists
+  bridge/             # Star Trek bridge crew
+  clinic/             # health and wellness
+  _defaults/          # channel-default stubs (telegram.yaml, discord.yaml, etc.)
+```
+
+Each pack has an optional `pack.yaml` manifest with `name`, `description`, and `category` (whimsical/fun/serious/cozy). Directories starting with `_` are skipped by `discover_packs()`. The `onboard` wizard shows pack selection before personality selection.
+
+`discover_personalities()` uses `rglob("*.yaml")` to find personalities in subdirectories, skipping `pack.yaml` files. Each result includes a `pack` key (parent directory name or `None` for top-level files). `discover_packs()` scans subdirectories for `pack.yaml` manifests. `load_personality()` works unchanged — it takes an absolute path and doesn't care about directory structure.
+
 ### Database schema
 
 `scripts/init-db.sql`: Creates `private_memory` (RLS-isolated), `council_memory` (shared), `conversation_cache` (RLS-isolated) tables with pgvector `vector(768)` columns, HNSW indexes, and per-agent DB roles for RLS.

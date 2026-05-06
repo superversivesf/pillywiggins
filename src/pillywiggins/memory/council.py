@@ -6,6 +6,8 @@ from typing import Optional
 import asyncpg
 from pgvector.asyncpg import register_vector
 
+from pillywiggins.security.prompt_sanitizer import sanitize_or_default
+
 logger = logging.getLogger(__name__)
 
 VALID_MESSAGE_TYPES = {"insight", "skill_announcement", "question", "proposal", "skill_execution"}
@@ -257,7 +259,7 @@ class CouncilMemory:
                 {
                     "id": str(row["id"]),
                     "contributing_agent": row["contributing_agent"],
-                    "content": row["content"],
+                    "content": sanitize_or_default(row["content"], default="[Blocked]"),
                     "tags": list(row["tags"]) if row["tags"] else [],
                     "message_type": row["message_type"],
                     "confidence": float(row["confidence"]),
@@ -303,7 +305,7 @@ class CouncilMemory:
             return {
                 "id": str(row["id"]),
                 "contributing_agent": row["contributing_agent"],
-                "content": row["content"],
+                "content": sanitize_or_default(row["content"], default="[Blocked]"),
                 "tags": list(row["tags"]) if row["tags"] else [],
                 "message_type": row["message_type"],
                 "confidence": float(row["confidence"]),
@@ -332,7 +334,7 @@ class CouncilMemory:
                 {
                     "id": str(row["id"]),
                     "contributing_agent": row["contributing_agent"],
-                    "content": row["content"],
+                    "content": sanitize_or_default(row["content"], default="[Blocked]"),
                     "tags": list(row["tags"]) if row["tags"] else [],
                     "message_type": row["message_type"],
                     "confidence": float(row["confidence"]),

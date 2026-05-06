@@ -22,7 +22,9 @@
 | Service | Image/Build | Status | Notes |
 |----------|-------------|--------|--------|
 | **puck** | `build: .` | Present in live `.yaml` | Single Telegram agent. Overrides Dockerfile CMD with `--agent-id puck`. |
-| **puck-discord** | `build: .` | **Only in `.example`** | Hardcoded Discord agent service exists in the template but is removed from the live file. Creates confusion for users referencing `.example`. |
+| **slack-agent** | `build: .` | Present if configured | Slack agent service, added by onboard wizard when channel=slack. |
+| **matrix-agent** | `build: .` | Present if configured | Matrix agent service, added by onboard wizard when channel=matrix. |
+| **email-agent** | `build: .` | Present if configured | Email agent service, added by onboard wizard when channel=email. |
 
 ### Omissions
 
@@ -118,7 +120,7 @@ The wizard (`src/pillywiggins/onboard.py`) is functional code-wise but has UI/UX
 | # | Blocker | Impact | Mitigation |
 |---|----------|--------|-----------|
 | 4 | **`.example` vs live compose drift** | `.example` has `puck-discord`, extra healthchecks, and `restart` policies that the live file lacks. A user referencing `.example` for manual setup gets a different topology than the onboard wizard generates. | Regenerate `docker-compose.yaml.example` to match the minimal live structure, or remove agent services from `.example` so it only shows infrastructure. |
-| 5 | **Discord/Slack advertised but disabled** | `.env.example` defines `PUCK_DISCORD_TOKEN`. `docker-compose.yaml.example` includes a `puck-discord` service. The onboard UI disables these channels. Users will expect Discord support and not get it. | Update `.env.example` to remove Discord placeholders until the adapter is fully wired in the wizard. Remove `puck-discord` from `.example` or enable it in the wizard. |
+| 5 | **Discord/Slack advertised but disabled** | `.env.example` defines `PUCK_DISCORD_TOKEN`. `docker-compose.yaml.example` includes a `puck-discord` service. The onboard UI previously disabled these channels. Users will expect Discord support and not get it. | Update `.env.example` to remove Discord placeholders until the adapter is fully wired in the wizard. Remove `puck-discord` from `.example` or enable it in the wizard. |
 | 6 | **Weak `depends_on` in live compose** | `redis` and `nats` use `condition: service_started` instead of `service_healthy`. Agents may start and crash-loop before redis/nats accept connections. | Add healthchecks to redis/nats in `docker-compose.yaml` and use `condition: service_healthy`. |
 
 ### MEDIUM

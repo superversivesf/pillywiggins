@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     agent_id: str = "puck"
     channel: str = "telegram"
-    personality_file: str = "/config/puck.yaml"
+    personality_file: str = "/config/fey_court/puck.yaml"
     database_url: str = "postgresql://pillywiggins:changeme@postgres:5432/pillywiggins"
     pg_password: str = "changeme"
     redis_url: str = "redis://redis:6379/0"

@@ -22,18 +22,89 @@ async def _builtin_heartbeat(**kwargs: Any) -> None:
 
 async def _builtin_memory_review(**kwargs: Any) -> None:
     agent_id = kwargs.get("agent_id", "unknown")
+    args = kwargs.get("args", {})
     logger.info("memory review for %s", agent_id)
+    try:
+        from pillywiggins.agents.base import _ACTIVE_AGENTS
+
+        agent = _ACTIVE_AGENTS.get(agent_id)
+        if agent is None:
+            logger.warning("memory_review: agent %s not found", agent_id)
+            return
+        conversation_key = args.get("conversation_key") if isinstance(args, dict) else None
+        result = await agent.compact_history(conversation_key=conversation_key)
+        logger.info("memory_review result for %s: %s", agent_id, result)
+    except Exception:
+        logger.exception("memory_review failed for %s", agent_id)
 
 
 async def _builtin_skill_reload(**kwargs: Any) -> None:
     agent_id = kwargs.get("agent_id", "unknown")
     logger.info("skill reload for %s", agent_id)
+    try:
+        from pillywiggins.agents.base import _ACTIVE_AGENTS
+
+        agent = _ACTIVE_AGENTS.get(agent_id)
+        if agent is None:
+            logger.warning("skill_reload: agent %s not found", agent_id)
+            return
+        if agent._skill_registry is not None:
+            agent._skill_registry.load_all()
+            agent._refresh_brain_tools()
+            logger.info("skill_reload completed for %s", agent_id)
+        else:
+            logger.warning("skill_reload: no skill_registry for %s", agent_id)
+    except Exception:
+        logger.exception("skill_reload failed for %s", agent_id)
 
 
 async def _builtin_custom(**kwargs: Any) -> None:
     agent_id = kwargs.get("agent_id", "unknown")
     args = kwargs.get("args", {})
     logger.info("custom action for %s: %s", agent_id, args)
+    try:
+        from pillywiggins.agents.base import _ACTIVE_AGENTS
+
+        agent = _ACTIVE_AGENTS.get(agent_id)
+        if agent is None:
+            logger.warning("custom: agent %s not found", agent_id)
+            return
+        if not isinstance(args, dict):
+            logger.warning("custom: args is not a dict for %s", agent_id)
+            return
+
+        skill_name = args.get("skill")
+        if skill_name and agent._skill_registry is not None:
+            skill = agent._skill_registry.get_skill(skill_name)
+            if skill is not None:
+                result = await skill.execute(agent_id=agent_id, channel="scheduler", **args)
+                logger.info("custom skill %s executed for %s: %s", skill_name, agent_id, result)
+                return
+            logger.warning("custom: skill %s not found for %s", skill_name, agent_id)
+
+        prompt = args.get("prompt")
+        if prompt and hasattr(agent, "_brain"):
+            from pillywiggins.agents.deps import AgentDeps
+
+            result = await agent._brain.run(
+                user_prompt=prompt,
+                deps=AgentDeps(
+                    agent_id=agent.agent_id,
+                    channel="scheduler",
+                    personality=agent.personality,
+                    private_memory=agent._private_memory,
+                    skill_registry=agent._skill_registry,
+                    council_memory=agent._council_memory,
+                    nats_bus=agent._nats_bus,
+                    scheduler=agent._scheduler,
+                ),
+            )
+            logger.info("custom prompt executed for %s: %s", agent_id, getattr(result, "output", result))
+            return
+
+        logger.info("custom action for %s completed (no skill or prompt configured)", agent_id)
+    except Exception:
+        logger.exception("custom action failed for %s", agent_id)
 
 
 def parse_cron(expr: str) -> dict[str, str]:

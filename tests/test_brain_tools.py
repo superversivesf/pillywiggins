@@ -30,7 +30,7 @@ class TestSendMessageToAgent:
     async def test_publishes_correct_message(self):
         nats = MagicMock()
         nats.publish_direct = AsyncMock()
-        ctx = _make_ctx(agent_id="puck", nats_bus=nats)
+        ctx = _make_ctx(agent_id="puck", channel="discord", nats_bus=nats)
         result = await send_message_to_agent(ctx, target_agent_id="oberon", message="hello there")
         nats.publish_direct.assert_awaited_once()
         call_kwargs = nats.publish_direct.call_args[1]
@@ -41,7 +41,35 @@ class TestSendMessageToAgent:
         assert data["channel_user_id"] == "puck"
         assert data["metadata"] == {"from": "puck"}
         assert data["conversation_key"] == ""
+        assert "routing_info" in data
+        assert data["routing_info"]["original_channel"] == "discord"
+        assert data["routing_info"]["original_channel_user_id"] == ""
         assert result == "Sent message to oberon"
+
+    @pytest.mark.asyncio
+    async def test_publishes_with_full_routing_context(self):
+        nats = MagicMock()
+        nats.publish_direct = AsyncMock()
+        ctx = MagicMock(spec=RunContext)
+        ctx.deps = AgentDeps(
+            agent_id="puck",
+            channel="discord",
+            channel_user_id="123456",
+            conversation_key="67890",
+            metadata={"chat_id": "67890"},
+            nats_bus=nats,
+        )
+        result = await send_message_to_agent(ctx, target_agent_id="titania", message="hello")
+        data = nats.publish_direct.call_args[1]["data"]
+        assert data["channel"] == "discord"
+        assert data["channel_user_id"] == "123456"
+        assert data["conversation_key"] == "67890"
+        assert data["metadata"] == {"chat_id": "67890"}
+        assert data["routing_info"]["original_channel"] == "discord"
+        assert data["routing_info"]["original_channel_user_id"] == "123456"
+        assert data["routing_info"]["original_conversation_key"] == "67890"
+        assert data["routing_info"]["original_metadata"] == {"chat_id": "67890"}
+        assert result == "Sent message to titania"
 
 
 def test_create_brain_registers_send_message_to_agent(monkeypatch):

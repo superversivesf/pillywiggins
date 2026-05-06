@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from pillywiggins.skills import schema
 from pillywiggins.skills.sandbox import SandboxResult, run_sandboxed, run_test_driven
 
 logger = logging.getLogger(__name__)
@@ -61,32 +62,6 @@ def _sanitize_code(code: str) -> str:
     sanitized = re.sub(r'\\("""|\'\'\'|"|\')', r'\1', sanitized)
 
     return sanitized
-
-
-def validate_skill_code(
-    code: str, permissions: Optional[dict[str, bool]] = None
-) -> tuple[bool, str]:
-    try:
-        ast.parse(code)
-    except SyntaxError as e:
-        return False, f"Syntax error: {e}"
-
-    has_meta = "SKILL_META" in code
-    if not has_meta:
-        return False, "Code must contain a SKILL_META dict assignment"
-
-    has_run = bool(re.search(r"async\s+def\s+run\s*\(", code))
-    if not has_run:
-        return False, "Code must contain an async def run() function"
-
-    perm = permissions or {}
-    for pattern, regex in DANGEROUS_PATTERNS.items():
-        if pattern == "subprocess.Popen" and perm.get("subprocess"):
-            continue
-        if re.search(regex, code):
-            return False, f"Code contains dangerous pattern: {pattern}"
-
-    return True, ""
 
 
 def _extract_meta_from_comments(code: str) -> dict:
@@ -205,17 +180,17 @@ def draft_skill(name: str, code: str) -> SkillDraft:
         "subprocess": perm_meta.get("subprocess", False),
         "file_write": perm_meta.get("file_write", False),
     }
-    valid, error = validate_skill_code(sanitized, permissions)
+    valid, errors = schema.validate_skill_code(sanitized, permissions)
     if not valid:
         return SkillDraft(
             name=name,
             code=sanitized,
-            meta=meta,
+            meta={**meta, "schema_errors": errors},
             status=DraftStatus.ERROR,
             test_results=[
                 {
                     "passed": False,
-                    "error": f"Skill code validation failed: {error}",
+                    "error": f"Schema validation failed ({len(errors)} errors): " + "; ".join(errors),
                 }
             ],
         )
@@ -408,6 +383,12 @@ def review_skill(draft: SkillDraft) -> str:
     lines = []
     lines.append(f"=== Skill Review: {draft.name} ===")
     lines.append(f"Status: {draft.status.value}")
+    schema_errors = draft.meta.get("schema_errors")
+    if draft.status == DraftStatus.ERROR and schema_errors:
+        lines.append("")
+        lines.append("--- Schema Validation Errors ---")
+        for err in schema_errors:
+            lines.append(f"  • {err}")
     lines.append("")
     lines.append("--- Code ---")
     lines.append(draft.code)
@@ -449,7 +430,11 @@ async def publish_skill(
         return f"Skill '{draft.name}' publication was not approved."
 
     if draft.status == DraftStatus.ERROR:
-        return f"Skill '{draft.name}' cannot be published: status is 'error', fix errors before publishing."
+        details = ""
+        schema_errors = draft.meta.get("schema_errors")
+        if schema_errors:
+            details = " Schema errors: " + "; ".join(schema_errors)
+        return f"Skill '{draft.name}' cannot be published: status is 'error', fix errors before publishing.{details}"
 
     if draft.status not in (DraftStatus.TESTED, DraftStatus.REVIEWED, DraftStatus.APPROVED):
         return f"Skill '{draft.name}' cannot be published: status is '{draft.status.value}', must be 'tested', 'reviewed', or 'approved'."
@@ -457,7 +442,12 @@ async def publish_skill(
     if draft.test_results:
         failed = [r for r in draft.test_results if not r["passed"]]
         if failed:
-            return f"Skill '{draft.name}' has {len(failed)} failing test(s). Fix before publishing."
+            error_parts = []
+            for r in failed:
+                if r.get("error"):
+                    error_parts.append(r["error"])
+            detail = " Errors: " + "; ".join(error_parts) if error_parts else ""
+            return f"Skill '{draft.name}' has {len(failed)} failing test(s). Fix before publishing.{detail}"
 
     skill = registry.register_skill(draft.name, draft.code, draft.meta)
     if skill is None:

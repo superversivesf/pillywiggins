@@ -27,6 +27,11 @@ from pillywiggins.skills.registry import SkillRegistry
 from pillywiggins.messaging.nats_bus import NatsBus
 from pillywiggins.messaging.unified import UnifiedMessage, ChannelType
 from pillywiggins.scheduling.scheduler import AgentScheduler
+from pillywiggins.security.prompt_sanitizer import (
+    PromptSanitizer,
+    PromptInjectionError,
+    sanitize_or_default,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +75,7 @@ async def _builtin_send_message_handler(**kwargs: Any) -> None:
     conversation_key = args.get("conversation_key", "")
     chat_id = args.get("chat_id", conversation_key)
     prompt = args.get("prompt", "Send a brief friendly check-in message.")
+    sanitized_prompt = sanitize_or_default(prompt, default="Send a brief friendly check-in message.")
 
     if not conversation_key:
         logger.warning("send_message action missing conversation_key for %s", agent_id)
@@ -81,10 +87,12 @@ async def _builtin_send_message_handler(**kwargs: Any) -> None:
 
     try:
         result = await agent._brain.run(
-            user_prompt=prompt,
+            user_prompt=sanitized_prompt,
             deps=AgentDeps(
                 agent_id=agent.agent_id,
                 channel="telegram",
+                channel_user_id="",
+                metadata={},
                 personality=agent.personality,
                 private_memory=agent._private_memory,
                 skill_registry=agent._skill_registry,
@@ -188,21 +196,29 @@ class PillywigginAgent:
                 channel = ChannelType(data.get("channel", "telegram"))
             except ValueError:
                 channel = ChannelType.TELEGRAM
+            raw_content = data.get("content", "")
+            sanitized_content = sanitize_or_default(raw_content, default="")
             msg = UnifiedMessage(
                 channel=channel,
                 channel_user_id=data.get("channel_user_id", ""),
-                content=data.get("content", ""),
+                content=sanitized_content,
                 conversation_key=data.get("conversation_key", ""),
                 metadata={"from_agent": from_agent, "timestamp": timestamp, **data.get("metadata", {})},
             )
             logger.info("Agent %s processing inbound direct message from %s", self.agent_id, from_agent or "?")
             response = await self.process_message(msg)
-            if response and self._nats_bus is not None:
-                if from_agent:
+            if response:
+                routing_info = data.get("routing_info")
+                if routing_info and routing_info.get("original_channel") == self.personality.channel and self._adapter is not None:
+                    conv_key = routing_info.get("original_conversation_key", "")
+                    orig_metadata = routing_info.get("original_metadata", {})
+                    await self._adapter.send(conv_key, response, orig_metadata)
+                    logger.info("Agent %s sent reply directly to user via %s", self.agent_id, self.personality.channel)
+                elif self._nats_bus is not None and from_agent:
                     await self._nats_bus.publish_direct(
                         target_agent_id=from_agent,
                         message_type="direct_reply",
-                        data={"reply": response},
+                        data={"reply": response, "routing_info": routing_info},
                     )
         elif msg_type == "insight":
             if self._council_memory is not None:
@@ -220,6 +236,16 @@ class PillywigginAgent:
                     logger.warning(
                         "Agent %s council write_entry failed: %s", self.agent_id, result.get("error") if isinstance(result, dict) else result
                     )
+        elif msg_type == "direct_reply":
+            routing_info = data.get("routing_info")
+            reply = data.get("reply", "")
+            if routing_info and routing_info.get("original_channel") == self.personality.channel and self._adapter is not None:
+                conv_key = routing_info.get("original_conversation_key", "")
+                orig_metadata = routing_info.get("original_metadata", {})
+                await self._adapter.send(conv_key, reply, orig_metadata)
+                logger.info("Agent %s forwarded direct_reply to user via %s", self.agent_id, self.personality.channel)
+            else:
+                logger.warning("Agent %s received direct_reply but cannot route to user (no adapter or channel mismatch)", self.agent_id)
         elif msg_type in ("skill_published", "skill_deployed"):
             if self._skill_registry is not None:
                 self._skill_registry.load_all()
@@ -425,6 +451,8 @@ class PillywigginAgent:
         deps = AgentDeps(
             agent_id=self.agent_id,
             channel="system",
+            channel_user_id="",
+            metadata={},
             personality=self.personality,
             private_memory=self._private_memory,
             skill_registry=self._skill_registry,
@@ -595,6 +623,8 @@ class PillywigginAgent:
             deps = AgentDeps(
                 agent_id=self.agent_id,
                 channel=message.channel.value,
+                channel_user_id=message.channel_user_id,
+                metadata=message.metadata,
                 personality=self.personality,
                 private_memory=self._private_memory,
                 skill_registry=self._skill_registry,
@@ -607,8 +637,22 @@ class PillywigginAgent:
             )
 
             total_start = time.perf_counter()
+
+            # Sanitize inbound message content before passing to brain
+            sanitizer = PromptSanitizer()
+            try:
+                sanitized_content = sanitizer.sanitize(message.content)
+            except PromptInjectionError as exc:
+                logger.warning(
+                    "Prompt injection blocked from %s: score=%d, patterns=%s",
+                    message.channel_user_id,
+                    exc.score,
+                    exc.matched_patterns,
+                )
+                return "I cannot process that request."
+
             result = await self._brain.run(
-                message.content,
+                sanitized_content,
                 deps=deps,
                 message_history=history,
             )

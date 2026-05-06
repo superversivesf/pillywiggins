@@ -851,7 +851,7 @@ ALL of the following must pass before proceeding:
 - [x] Skill sandbox: no access to secrets, 30s timeout enforced
 - [x] `.env` secured: `chmod 600`, excluded from `.gitignore`
 - [x] Healthchecks present on infrastructure services (postgres, redis, nats, searxng)
-- [ ] Health failure triggers automatic container restart (restart policy requires compose regeneration
+- [x] Health failure triggers automatic container restart (`restart: unless-stopped` written by onboard wizard)
 - [ ] System runs unattended for 1 week without intervention
 
 ### Risk items (Phase 6)

@@ -8,6 +8,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from pillywiggins.security.prompt_sanitizer import sanitize_or_default
+
 logger = logging.getLogger(__name__)
 
 SAFE_ENV_VARS = {"PATH", "HOME", "USER", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE"}
@@ -28,6 +30,15 @@ class SandboxResult:
     error: Optional[str] = None
     timed_out: bool = False
     execution_time_ms: float = 0.0
+
+
+def _sanitize_sandbox_result(result: SandboxResult) -> SandboxResult:
+    """Sanitize string result/error fields before returning to caller."""
+    if result.result is not None and isinstance(result.result, str):
+        result.result = sanitize_or_default(result.result, default="[Blocked]")
+    if result.error is not None:
+        result.error = sanitize_or_default(result.error, default="[Blocked]")
+    return result
 
 
 def restricted_env(permissions: dict[str, bool]) -> dict[str, str]:
@@ -163,31 +174,31 @@ async def run_test_driven(
                 proc.kill()
                 await proc.wait()
                 elapsed = (time.monotonic() - start) * 1000
-                return SandboxResult(
+                return _sanitize_sandbox_result(SandboxResult(
                     success=False,
                     error=f"Sandbox timed out after {timeout}s",
                     timed_out=True,
                     execution_time_ms=elapsed,
-                )
+                ))
 
             elapsed = (time.monotonic() - start) * 1000
 
             if proc.returncode != 0:
                 stderr_text = stderr.decode("utf-8", errors="replace").strip()
-                return SandboxResult(
+                return _sanitize_sandbox_result(SandboxResult(
                     success=False,
                     error=f"Process exited with code {proc.returncode}: {stderr_text}",
                     execution_time_ms=elapsed,
-                )
+                ))
 
             stdout_text = stdout.decode("utf-8", errors="replace").strip()
             if not stdout_text:
                 stderr_text = stderr.decode("utf-8", errors="replace").strip()
-                return SandboxResult(
+                return _sanitize_sandbox_result(SandboxResult(
                     success=False,
                     error=f"No output from sandbox{': ' + stderr_text if stderr_text else ''}",
                     execution_time_ms=elapsed,
-                )
+                ))
 
             try:
                 parsed = json.loads(stdout_text)
@@ -196,24 +207,24 @@ async def run_test_driven(
                 err_detail = f"Invalid JSON output: {e}"
                 if stderr_text:
                     err_detail += f" | stderr: {stderr_text}"
-                return SandboxResult(
+                return _sanitize_sandbox_result(SandboxResult(
                     success=False,
                     error=err_detail,
                     execution_time_ms=elapsed,
-                )
+                ))
 
             if not parsed.get("success", False):
-                return SandboxResult(
+                return _sanitize_sandbox_result(SandboxResult(
                     success=False,
                     error=parsed.get("error", "Unknown test error"),
                     execution_time_ms=elapsed,
-                )
+                ))
 
-            return SandboxResult(
+            return _sanitize_sandbox_result(SandboxResult(
                 success=True,
                 result=parsed.get("result"),
                 execution_time_ms=elapsed,
-            )
+            ))
 
         finally:
             try:
@@ -224,11 +235,11 @@ async def run_test_driven(
     except Exception as e:
         elapsed = (time.monotonic() - start) * 1000
         logger.exception("Test-driven sandbox execution failed")
-        return SandboxResult(
+        return _sanitize_sandbox_result(SandboxResult(
             success=False,
             error=str(e),
             execution_time_ms=elapsed,
-        )
+        ))
 
 
 async def run_sandboxed(
@@ -267,31 +278,31 @@ async def run_sandboxed(
                 proc.kill()
                 await proc.wait()
                 elapsed = (time.monotonic() - start) * 1000
-                return SandboxResult(
+                return _sanitize_sandbox_result(SandboxResult(
                     success=False,
                     error=f"Sandbox timed out after {timeout}s",
                     timed_out=True,
                     execution_time_ms=elapsed,
-                )
+                ))
 
             elapsed = (time.monotonic() - start) * 1000
 
             if proc.returncode != 0:
                 stderr_text = stderr.decode("utf-8", errors="replace").strip()
-                return SandboxResult(
+                return _sanitize_sandbox_result(SandboxResult(
                     success=False,
                     error=f"Process exited with code {proc.returncode}: {stderr_text}",
                     execution_time_ms=elapsed,
-                )
+                ))
 
             stdout_text = stdout.decode("utf-8", errors="replace").strip()
             if not stdout_text:
                 stderr_text = stderr.decode("utf-8", errors="replace").strip()
-                return SandboxResult(
+                return _sanitize_sandbox_result(SandboxResult(
                     success=False,
                     error=f"No output from skill{': ' + stderr_text if stderr_text else ''}",
                     execution_time_ms=elapsed,
-                )
+                ))
 
             try:
                 parsed = json.loads(stdout_text)
@@ -300,24 +311,24 @@ async def run_sandboxed(
                 err_detail = f"Invalid JSON output: {e}"
                 if stderr_text:
                     err_detail += f" | stderr: {stderr_text}"
-                return SandboxResult(
+                return _sanitize_sandbox_result(SandboxResult(
                     success=False,
                     error=err_detail,
                     execution_time_ms=elapsed,
-                )
+                ))
 
             if not parsed.get("success", False):
-                return SandboxResult(
+                return _sanitize_sandbox_result(SandboxResult(
                     success=False,
                     error=parsed.get("error", "Unknown skill error"),
                     execution_time_ms=elapsed,
-                )
+                ))
 
-            return SandboxResult(
+            return _sanitize_sandbox_result(SandboxResult(
                 success=True,
                 result=parsed.get("result"),
                 execution_time_ms=elapsed,
-            )
+            ))
 
         finally:
             try:
@@ -328,8 +339,8 @@ async def run_sandboxed(
     except Exception as e:
         elapsed = (time.monotonic() - start) * 1000
         logger.exception("Sandbox execution failed")
-        return SandboxResult(
+        return _sanitize_sandbox_result(SandboxResult(
             success=False,
             error=str(e),
             execution_time_ms=elapsed,
-        )
+        ))

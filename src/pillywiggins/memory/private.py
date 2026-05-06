@@ -6,6 +6,7 @@ import asyncpg
 from pgvector.asyncpg import register_vector
 
 from pillywiggins.config import Settings
+from pillywiggins.security.prompt_sanitizer import sanitize_or_default
 
 logger = logging.getLogger(__name__)
 
@@ -139,7 +140,7 @@ class PrivateMemory:
             return [
                 {
                     "id": str(row["id"]),
-                    "content": row["content"],
+                    "content": sanitize_or_default(row["content"], default="[Blocked]"),
                     "metadata": row["metadata"],
                     "created_at": row["created_at"].isoformat(),
                     "similarity": float(row["similarity"]) if row["similarity"] is not None else 0.0,

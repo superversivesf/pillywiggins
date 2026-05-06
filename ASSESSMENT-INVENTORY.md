@@ -10,12 +10,12 @@
 
 | Category | Count |
 |----------|-------|
-| **COMPLETE** | 31 |
+| **COMPLETE** | 34 |
 | **PARTIAL / STUB** | 0 |
-| **MISSING** | 3 |
+| **MISSING** | 0 |
 | **Total expected modules** | 34 |
 
-All existing source modules are fully implemented. The only gaps are three channel adapters slated for Phases 4–5 of the implementation plan.
+All 34 expected source modules are fully implemented.
 
 ---
 
@@ -108,19 +108,22 @@ All existing source modules are fully implemented. The only gaps are three chann
 - **Notes:** Used by `__main__.py`, Discord adapter, Telegram adapter, and onboard wizard.
 
 ### `src/pillywiggins/adapters/slack_adapter.py`
-- **Status:** MISSING
-- **Expected purpose:** Slack adapter using `slack_bolt` in Socket Mode (no public URL needed). Normalizes Slack events to `UnifiedMessage`, sends responses via Slack API.
-- **Why expected:** IMPLEMENTATION-PLAN §4.1, overview-v2 §5 (Phase 4/5).
+- **Status:** COMPLETE
+- **Purpose:** Slack adapter using `slack_bolt` in Socket Mode (no public URL needed). Normalizes Slack events to `UnifiedMessage`, sends responses via Slack API.
+- **Cross-ref:** IMPLEMENTATION-PLAN §4.1, overview-v2 §5.
+- **Note:** Not yet wired in `__main__.py` default mapping; accessible via `--channel slack` if token is configured.
 
 ### `src/pillywiggins/adapters/matrix_adapter.py`
-- **Status:** MISSING
-- **Expected purpose:** Matrix adapter using `matrix-nio`. Persistent sync connection. E2EE deferred.
-- **Why expected:** IMPLEMENTATION-PLAN §5.1, overview-v2 §5.
+- **Status:** COMPLETE
+- **Purpose:** Matrix adapter using `matrix-nio`. Persistent sync connection. E2EE deferred.
+- **Cross-ref:** IMPLEMENTATION-PLAN §5.1, overview-v2 §5.
+- **Note:** Not yet wired in `__main__.py` default mapping; accessible via `--channel matrix` if credentials are configured.
 
 ### `src/pillywiggins/adapters/email_adapter.py`
-- **Status:** MISSING
-- **Expected purpose:** Email adapter using `aiosmtplib` + `imap-tools`. IMAP IDLE for real-time push, fallback to 30s polling. 3-message context window for threads.
-- **Why expected:** IMPLEMENTATION-PLAN §5.1, overview-v2 §5.
+- **Status:** COMPLETE
+- **Purpose:** Email adapter using `aiosmtplib` + `imap-tools`. IMAP IDLE for real-time push, fallback to 30s polling. 3-message context window for threads.
+- **Cross-ref:** IMPLEMENTATION-PLAN §5.1, overview-v2 §5.
+- **Note:** Not yet wired in `__main__.py` default mapping; accessible via `--channel email` if credentials are configured.
 
 ---
 
@@ -245,24 +248,20 @@ All existing source modules are fully implemented. The only gaps are three chann
 
 ## Missing Modules Detail
 
-| Missing File | Phase | Why It Is Expected |
-|-------------|-------|-------------------|
-| `src/pillywiggins/adapters/slack_adapter.py` | 4 | IMPLEMENTATION-PLAN §4.1 requires Slack adapter using `slack_bolt` Socket Mode. Second agent needed for multi-agent verification. |
-| `src/pillywiggins/adapters/matrix_adapter.py` | 5 | IMPLEMENTATION-PLAN §5.1 requires Matrix adapter using `matrix-nio`. Part of full 5-channel fleet. |
-| `src/pillywiggins/adapters/email_adapter.py` | 5 | IMPLEMENTATION-PLAN §5.1 requires Email adapter using `aiosmtplib` + `imap-tools`. Part of full 5-channel fleet. |
+> **No modules are missing.** All 34 expected source modules are present and complete. The previously flagged adapter files (`slack_adapter.py`, `matrix_adapter.py`, `email_adapter.py`) were implemented after the initial assessment date.
 
 ---
 
 ## Feature Gaps Within Complete Modules
 
-The following are architectural expectations from Phase 6 (Hardening) that are **not yet implemented** but do not constitute missing *modules*:
+The following are architectural expectations from Phase 6 (Hardening). Items marked ~~strikethrough~~ were implemented after the initial assessment date and are now present in the codebase.
 
-1. **Rate limiting** (10 LLM calls/min/agent) — not yet present in `brain.py` or `base.py`.
-2. **Structured JSON logging** — `logging.basicConfig` in `__main__.py` uses plain text format.
-3. **PydanticAI timeout/retries** — `Agent` instantiation in `brain.py` does not set `retries=2` or 120s overall timeout.
+1. ~~​**Rate limiting** (10 LLM calls/min/agent) — Implemented in `base.py` via `_check_rate_limit()` with tests in `tests/test_rate_limit.py`.~~
+2. ~~​**Structured JSON logging** — Implemented in `src/pillywiggins/logging_utils.py` via `AgentLogger` with per-step timing.~~
+3. ~~​**PydanticAI timeout/retries** — `brain.py` sets `retries=2` and `tool_timeout=120` on `Agent` creation.~~
 4. **Conversation summarization / memory consolidation** — `compact_history()` exists but periodic automatic consolidation is not scheduled.
-5. **Automated backups** — no `scripts/backup-db.sh` script.
-6. **Docker healthchecks in compose** — not present in generated `docker-compose.yaml`.
-7. **Restart policies** — not present in generated `docker-compose.yaml`.
+5. ~~​**Automated backups** — `scripts/backup-db.sh` exists with 14-day rotation.~~
+6. ~~​**Docker healthchecks in compose** — Generated `docker-compose.yaml` by onboard wizard includes healthchecks and restart policies.~~
+7. ~~​**Restart policies** — Generated `docker-compose.yaml` by onboard wizard includes `restart: unless-stopped`.~~
 
-These gaps should be addressed when work begins on Phase 6.
+These remaining gaps (conversation summarization / periodic memory consolidation) should be addressed when work resumes on Phase 6.

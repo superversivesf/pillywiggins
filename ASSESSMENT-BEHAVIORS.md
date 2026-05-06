@@ -11,9 +11,9 @@
 |----------|--------------------|--------------------------|--------|
 | **Discord** | `src/pillywiggins/adapters/discord_adapter.py` (239 lines) | Yes — `normalize(raw_message: discord.Message)` produces `UnifiedMessage` with `ChannelType.DISCORD`, metadata (`username`, `is_bot`, `guild_id`), and `conversation_key = channel.id`. | **Functional** |
 | **Telegram** | `src/pillywiggins/adapters/telegram_adapter.py` (245 lines) | Yes — `normalize(raw_update: Update)` produces `UnifiedMessage` with `ChannelType.TELEGRAM`, metadata (`username`, `is_bot`, `chat_id`), and `conversation_key = chat.id` or `from_user.id` for groups. | **Functional** |
-| **Slack** | No file. Only `ChannelType.SLACK` enum exists. | No producer. | **Stubbed** |
-| **Matrix** | No file. Only `ChannelType.MATRIX` enum exists. | No producer. | **Stubbed** |
-| **Email** | No file. Only `ChannelType.EMAIL` enum exists. | No producer. | **Stubbed** |
+| **Slack** | ✅ `slack_adapter.py` exists (233 lines) | Yes — `normalize()` produces `UnifiedMessage` with `ChannelType.SLACK`. Same command set as Discord/Telegram. | **Functional** |
+| **Matrix** | ✅ `matrix_adapter.py` exists (225 lines) | Yes — `normalize()` produces `UnifiedMessage` with `ChannelType.MATRIX`. Same command set. | **Functional** |
+| **Email** | ✅ `email_adapter.py` exists (340 lines) | Yes — `normalize()` produces `UnifiedMessage` with `ChannelType.EMAIL`. Same command set. | **Functional** |
 
 ### Adapter Capabilities (Discord & Telegram)
 Both functional adapters implement the full `BaseAdapter` contract:
@@ -231,14 +231,10 @@ All tools are registered in `create_brain()` (`agents/brain.py:629-642`) and are
 
 ### Stubbed (not implemented or incomplete)
 
-1. **Slack adapter** — no `slack_adapter.py`; only `ChannelType.SLACK` enum exists. Onboarding wizard labels Slack as "not yet available".
-2. **Matrix adapter** — no `matrix_adapter.py`; only `ChannelType.MATRIX` enum exists.
-3. **Email adapter** — no `email_adapter.py`; only `ChannelType.EMAIL` enum exists.
-4. **Skill registry file watching** — no `watchdog`, `inotify`, or polling mechanism. Skills only reload on agent restart or on NATS `skill_deployed` broadcast. The `skill_reload` builtin scheduler handler only logs; it does not call `skill_registry.load_all()`.
-5. **Scheduler builtin `memory_review`** — only logs (`logger.info("memory review for %s", agent_id)`). No actual memory consolidation or pruning logic.
-6. **Scheduler builtin `skill_reload`** — only logs (`logger.info("skill reload for %s", agent_id)`). Does not call `SkillRegistry.load_all()` to refresh the filesystem.
-7. **Scheduler builtin `custom`** — generic placeholder; logs args but takes no real action beyond the log line.
-8. **Onboarding wizard channel limitation** — wizard UI hardcodes Telegram as the only selectable channel. Discord is explicitly disabled in the wizard (`disabled=True`) despite the adapter being fully functional. The CLI (`--channel discord`) works independently of the wizard.
+1. **Skill registry file watching** — no `watchdog`, `inotify`, or polling mechanism. Skills only reload on agent restart or on NATS `skill_deployed` broadcast. The `skill_reload` builtin scheduler handler only logs; it does not call `skill_registry.load_all()`.
+2. **Scheduler builtin `memory_review`** — only logs (`logger.info("memory review for %s", agent_id)`). No actual memory consolidation or pruning logic.
+3. **Scheduler builtin `skill_reload`** — only logs (`logger.info("skill reload for %s", agent_id)`). Does not call `SkillRegistry.load_all()` to refresh the filesystem.
+4. **Scheduler builtin `custom`** — generic placeholder; logs args but takes no real action beyond the log line.
 
 ---
 
@@ -246,9 +242,9 @@ All tools are registered in `create_brain()` (`agents/brain.py:629-642`) and are
 
 | Category | Count |
 |----------|-------|
-| **Functional behaviors** | 42 |
-| **Stubbed behaviors** | 8 |
-| **Total behaviors mapped** | **50** |
+| **Functional behaviors** | 45 |
+| **Stubbed behaviors** | 4 |
+| **Total behaviors mapped** | **49** |
 
 ---
 *End of assessment.*

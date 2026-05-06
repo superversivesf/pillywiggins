@@ -10,6 +10,8 @@ if TYPE_CHECKING:
 class AgentDeps:
     agent_id: str
     channel: str
+    channel_user_id: str = field(default="")
+    metadata: dict = field(default_factory=dict)
     personality: Any = field(default=None)
     private_memory: Any = field(default=None)
     skill_registry: Any = field(default=None)

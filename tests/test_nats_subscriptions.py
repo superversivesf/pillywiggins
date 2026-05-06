@@ -21,7 +21,7 @@ def nats_mocks(personality):
         mock_bus.subscribe_broadcast = AsyncMock(side_effect=capture_handler)
         mock_bus.subscribe_direct = AsyncMock(side_effect=capture_handler)
         mock_nats_cls.return_value = mock_bus
-        mock_sched_cls.return_value = AsyncMock()
+        mock_sched_cls.return_value = MagicMock()
         agent = PillywigginAgent(
             agent_id="puck",
             personality=personality,

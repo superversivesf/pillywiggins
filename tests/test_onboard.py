@@ -17,6 +17,7 @@ from pillywiggins.onboard import (
     add_token_to_env,
     agent_ids_in_use,
     comment_token_in_env,
+    discover_packs,
     discover_personalities,
     ensure_config_files,
     get_default_llm_config,
@@ -241,6 +242,7 @@ class TestDiscoverPersonalities:
             result = discover_personalities()
         assert result[0]["filename"] == "puck.yaml"
         assert result[0]["stem"] == "puck"
+        assert result[0]["pack"] is None
 
     def test_defaults_channel_to_telegram(self, tmp_path):
         pdir = tmp_path / "personalities"
@@ -285,6 +287,108 @@ class TestDiscoverPersonalities:
         with patch("pillywiggins.onboard.PERSONALITIES_DIR", pdir):
             result = discover_personalities()
         assert len(result) == 1
+
+    def test_discovers_personalities_in_subdirectories(self, tmp_path):
+        pdir = tmp_path / "personalities"
+        pack_dir = pdir / "fey_court"
+        pack_dir.mkdir(parents=True)
+        (pack_dir / "puck.yaml").write_text(
+            yaml.dump({"name": "Puck", "description": "A fairy", "channel": "telegram"})
+        )
+        with patch("pillywiggins.onboard.PERSONALITIES_DIR", pdir):
+            result = discover_personalities()
+        assert len(result) == 1
+        assert result[0]["name"] == "Puck"
+        assert result[0]["filename"] == "fey_court/puck.yaml"
+        assert result[0]["pack"] == "fey_court"
+
+    def test_discovers_flat_and_nested_personalities(self, tmp_path):
+        pdir = tmp_path / "personalities"
+        pdir.mkdir()
+        pack_dir = pdir / "workshop"
+        pack_dir.mkdir()
+        (pdir / "standalone.yaml").write_text(yaml.dump({"name": "Standalone", "description": "top level"}))
+        (pack_dir / "foreman.yaml").write_text(yaml.dump({"name": "Foreman", "description": "workshop"}))
+        with patch("pillywiggins.onboard.PERSONALITIES_DIR", pdir):
+            result = discover_personalities()
+        assert len(result) == 2
+        standalone = [r for r in result if r["name"] == "Standalone"][0]
+        foreman = [r for r in result if r["name"] == "Foreman"][0]
+        assert standalone["pack"] is None
+        assert standalone["filename"] == "standalone.yaml"
+        assert foreman["pack"] == "workshop"
+        assert foreman["filename"] == "workshop/foreman.yaml"
+
+    def test_skips_pack_yaml_in_subdirectories(self, tmp_path):
+        pdir = tmp_path / "personalities"
+        pack_dir = pdir / "fey_court"
+        pack_dir.mkdir(parents=True)
+        (pack_dir / "pack.yaml").write_text(yaml.dump({"name": "The Fey Court", "description": "test"}))
+        (pack_dir / "puck.yaml").write_text(yaml.dump({"name": "Puck", "description": "fairy"}))
+        with patch("pillywiggins.onboard.PERSONALITIES_DIR", pdir):
+            result = discover_personalities()
+        assert len(result) == 1
+        assert result[0]["name"] == "Puck"
+
+
+class TestDiscoverPacks:
+    def test_returns_empty_when_dir_missing(self):
+        with patch("pillywiggins.onboard.PERSONALITIES_DIR", Path("/nonexistent")):
+            result = discover_packs()
+            assert result == []
+
+    def test_returns_empty_when_no_subdirectories(self, tmp_path):
+        pdir = tmp_path / "personalities"
+        pdir.mkdir()
+        (pdir / "puck.yaml").write_text(yaml.dump({"name": "Puck"}))
+        with patch("pillywiggins.onboard.PERSONALITIES_DIR", pdir):
+            result = discover_packs()
+        assert result == []
+
+    def test_discovers_packs_with_manifest(self, tmp_path):
+        pdir = tmp_path / "personalities"
+        pack_dir = pdir / "fey_court"
+        pack_dir.mkdir(parents=True)
+        (pack_dir / "pack.yaml").write_text(
+            yaml.dump({"name": "The Fey Court", "description": "A council of fae", "category": "whimsical"})
+        )
+        (pack_dir / "puck.yaml").write_text(yaml.dump({"name": "Puck"}))
+        with patch("pillywiggins.onboard.PERSONALITIES_DIR", pdir):
+            result = discover_packs()
+        assert len(result) == 1
+        assert result[0]["name"] == "The Fey Court"
+        assert result[0]["description"] == "A council of fae"
+        assert result[0]["category"] == "whimsical"
+        assert result[0]["path"] == "fey_court"
+        assert result[0]["personality_count"] == 1
+
+    def test_discovers_packs_without_manifest(self, tmp_path):
+        pdir = tmp_path / "personalities"
+        pack_dir = pdir / "my_pack"
+        pack_dir.mkdir(parents=True)
+        (pack_dir / "agent.yaml").write_text(yaml.dump({"name": "Agent"}))
+        with patch("pillywiggins.onboard.PERSONALITIES_DIR", pdir):
+            result = discover_packs()
+        assert len(result) == 1
+        assert result[0]["name"] == "My Pack"
+        assert result[0]["personality_count"] == 1
+
+    def test_skips_empty_directories(self, tmp_path):
+        pdir = tmp_path / "personalities"
+        pack_dir = pdir / "empty_pack"
+        pack_dir.mkdir(parents=True)
+        with patch("pillywiggins.onboard.PERSONALITIES_DIR", pdir):
+            result = discover_packs()
+        assert result == []
+
+    def test_skips_underscore_prefixed_directories(self, tmp_path):
+        pdir = tmp_path / "personalities"
+        defaults_dir = pdir / "_defaults"
+        defaults_dir.mkdir(parents=True)
+        (defaults_dir / "telegram.yaml").write_text(yaml.dump({"name": "Robin"}))
+        with patch("pillywiggins.onboard.PERSONALITIES_DIR", pdir):
+            result = discover_packs()
+        assert result == []
 
 
 # ---------------------------------------------------------------------------
@@ -693,6 +797,21 @@ class TestAddAgentToAgentsYaml:
             )
         data = yaml.safe_load(config_path.read_text())
         assert data["agents"][0]["personality"] == "/config/ember.yaml"
+
+    def test_sets_personality_path_with_subdirectory(self, tmp_path):
+        config_path = tmp_path / "agents.yaml"
+        with patch("pillywiggins.onboard.AGENTS_YAML", config_path):
+            add_agent_to_agents_yaml(
+                agent_id="puck",
+                personality_filename="fey_court/puck.yaml",
+                channel="telegram",
+                token_env="PUCK_TELEGRAM_TOKEN",
+                allowed_user_ids="all",
+                bot_chat_limit=3,
+                llm_config=None,
+            )
+        data = yaml.safe_load(config_path.read_text())
+        assert data["agents"][0]["personality"] == "/config/fey_court/puck.yaml"
 
     def test_sets_token_env_reference(self, tmp_path):
         config_path = tmp_path / "agents.yaml"
@@ -1279,6 +1398,7 @@ class TestAddAgentFlow:
 
         select_responses = iter(
             [
+                "__all__",  # pack choice
                 "Puck — mischievous",
                 "telegram",
                 "ollama",
@@ -1424,7 +1544,7 @@ class TestAddAgentFlow:
         mock_validate.return_value = (True, "testbot")
         mock_list_models.return_value = []
 
-        select_responses = iter(["Puck — mischievous", "telegram", "ollama", "UTC"])
+        select_responses = iter(["__all__", "Puck — mischievous", "telegram", "ollama", "UTC"])
         text_responses = iter(
             [
                 "puck",
@@ -1493,7 +1613,7 @@ class TestAddAgentFlow:
         mock_validate.return_value = (False, "Invalid token")
         mock_list_models.return_value = []
 
-        select_responses = iter(["Puck — mischievous", "telegram", "ollama", "UTC"])
+        select_responses = iter(["__all__","Puck — mischievous", "telegram", "ollama", "UTC"])
         text_responses = iter(
             [
                 "puck",
@@ -1563,7 +1683,7 @@ class TestAddAgentFlow:
         mock_validate.return_value = (True, "testbot")
         mock_list_models.return_value = [ModelInfo(id="qwen3.5:8b"), ModelInfo(id="llama3:8b")]
 
-        select_responses = iter(["Puck — mischievous", "telegram", "ollama", "qwen3.5:8b", "UTC"])
+        select_responses = iter(["__all__","Puck — mischievous", "telegram", "ollama", "qwen3.5:8b", "UTC"])
         text_responses = iter(
             ["puck", "123456:ABC-DEF1234", "", "http://host.docker.internal:11434/v1", "all", "3"]
         )
@@ -1620,7 +1740,7 @@ class TestAddAgentFlow:
         mock_validate.return_value = (True, "testbot")
         mock_list_models.return_value = []
 
-        select_responses = iter(["Puck — mischievous", "telegram", "openai", "UTC"])
+        select_responses = iter(["__all__","Puck — mischievous", "telegram", "openai", "UTC"])
         text_responses = iter(
             [
                 "puck",
@@ -1689,7 +1809,7 @@ class TestAddAgentFlow:
         mock_validate.return_value = (True, "testbot")
         mock_list_models.return_value = []
 
-        select_responses = iter(["Puck — mischievous", "telegram", "ollama", "UTC"])
+        select_responses = iter(["__all__","Puck — mischievous", "telegram", "ollama", "UTC"])
         text_responses = iter(
             [
                 "puck",
@@ -1943,7 +2063,7 @@ class TestStartRestartFlow:
     @pytest.mark.asyncio
     @patch("pillywiggins.onboard.questionary")
     async def test_start_specific_agent(self, mock_q):
-        select_responses = iter(["Select specific agent", "puck"])
+        select_responses = iter(["__all__","Select specific agent", "puck"])
         mock_q.select = MagicMock(
             side_effect=lambda *a, **kw: MagicMock(
                 ask_async=AsyncMock(return_value=next(select_responses))
@@ -2077,7 +2197,7 @@ class TestAddAgentFlowCancellations:
     async def test_cancel_at_agent_id(self, mock_q, mock_list_models, mock_validate):
         from pillywiggins.onboard import _add_agent_flow
 
-        select_responses = iter(["Puck — mischievous", "telegram"])
+        select_responses = iter(["__all__","Puck — mischievous", "telegram"])
         text_iter = iter(["puck", None])
         mock_q.select = MagicMock(
             side_effect=lambda *a, **kw: MagicMock(
@@ -2118,7 +2238,7 @@ class TestAddAgentFlowCancellations:
     async def test_overwrite_declined(self, mock_ids, mock_q, mock_list_models, mock_validate):
         from pillywiggins.onboard import _add_agent_flow
 
-        select_responses = iter(["Puck — mischievous", "telegram"])
+        select_responses = iter(["__all__","Puck — mischievous", "telegram"])
         text_iter = iter(["puck"])
         confirm_iter = iter([False])
 
@@ -2160,7 +2280,7 @@ class TestAddAgentFlowCancellations:
         from pillywiggins.onboard import _add_agent_flow
 
         mock_validate.return_value = (False, "Bad token")
-        select_responses = iter(["Puck — mischievous", "telegram"])
+        select_responses = iter(["__all__","Puck — mischievous", "telegram"])
         text_iter = iter(["puck", "badtoken1234567890"])
         confirm_iter = iter([False])
 
@@ -2210,7 +2330,7 @@ class TestAddAgentFlowCancellations:
         mock_validate.return_value = (True, "testbot")
         mock_list_models.return_value = []
 
-        select_responses = iter(["Puck — mischievous", "telegram", "ollama", "UTC"])
+        select_responses = iter(["__all__","Puck — mischievous", "telegram", "ollama", "UTC"])
         text_iter = iter(
             [
                 "puck",
@@ -2427,6 +2547,7 @@ class TestTimezoneInAddAgentFlow:
 
         select_responses = iter(
             [
+                "__all__",
                 "Puck — mischievous",
                 "telegram",
                 "ollama",
@@ -2505,6 +2626,7 @@ class TestTimezoneInAddAgentFlow:
 
         select_responses = iter(
             [
+                "__all__",
                 "Puck — mischievous",
                 "telegram",
                 "ollama",
@@ -2581,6 +2703,7 @@ class TestTimezoneInAddAgentFlow:
 
         select_responses = iter(
             [
+                "__all__",
                 "Puck — mischievous",
                 "telegram",
                 "ollama",
