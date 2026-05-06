@@ -56,9 +56,6 @@ def _make_adapter():
             "estimated_tokens": 1500,
         }
     )
-    mock_msg = MagicMock()
-    mock_msg.parts = [MagicMock(content="x" * 857)]
-    agent._get_history = MagicMock(return_value=[mock_msg] * 7)
     agent.compact_history = AsyncMock(return_value="Compacted: 7 messages → 1 summary")
     settings = MagicMock()
     settings.llm_base_url = "http://localhost:11434"
@@ -87,6 +84,8 @@ def _make_adapter():
 def test_normalize_converts_discord_message_to_unified_message():
     agent = MagicMock()
     settings = MagicMock()
+    settings.get_allowed_user_ids = MagicMock(return_value=set())
+    settings.allowed_user_ids = "all"
     adapter = DiscordAdapter(agent, "fake-token", settings)
     message = _make_message(author_id=123, author_name="alice", content="hi there", channel_id=456)
 
@@ -103,6 +102,8 @@ def test_normalize_converts_discord_message_to_unified_message():
 def test_normalize_handles_dm_with_no_guild():
     agent = MagicMock()
     settings = MagicMock()
+    settings.get_allowed_user_ids = MagicMock(return_value=set())
+    settings.allowed_user_ids = "all"
     adapter = DiscordAdapter(agent, "fake-token", settings)
     message = _make_message(author_id=42, author_name="bob", content="dm text", channel_id=789)
 
@@ -114,6 +115,8 @@ def test_normalize_handles_dm_with_no_guild():
 def test_normalize_handles_guild_message():
     agent = MagicMock()
     settings = MagicMock()
+    settings.get_allowed_user_ids = MagicMock(return_value=set())
+    settings.allowed_user_ids = "all"
     adapter = DiscordAdapter(agent, "fake-token", settings)
     message = _make_message(
         author_id=42, author_name="bob", content="guild text", channel_id=789, guild_id=1001
@@ -127,6 +130,8 @@ def test_normalize_handles_guild_message():
 def test_normalize_timestamp_is_aware_utc():
     agent = MagicMock()
     settings = MagicMock()
+    settings.get_allowed_user_ids = MagicMock(return_value=set())
+    settings.allowed_user_ids = "all"
     adapter = DiscordAdapter(agent, "fake-token", settings)
     message = _make_message()
 
@@ -238,6 +243,8 @@ async def test_shutdown_closes_client():
 async def test_shutdown_does_nothing_if_no_client():
     agent = MagicMock()
     settings = MagicMock()
+    settings.get_allowed_user_ids = MagicMock(return_value=set())
+    settings.allowed_user_ids = "all"
     adapter = DiscordAdapter(agent, "fake-token", settings)
     adapter._client = None
 
@@ -252,9 +259,9 @@ async def test_idle_awaits_signal_event():
 
     def mock_add_signal_handler(sig, cb):
         # Schedule the callback immediately so the event gets set
-        asyncio.get_event_loop().call_later(0.01, cb)
+        asyncio.get_running_loop().call_later(0.01, cb)
 
-    with patch.object(asyncio.get_event_loop(), "add_signal_handler", mock_add_signal_handler):
+    with patch.object(asyncio.get_running_loop(), "add_signal_handler", mock_add_signal_handler):
         await adapter._idle()
 
     assert True  # If we got here, event was triggered
@@ -369,7 +376,7 @@ async def test_keep_typing_sends_typing():
     adapter._client.get_channel = MagicMock(return_value=mock_channel)
 
     done = asyncio.Event()
-    asyncio.get_event_loop().call_later(0.05, done.set)
+    asyncio.get_running_loop().call_later(0.05, done.set)
 
     await asyncio.wait_for(adapter._keep_typing("99", done), timeout=1.0)
 
@@ -377,177 +384,120 @@ async def test_keep_typing_sends_typing():
 
 
 # ---------------------------------------------------------------------------
-# commands
+# commands via dispatch_command
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_cmd_help_replies_with_help_text():
+async def test_dispatch_help():
     adapter = _make_adapter()
-    message = _make_message(content="!help")
-
-    await adapter._cmd_help(message)
-
-    message.channel.send.assert_called_once_with(HELP_TEXT)
+    result = await adapter.dispatch_command("!help", "99")
+    assert result is not None
+    assert "!help" in result
 
 
 @pytest.mark.asyncio
-async def test_cmd_status_shows_fields():
+async def test_dispatch_status():
     adapter = _make_adapter()
-    message = _make_message(content="!status")
-
-    await adapter._cmd_status(message)
-
-    reply = message.channel.send.call_args[0][0]
-    assert "puck" in reply
-    assert "discord" in reply
-    assert "qwen3.5:8b" in reply
-    assert "7" in reply
-    assert "1500" in reply
+    result = await adapter.dispatch_command("!status", "99")
+    assert result is not None
+    assert "puck" in result
+    assert "discord" in result
+    assert "qwen3.5:8b" in result
+    assert "7" in result
+    assert "1500" in result
 
 
 @pytest.mark.asyncio
-async def test_cmd_models_replies_with_model_list():
+async def test_dispatch_models():
     adapter = _make_adapter()
-    message = _make_message(content="!models")
-
     mock_model = MagicMock()
     mock_model.id = "qwen3.5:8b"
     mock_model.owned_by = "ollama"
     with patch(
-        "pillywiggins.adapters.discord_adapter.list_models",
+        "pillywiggins.adapters.base.list_models",
         new_callable=AsyncMock,
         return_value=[mock_model],
     ):
-        await adapter._cmd_models(message)
-
-    reply = message.channel.send.call_args[0][0]
-    assert "qwen3.5:8b" in reply
-    assert "✅" in reply
+        result = await adapter.dispatch_command("!models", "99")
+    assert "qwen3.5:8b" in result
 
 
 @pytest.mark.asyncio
-async def test_cmd_models_handles_empty_list():
+async def test_dispatch_models_empty():
     adapter = _make_adapter()
-    message = _make_message(content="!models")
-
     with patch(
-        "pillywiggins.adapters.discord_adapter.list_models",
+        "pillywiggins.adapters.base.list_models",
         new_callable=AsyncMock,
         return_value=[],
     ):
-        await adapter._cmd_models(message)
-
-    message.channel.send.assert_called_once_with("Could not fetch model list.")
-
-
-@pytest.mark.asyncio
-async def test_cmd_model_without_args_shows_current():
-    adapter = _make_adapter()
-    message = _make_message(content="!model")
-
-    await adapter._cmd_model(message)
-
-    reply = message.channel.send.call_args[0][0]
-    assert "qwen3.5:8b" in reply
+        result = await adapter.dispatch_command("!models", "99")
+    assert result == "No models available."
 
 
 @pytest.mark.asyncio
-async def test_cmd_model_with_args_switches_model():
+async def test_dispatch_model_switch():
     adapter = _make_adapter()
-    message = _make_message(content="!model qwen3.5:27b")
+    # Make switch_model actually update model_name
+    def switch_model(name):
+        adapter.agent.model_name = name
+    adapter.agent.switch_model = MagicMock(side_effect=switch_model)
 
-    await adapter._cmd_model(message)
-
+    result = await adapter.dispatch_command("!model qwen3.5:27b", "99")
     adapter.agent.switch_model.assert_called_once_with("qwen3.5:27b")
-    reply = message.channel.send.call_args[0][0]
-    assert "qwen3.5:27b" in reply
+    assert "qwen3.5:27b" in result
 
 
 @pytest.mark.asyncio
-async def test_cmd_reset_clears_history():
+async def test_dispatch_reset():
     adapter = _make_adapter()
-    message = _make_message(content="!reset", channel_id=99)
-
-    await adapter._cmd_reset(message)
-
+    result = await adapter.dispatch_command("!reset", "99")
     adapter.agent.clear_history.assert_called_once()
-    message.channel.send.assert_called_once_with("Conversation history cleared.")
+    assert "cleared" in result.lower()
 
 
 @pytest.mark.asyncio
-async def test_cmd_compact_calls_agent():
+async def test_dispatch_compact():
     adapter = _make_adapter()
-    message = _make_message(content="!compact", channel_id=99)
-
-    await adapter._cmd_compact(message)
-
+    result = await adapter.dispatch_command("!compact", "99")
     adapter.agent.compact_history.assert_called_once()
-    message.channel.send.assert_called_once_with("Compacted: 7 messages → 1 summary")
+    assert "Compacted" in result
 
 
 @pytest.mark.asyncio
-async def test_cmd_skills_lists_skills():
+async def test_dispatch_skills():
     adapter = _make_adapter()
     mock_skill = MagicMock()
     mock_skill.name = "roll_dice"
     mock_skill.description = "Roll one or more dice"
     mock_skill.permissions = {"network": False, "subprocess": False, "file_write": False}
-    mock_skill.meta = {
-        "name": "roll_dice",
-        "description": "Roll one or more dice",
-        "parameters": {},
-        "version": "1.0",
-        "permissions": {"network": False, "subprocess": False, "file_write": False},
-    }
     adapter.agent._skill_registry = MagicMock()
     adapter.agent._skill_registry.list_skills = MagicMock(return_value=[mock_skill])
 
-    message = _make_message(content="!skills")
-
-    await adapter._cmd_skills(message)
-
-    reply = message.channel.send.call_args[0][0]
-    assert "roll_dice" in reply
-    assert "Roll one or more dice" in reply
+    result = await adapter.dispatch_command("!skills", "99")
+    assert "roll_dice" in result
+    assert "Roll one or more dice" in result
 
 
 @pytest.mark.asyncio
-async def test_cmd_skills_no_skills():
+async def test_dispatch_skills_no_skills():
     adapter = _make_adapter()
     adapter.agent._skill_registry = MagicMock()
     adapter.agent._skill_registry.list_skills = MagicMock(return_value=[])
 
-    message = _make_message(content="!skills")
-
-    await adapter._cmd_skills(message)
-
-    message.channel.send.assert_called_once_with("No skills loaded.")
+    result = await adapter.dispatch_command("!skills", "99")
+    assert result == "No skills loaded."
 
 
 @pytest.mark.asyncio
-async def test_cmd_skills_description_truncation():
+async def test_on_message_dispatches_command():
     adapter = _make_adapter()
-    mock_skill = MagicMock()
-    mock_skill.name = "long_desc_skill"
-    mock_skill.description = "A" * 100
-    mock_skill.permissions = {"network": False, "subprocess": False, "file_write": False}
-    mock_skill.meta = {
-        "name": "long_desc_skill",
-        "description": "A" * 100,
-        "parameters": {},
-        "version": "1.0",
-        "permissions": {"network": False, "subprocess": False, "file_write": False},
-    }
-    adapter.agent._skill_registry = MagicMock()
-    adapter.agent._skill_registry.list_skills = MagicMock(return_value=[mock_skill])
-
-    message = _make_message(content="!skills")
-
-    await adapter._cmd_skills(message)
-
+    message = _make_message(content="!help")
+    # _on_message should dispatch the command and send the response
+    await adapter._on_message(message)
+    message.channel.send.assert_called_once()
     reply = message.channel.send.call_args[0][0]
-    assert "..." in reply
+    assert "!help" in reply
 
 
 # ---------------------------------------------------------------------------

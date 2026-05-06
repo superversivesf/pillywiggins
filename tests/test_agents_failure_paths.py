@@ -3,12 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pillywiggins.agents.base import (
-    PillywigginAgent,
-    _builtin_send_message_handler,
-    _builtin_heartbeat_handler,
-    _ACTIVE_AGENTS,
-)
+from pillywiggins.agents.base import PillywigginAgent
 from pillywiggins.agents.personality import Personality
 
 
@@ -60,7 +55,6 @@ async def test_start_council_memory_failure_does_not_crash(agent, personality):
             await agent.start()
 
     assert agent._council_memory is None
-    assert "puck" in _ACTIVE_AGENTS
 
 
 @pytest.mark.asyncio
@@ -128,35 +122,16 @@ async def test_shutdown_scheduler_stop_failure_does_not_crash(agent):
     assert agent._scheduler is None
 
 
-@pytest.mark.asyncio
-async def test_shutdown_removes_from_active_agents(agent):
-    """shutdown() should remove the agent from _ACTIVE_AGENTS."""
-    _ACTIVE_AGENTS["puck"] = agent
-    await agent.shutdown()
-    assert "puck" not in _ACTIVE_AGENTS
-
-
 # ---------------------------------------------------------------------------
 # _builtin_send_message_handler failure paths
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_send_message_handler_agent_not_found():
-    """If agent is not in _ACTIVE_AGENTS, should log warning and return."""
-    _ACTIVE_AGENTS.clear()
-    with patch("pillywiggins.agents.base.logger.warning") as mock_warn:
-        await _builtin_send_message_handler(agent_id="ghost")
-    mock_warn.assert_called_once()
-    assert "not found" in mock_warn.call_args[0][0]
-
-
-@pytest.mark.asyncio
 async def test_send_message_handler_missing_conversation_key(agent, personality):
     """If conversation_key is missing, should log warning and return."""
-    _ACTIVE_AGENTS["puck"] = agent
     with patch("pillywiggins.agents.base.logger.warning") as mock_warn:
-        await _builtin_send_message_handler(agent_id="puck", args={})
+        await agent._builtin_send_message_handler(args={})
     mock_warn.assert_called_once()
     assert "missing conversation_key" in mock_warn.call_args[0][0]
 
@@ -164,12 +139,9 @@ async def test_send_message_handler_missing_conversation_key(agent, personality)
 @pytest.mark.asyncio
 async def test_send_message_handler_no_adapter(agent, personality):
     """If adapter is None, should log warning and return."""
-    _ACTIVE_AGENTS["puck"] = agent
     agent._adapter = None
     with patch("pillywiggins.agents.base.logger.warning") as mock_warn:
-        await _builtin_send_message_handler(
-            agent_id="puck", args={"conversation_key": "123", "chat_id": "123"}
-        )
+        await agent._builtin_send_message_handler(args={"conversation_key": "123", "chat_id": "123"})
     mock_warn.assert_called_once()
     assert "no adapter" in mock_warn.call_args[0][0]
 
@@ -177,15 +149,14 @@ async def test_send_message_handler_no_adapter(agent, personality):
 @pytest.mark.asyncio
 async def test_send_message_handler_brain_error(agent, personality):
     """If brain.run() raises, should log exception."""
-    _ACTIVE_AGENTS["puck"] = agent
     mock_adapter = MagicMock()
     mock_adapter.send = AsyncMock()
     agent._adapter = mock_adapter
     agent._brain.run = AsyncMock(side_effect=RuntimeError("brain boom"))
 
     with patch("pillywiggins.agents.base.logger.exception") as mock_exc:
-        await _builtin_send_message_handler(
-            agent_id="puck", args={"conversation_key": "123", "chat_id": "123", "prompt": "hi"}
+        await agent._builtin_send_message_handler(
+            args={"conversation_key": "123", "chat_id": "123", "prompt": "hi"}
         )
     mock_exc.assert_called_once()
     assert "send_message failed" in mock_exc.call_args[0][0]
@@ -197,22 +168,11 @@ async def test_send_message_handler_brain_error(agent, personality):
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_handler_agent_not_found():
-    """If agent is not in _ACTIVE_AGENTS, should log and return."""
-    _ACTIVE_AGENTS.clear()
-    with patch("pillywiggins.agents.base.logger.info") as mock_info:
-        await _builtin_heartbeat_handler(agent_id="ghost")
-    mock_info.assert_called_once()
-    assert "no NATS bus" in mock_info.call_args[0][0]
-
-
-@pytest.mark.asyncio
 async def test_heartbeat_handler_nats_bus_none(agent, personality):
     """If agent has no NATS bus, should log and return."""
-    _ACTIVE_AGENTS["puck"] = agent
     agent._nats_bus = None
     with patch("pillywiggins.agents.base.logger.info") as mock_info:
-        await _builtin_heartbeat_handler(agent_id="puck")
+        await agent._builtin_heartbeat_handler()
     mock_info.assert_called_once()
     assert "no NATS bus" in mock_info.call_args[0][0]
 
@@ -220,11 +180,10 @@ async def test_heartbeat_handler_nats_bus_none(agent, personality):
 @pytest.mark.asyncio
 async def test_heartbeat_handler_publish_failure(agent, personality):
     """If heartbeat publish raises, should log warning."""
-    _ACTIVE_AGENTS["puck"] = agent
     mock_bus = AsyncMock()
     mock_bus.publish_broadcast = AsyncMock(side_effect=ConnectionError("nats broken"))
     agent._nats_bus = mock_bus
     with patch("pillywiggins.agents.base.logger.warning") as mock_warn:
-        await _builtin_heartbeat_handler(agent_id="puck")
+        await agent._builtin_heartbeat_handler()
     mock_warn.assert_called_once()
     assert "Failed to broadcast heartbeat" in mock_warn.call_args[0][0]

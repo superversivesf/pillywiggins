@@ -60,11 +60,11 @@ def test_init_with_all_fields():
     assert deps.logger is mock_logger
 
 
-def test_optional_fields_are_typed_as_any():
+def test_optional_fields_are_properly_typed():
     f = {f.name: f for f in fields(AgentDeps)}
     assert f["private_memory"].type is not str
     type_str = str(f["private_memory"].type)
-    assert "Any" in type_str
+    assert "PrivateMemory" in type_str
 
 
 def test_missing_required_field_raises():

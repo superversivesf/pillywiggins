@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import importlib.util
 import inspect
@@ -5,7 +7,8 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Optional
+
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +18,7 @@ VALID_PERMISSIONS = {"network", "subprocess", "file_write"}
 
 
 class Skill:
-    def __init__(self, name: str, description: str, run_func, meta: dict, permissions: dict, file_path: Optional[Path] = None):
+    def __init__(self, name: str, description: str, run_func, meta: dict, permissions: dict, file_path: Path | None = None):
         self.name = name
         self.description = description
         self.run_func = run_func
@@ -116,14 +119,14 @@ class Skill:
 class SkillRegistry:
     def __init__(
         self,
-        skills_dir: Optional[Path] = None,
-        agent_id: Optional[str] = None,
+        skills_dir: Path | None = None,
+        agent_id: str | None = None,
         nats_bus=None,
     ):
         self._skills_dir = skills_dir or DEFAULT_SKILLS_DIR
         self._skills: dict[str, Skill] = {}
         self.load_errors: list[str] = []
-        self._watch_task: Optional[asyncio.Task] = None
+        self._watch_task: asyncio.Task | None = None
         self._watcher_running = False
         self._last_snapshot: dict[str, float] = {}
         self._agent_id = agent_id
@@ -351,7 +354,7 @@ class SkillRegistry:
                 meta[key] = value
         return meta
 
-    def _load_skill_file(self, path: Path) -> Optional[Skill]:
+    def _load_skill_file(self, path: Path) -> Skill | None:
         try:
             spec = importlib.util.spec_from_file_location(path.stem, path)
             if spec is None or spec.loader is None:
@@ -425,7 +428,7 @@ class SkillRegistry:
     def list_skills(self) -> list[Skill]:
         return list(self._skills.values())
 
-    def get_skill(self, name: str) -> Optional[Skill]:
+    def get_skill(self, name: str) -> Skill | None:
         return self._skills.get(name)
 
     def register_skill(self, name: str, code: str, meta: dict) -> Skill:

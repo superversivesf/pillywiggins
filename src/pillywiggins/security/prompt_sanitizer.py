@@ -8,7 +8,6 @@ injection, system prompt leakage attempts, etc.
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +197,7 @@ class PromptSanitizer:
             safe=score < self.threshold,
         )
 
-    def sanitize(self, text: str, threshold: Optional[int] = None) -> str:
+    def sanitize(self, text: str, threshold: int | None = None) -> str:
         """Check text and either return it or raise PromptInjectionError.
 
         Args:
@@ -229,7 +228,7 @@ class PromptSanitizer:
 
         return text
 
-    def is_safe(self, text: str, threshold: Optional[int] = None) -> bool:
+    def is_safe(self, text: str, threshold: int | None = None) -> bool:
         """Check if text is safe without raising.
 
         Returns True if safe, False if injection detected.

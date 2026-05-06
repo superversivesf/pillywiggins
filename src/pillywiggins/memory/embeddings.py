@@ -2,7 +2,6 @@ import asyncio
 import hashlib
 import logging
 import time
-from typing import Optional
 
 import aiohttp
 
@@ -31,7 +30,7 @@ KNOWN_EMBEDDING_DIMENSIONS: dict[str, int] = {
 }
 
 # Lazy-initialized HF fallback provider instance.
-_hf_provider: Optional[object] = None
+_hf_provider: object | None = None
 
 # Module-level reusable aiohttp session
 _session: aiohttp.ClientSession | None = None

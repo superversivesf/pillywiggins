@@ -68,9 +68,13 @@ def get_agent_config(agent_id: str, path: str = "agents.yaml") -> AgentConfig:
 def apply_agent_env(agent_config: AgentConfig) -> None:
     for key, value in agent_config.environment.items():
         expanded = _expand_env_vars(str(value))
-        os.environ[key] = expanded
+        if key not in os.environ:
+            os.environ[key] = expanded
     if agent_config.allowed_user_ids:
-        os.environ["ALLOWED_USER_IDS"] = agent_config.allowed_user_ids
+        if "ALLOWED_USER_IDS" not in os.environ:
+            os.environ["ALLOWED_USER_IDS"] = agent_config.allowed_user_ids
     if agent_config.timezone:
-        os.environ["TIMEZONE"] = agent_config.timezone
-        os.environ["TZ"] = agent_config.timezone
+        if "TIMEZONE" not in os.environ:
+            os.environ["TIMEZONE"] = agent_config.timezone
+        if "TZ" not in os.environ:
+            os.environ["TZ"] = agent_config.timezone

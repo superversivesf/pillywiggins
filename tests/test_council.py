@@ -52,7 +52,7 @@ async def test_connect_migrates_embedding_dimension_when_mismatched():
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await mem.connect()
 
     mock_conn.fetchrow.assert_called_once()
@@ -75,7 +75,7 @@ async def test_connect_skips_migration_when_dimension_matches():
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await mem.connect()
 
     mock_conn.fetchrow.assert_called_once()
@@ -88,7 +88,7 @@ async def test_connect_creates_pool(memory):
     mock_pool = MagicMock()
     mock_pool.close = AsyncMock()
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
 
     assert memory._pool is mock_pool
@@ -124,7 +124,7 @@ async def test_write_entry_inserts_row(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         result = await memory.write_entry("hello council", ["general"], [0.1, 0.2, 0.3])
 
@@ -149,7 +149,7 @@ async def test_write_entry_with_custom_message_type(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         result = await memory.write_entry("new skill available", ["skill"], [0.1, 0.2, 0.3], message_type="skill_announcement")
 
@@ -179,7 +179,7 @@ async def test_write_accepts_content_at_max_length(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         max_content = "x" * MAX_CONTENT_LENGTH
         result = await memory.write_entry(max_content, ["general"], [0.1, 0.2, 0.3])
@@ -249,7 +249,7 @@ async def test_write_allows_under_rate_limit(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         result = await memory.write_entry("content", ["general"], [0.1, 0.2, 0.3])
 
@@ -337,7 +337,7 @@ async def test_search_returns_matching_entries(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         results = await memory.search([0.1, 0.2, 0.3])
 
@@ -357,7 +357,7 @@ async def test_search_filters_by_tags(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         results = await memory.search([0.1, 0.2, 0.3], tags=["skill"])
 
@@ -376,7 +376,7 @@ async def test_search_without_tags_omits_filter(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         results = await memory.search([0.1, 0.2, 0.3])
 
@@ -392,7 +392,7 @@ async def test_search_respects_limit(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         await memory.search([0.1, 0.2, 0.3], limit=5)
 
@@ -415,7 +415,7 @@ async def test_search_rejects_wrong_dimension_embedding():
     mock_conn.fetch = AsyncMock(return_value=[])
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await mem.connect()
         results = await mem.search(wrong_dim_query, limit=5)
 
@@ -438,7 +438,7 @@ async def test_search_accepts_correct_dimension_embedding():
     mock_conn.fetch = AsyncMock(return_value=[])
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await mem.connect()
         results = await mem.search(correct_dim_query, limit=5)
 
@@ -454,7 +454,7 @@ async def test_search_passes_embedding_as_native_list(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         results = await memory.search([0.1, 0.2, 0.3])
 
@@ -479,7 +479,7 @@ async def test_delete_entry_removes_row(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         result = await memory.delete_entry(str(uuid4()))
 
@@ -494,7 +494,7 @@ async def test_delete_entry_not_found(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         result = await memory.delete_entry(str(uuid4()))
 
@@ -526,7 +526,7 @@ async def test_get_entry_returns_entry(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         result = await memory.get_entry(str(entry_id))
 
@@ -544,7 +544,7 @@ async def test_get_entry_not_found(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         result = await memory.get_entry(str(uuid4()))
 
@@ -586,7 +586,7 @@ async def test_list_entries_returns_rows(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         results = await memory.list_entries()
 
@@ -603,7 +603,7 @@ async def test_list_entries_with_pagination(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         await memory.list_entries(limit=10, offset=20)
 
@@ -695,7 +695,7 @@ async def test_search_empty_results(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         results = await memory.search([0.1, 0.2, 0.3])
 
@@ -713,7 +713,7 @@ async def test_write_entry_with_none_embedding(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         result = await memory.write_entry("no-embedding entry", ["general"], None)
 
@@ -738,7 +738,7 @@ async def test_write_entry_normalizes_empty_list_to_none(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         result = await memory.write_entry("empty-list embedding", ["general"], [])
 
@@ -769,7 +769,7 @@ async def test_write_entry_passes_embedding_as_native_list(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         embedding = [0.1, 0.2, 0.3]
         result = await memory.write_entry("hello council", ["general"], embedding)
@@ -790,7 +790,7 @@ async def test_search_on_db_failure_returns_empty_list(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         results = await memory.search([0.1, 0.2, 0.3])
 
@@ -820,7 +820,7 @@ async def test_search_sanitizes_injected_content(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         results = await memory.search([0.1, 0.2, 0.3])
 
@@ -848,7 +848,7 @@ async def test_get_entry_sanitizes_injected_content(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         result = await memory.get_entry(str(entry_id))
 
@@ -886,7 +886,7 @@ async def test_list_entries_sanitizes_injected_content(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         results = await memory.list_entries()
 
@@ -937,7 +937,7 @@ async def test_search_result_similarity_between_zero_and_one(memory):
 
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
-    with patch("pillywiggins.memory.council.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await memory.connect()
         results = await memory.search([0.1, 0.2, 0.3])
 

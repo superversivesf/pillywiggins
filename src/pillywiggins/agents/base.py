@@ -2,7 +2,9 @@ import asyncio
 import logging
 import re
 import time
-from typing import Any, Optional
+from typing import Any
+
+from pillywiggins.config import Settings
 
 from pydantic_ai.messages import (
     ModelMessage,
@@ -35,8 +37,6 @@ from pillywiggins.security.prompt_sanitizer import (
 
 logger = logging.getLogger(__name__)
 
-_ACTIVE_AGENTS: dict[str, "PillywigginAgent"] = {}
-
 # Matches an explicit agent address at the start of a message:
 #   @name      (mention/tag)
 #   name:     (name followed by colon)
@@ -53,61 +53,6 @@ _MENTION_PATTERN = re.compile(
 )
 
 
-async def _builtin_heartbeat_handler(**kwargs: Any) -> None:
-    agent_id = kwargs.get("agent_id", "")
-    agent = _ACTIVE_AGENTS.get(agent_id)
-    if agent is None or agent._nats_bus is None:
-        logger.info("heartbeat for %s (no NATS bus)", agent_id)
-        return
-    try:
-        await agent._nats_bus.publish_broadcast("heartbeat", {"agent_id": agent_id})
-    except Exception:
-        logger.warning("Failed to broadcast heartbeat for %s", agent_id, exc_info=True)
-
-
-async def _builtin_send_message_handler(**kwargs: Any) -> None:
-    agent_id = kwargs.get("agent_id", "")
-    args = kwargs.get("args", {})
-    agent = _ACTIVE_AGENTS.get(agent_id)
-    if agent is None:
-        logger.warning("send_message: agent %s not found", agent_id)
-        return
-    conversation_key = args.get("conversation_key", "")
-    chat_id = args.get("chat_id", conversation_key)
-    prompt = args.get("prompt", "Send a brief friendly check-in message.")
-    sanitized_prompt = sanitize_or_default(prompt, default="Send a brief friendly check-in message.")
-
-    if not conversation_key:
-        logger.warning("send_message action missing conversation_key for %s", agent_id)
-        return
-
-    if agent._adapter is None:
-        logger.warning("send_message action but no adapter for %s", agent_id)
-        return
-
-    try:
-        result = await agent._brain.run(
-            user_prompt=sanitized_prompt,
-            deps=AgentDeps(
-                agent_id=agent.agent_id,
-                channel="telegram",
-                channel_user_id="",
-                metadata={},
-                personality=agent.personality,
-                private_memory=agent._private_memory,
-                skill_registry=agent._skill_registry,
-                council_memory=agent._council_memory,
-                nats_bus=agent._nats_bus,
-                scheduler=agent._scheduler,
-                conversation_key=conversation_key,
-            ),
-        )
-        message_text = result.output
-        await agent._adapter.send(conversation_key, message_text, {"chat_id": chat_id})
-        logger.info("send_message for %s to %s", agent_id, conversation_key)
-    except Exception:
-        logger.exception("send_message failed for %s", agent_id)
-
 
 class PillywigginAgent:
     def __init__(
@@ -118,14 +63,14 @@ class PillywigginAgent:
         provider: str,
         base_url: str,
         api_key: str,
-        cache: Optional[ConversationCache] = None,
-        store: Optional[ConversationStore] = None,
-        private_memory: Optional[PrivateMemory] = None,
-        skill_registry: Optional[SkillRegistry] = None,
+        cache: ConversationCache | None = None,
+        store: ConversationStore | None = None,
+        private_memory: PrivateMemory | None = None,
+        skill_registry: SkillRegistry | None = None,
         compact_keep_messages: int = 6,
         compact_truncate_message_chars: int = 2000,
-        database_url: Optional[str] = None,
-        nats_url: Optional[str] = None,
+        database_url: str | None = None,
+        nats_url: str | None = None,
     ):
         self.agent_id = agent_id
         self.personality = personality
@@ -141,9 +86,10 @@ class PillywigginAgent:
         self._compact_truncate_message_chars = compact_truncate_message_chars
         self._database_url = database_url
         self._nats_url = nats_url
-        self._council_memory: Optional[CouncilMemory] = None
-        self._nats_bus: Optional[NatsBus] = None
-        self._scheduler: Optional[AgentScheduler] = None
+        self._settings = Settings()
+        self._council_memory: CouncilMemory | None = None
+        self._nats_bus: NatsBus | None = None
+        self._scheduler: AgentScheduler | None = None
         self._adapter: Any = None
         self._lock = asyncio.Lock()
         self._agent_logger = AgentLogger(agent_id)
@@ -151,31 +97,31 @@ class PillywigginAgent:
         self._llm_call_timestamps: list[float] = []
         self._llm_rate_limit = 10  # calls
         self._llm_rate_window = 60.0  # seconds
-        self._brain: Agent = create_brain(
-            model_name,
-            provider,
-            base_url,
-            api_key,
-            skill_registry=skill_registry,
-        )
+        self._brain: Agent = self._rebuild_brain()
         self._seen_mentions_this_limit_cycle: dict[str, int] = {}
-        self._message_history: list[ModelMessage] = []
         self._conversation_histories: dict[str, list[ModelMessage]] = {}
 
-    async def load_history(self, conversation_key: Optional[str] = None) -> None:
+    def _rebuild_brain(self) -> Agent:
+        """Re-create the brain agent with the current model and skill registry."""
+        return create_brain(
+            self._model_name,
+            self._provider,
+            self._base_url,
+            self._api_key,
+            skill_registry=self._skill_registry,
+        )
+
+    async def load_history(self, conversation_key: str | None = None) -> None:
+        key = conversation_key or ""
         if self._cache is not None:
-            cache_key = conversation_key or ""
-            cached = await self._cache.load(self.agent_id, conversation_key=cache_key)
+            cached = await self._cache.load(self.agent_id, conversation_key=key)
             if cached is not None:
-                if conversation_key:
-                    self._conversation_histories[conversation_key] = cached
-                else:
-                    self._message_history = cached
+                self._conversation_histories[key] = cached
                 logger.info(
                     "Loaded %d messages from Redis for %s/%s",
                     len(cached),
                     self.agent_id,
-                    conversation_key or "default",
+                    key or "default",
                 )
                 return
         if self._store is not None and conversation_key is not None:
@@ -253,112 +199,161 @@ class PillywigginAgent:
         else:
             logger.warning("Agent %s unknown NATS message type: %s", self.agent_id, msg_type)
 
-    async def start(self) -> None:
-        from pillywiggins.config import Settings
+    async def _start_council_memory(self) -> None:
+        if self._database_url is None:
+            return
+        try:
+            settings = self._settings
+            council = CouncilMemory(self._database_url, self.agent_id, embedding_dimension=settings.embedding_dimension)
+            await council.connect()
+            self._council_memory = council
+            logger.info("Council memory connected for %s", self.agent_id)
+        except Exception:
+            logger.warning(
+                "Failed to connect council memory for %s", self.agent_id, exc_info=True
+            )
+            self._council_memory = None
 
-        _ACTIVE_AGENTS[self.agent_id] = self
-        settings = Settings()
-        if self._database_url is not None:
-            try:
-                council = CouncilMemory(self._database_url, self.agent_id, embedding_dimension=settings.embedding_dimension)
-                await council.connect()
-                self._council_memory = council
-                logger.info("Council memory connected for %s", self.agent_id)
-            except Exception:
-                logger.warning(
-                    "Failed to connect council memory for %s", self.agent_id, exc_info=True
-                )
-                self._council_memory = None
-        if self._private_memory is not None:
-            try:
-                if self._private_memory._pool is None:
-                    await self._private_memory.connect()
-                    logger.info("Private memory connected for %s", self.agent_id)
-            except Exception:
-                logger.warning(
-                    "Failed to connect private memory for %s", self.agent_id, exc_info=True
-                )
-        if self._nats_url is not None:
-            try:
-                bus = NatsBus(
-                    self._nats_url,
-                    self.agent_id,
-                    connect_timeout=settings.nats_connect_timeout,
-                    reconnect_attempts=settings.nats_reconnect_attempts,
-                )
-                connected = await bus.connect_or_log()
-                if connected:
-                    self._nats_bus = bus
-                    await bus.subscribe_broadcast(self._on_nats_message)
-                    await bus.subscribe_direct(self._on_nats_message)
-                    logger.info("NATS bus connected and subscribed for %s", self.agent_id)
-                else:
-                    self._nats_bus = None
-            except Exception:
-                logger.warning("Failed to connect NATS bus for %s", self.agent_id, exc_info=True)
+    async def _start_private_memory(self) -> None:
+        if self._private_memory is None:
+            return
+        try:
+            if self._private_memory._pool is None:
+                await self._private_memory.connect()
+                logger.info("Private memory connected for %s", self.agent_id)
+        except Exception:
+            logger.warning(
+                "Failed to connect private memory for %s", self.agent_id, exc_info=True
+            )
+
+    async def _start_nats_bus(self) -> None:
+        if self._nats_url is None:
+            return
+        try:
+            settings = self._settings
+            bus = NatsBus(
+                self._nats_url,
+                self.agent_id,
+                connect_timeout=settings.nats_connect_timeout,
+                reconnect_attempts=settings.nats_reconnect_attempts,
+            )
+            connected = await bus.connect_or_log()
+            if connected:
+                self._nats_bus = bus
+                await bus.subscribe_broadcast(self._on_nats_message)
+                await bus.subscribe_direct(self._on_nats_message)
+                logger.info("NATS bus connected and subscribed for %s", self.agent_id)
+            else:
                 self._nats_bus = None
-        if settings.scheduler_enabled and settings.redis_url:
+        except Exception:
+            logger.warning("Failed to connect NATS bus for %s", self.agent_id, exc_info=True)
+            self._nats_bus = None
+
+    async def _start_scheduler(self) -> None:
+        settings = self._settings
+        if not settings.scheduler_enabled or not settings.redis_url:
+            return
+        try:
+            schedules = {}
+            if self.personality.schedules:
+                for s in self.personality.schedules:
+                    name = s.get("name", "unnamed")
+                    schedules[name] = s
+            scheduler = AgentScheduler(settings.redis_url, self.agent_id, channel=self.personality.channel, agent_handler=self)
+            await scheduler.start(yaml_schedules=schedules)
+            self._scheduler = scheduler
+            self._register_scheduler_handlers()
+            logger.info("Scheduler started for %s", self.agent_id)
+        except Exception:
+            logger.warning("Failed to start scheduler for %s", self.agent_id, exc_info=True)
+            self._scheduler = None
+
+    async def start(self) -> None:
+        await self._start_council_memory()
+        await self._start_private_memory()
+        await self._start_nats_bus()
+        await self._start_scheduler()
+
+    async def _safe_close(self, resource: Any, name: str) -> None:
+        if resource is not None:
             try:
-                schedules = {}
-                if self.personality.schedules:
-                    for s in self.personality.schedules:
-                        name = s.get("name", "unnamed")
-                        schedules[name] = s
-                scheduler = AgentScheduler(settings.redis_url, self.agent_id, channel=self.personality.channel)
-                await scheduler.start(yaml_schedules=schedules)
-                self._scheduler = scheduler
-                self._register_scheduler_handlers()
-                logger.info("Scheduler started for %s", self.agent_id)
+                await resource.close()
             except Exception:
-                logger.warning("Failed to start scheduler for %s", self.agent_id, exc_info=True)
-                self._scheduler = None
+                logger.warning("Error closing %s for %s", name, self.agent_id, exc_info=True)
 
     async def shutdown(self) -> None:
-        _ACTIVE_AGENTS.pop(self.agent_id, None)
-        if self._council_memory is not None:
-            try:
-                await self._council_memory.close()
-            except Exception:
-                logger.warning("Error closing council memory for %s", self.agent_id, exc_info=True)
-            self._council_memory = None
-        if self._private_memory is not None:
-            try:
-                await self._private_memory.close()
-            except Exception:
-                logger.warning("Error closing private memory for %s", self.agent_id, exc_info=True)
-            self._private_memory = None
-        if self._nats_bus is not None:
-            try:
-                await self._nats_bus.close()
-            except Exception:
-                logger.warning("Error closing NATS bus for %s", self.agent_id, exc_info=True)
-            self._nats_bus = None
+        await self._safe_close(self._council_memory, "council memory")
+        self._council_memory = None
+        await self._safe_close(self._private_memory, "private memory")
+        self._private_memory = None
+        await self._safe_close(self._nats_bus, "NATS bus")
+        self._nats_bus = None
         if self._scheduler is not None:
             try:
                 await self._scheduler.stop()
             except Exception:
                 logger.warning("Error stopping scheduler for %s", self.agent_id, exc_info=True)
             self._scheduler = None
-        if self._store is not None:
-            try:
-                await self._store.close()
-            except Exception:
-                logger.warning("Error closing store for %s", self.agent_id, exc_info=True)
-            self._store = None
-        if self._cache is not None:
-            try:
-                await self._cache.close()
-            except Exception:
-                logger.warning("Error closing cache for %s", self.agent_id, exc_info=True)
-            self._cache = None
+        await self._safe_close(self._store, "store")
+        self._store = None
+        await self._safe_close(self._cache, "cache")
+        self._cache = None
 
     def set_adapter(self, adapter: Any) -> None:
         self._adapter = adapter
 
     def _register_scheduler_handlers(self) -> None:
         if self._scheduler is not None:
-            self._scheduler.register_handler("heartbeat", _builtin_heartbeat_handler)
-            self._scheduler.register_handler("send_message", _builtin_send_message_handler)
+            self._scheduler.register_handler("heartbeat", self._builtin_heartbeat_handler)
+            self._scheduler.register_handler("send_message", self._builtin_send_message_handler)
+
+    async def _builtin_heartbeat_handler(self, **kwargs: Any) -> None:
+        if self._nats_bus is None:
+            logger.info("heartbeat for %s (no NATS bus)", self.agent_id)
+            return
+        try:
+            await self._nats_bus.publish_broadcast("heartbeat", {"agent_id": self.agent_id})
+        except Exception:
+            logger.warning("Failed to broadcast heartbeat for %s", self.agent_id, exc_info=True)
+
+    async def _builtin_send_message_handler(self, **kwargs: Any) -> None:
+        args = kwargs.get("args", {})
+        conversation_key = args.get("conversation_key", "")
+        chat_id = args.get("chat_id", conversation_key)
+        prompt = args.get("prompt", "Send a brief friendly check-in message.")
+        sanitized_prompt = sanitize_or_default(prompt, default="Send a brief friendly check-in message.")
+
+        if not conversation_key:
+            logger.warning("send_message action missing conversation_key for %s", self.agent_id)
+            return
+
+        if self._adapter is None:
+            logger.warning("send_message action but no adapter for %s", self.agent_id)
+            return
+
+        try:
+            result = await self._brain.run(
+                user_prompt=sanitized_prompt,
+                deps=AgentDeps(
+                    agent_id=self.agent_id,
+                    channel="telegram",
+                    channel_user_id="",
+                    metadata={},
+                    personality=self.personality,
+                    private_memory=self._private_memory,
+                    skill_registry=self._skill_registry,
+                    council_memory=self._council_memory,
+                    nats_bus=self._nats_bus,
+                    scheduler=self._scheduler,
+                    conversation_key=conversation_key,
+                    settings=self._settings,
+                ),
+            )
+            message_text = result.output
+            await self._adapter.send(conversation_key, message_text, {"chat_id": chat_id})
+            logger.info("send_message for %s to %s", self.agent_id, conversation_key)
+        except Exception:
+            logger.exception("send_message failed for %s", self.agent_id)
 
     @property
     def model_name(self) -> str:
@@ -366,65 +361,48 @@ class PillywigginAgent:
 
     def _refresh_brain_tools(self) -> None:
         """Re-register tools when skills change (e.g. after skill_published)."""
-        self._brain = create_brain(
-            self._model_name,
-            self._provider,
-            self._base_url,
-            self._api_key,
-            skill_registry=self._skill_registry,
-        )
+        self._brain = self._rebuild_brain()
         logger.info("Refreshed brain tools for %s", self.agent_id)
 
     def switch_model(self, new_model: str) -> None:
         self._model_name = new_model
-        self._brain = create_brain(
-            new_model,
-            self._provider,
-            self._base_url,
-            self._api_key,
-            skill_registry=self._skill_registry,
-        )
+        self._brain = self._rebuild_brain()
         logger.info("Switched model to %s", new_model)
 
-    def _get_history(self, conversation_key: str | None = None) -> list:
-        if conversation_key and conversation_key in self._conversation_histories:
-            return self._conversation_histories[conversation_key]
-        return self._message_history
+    def _get_history(self, conversation_key: str | None = None) -> list[ModelMessage]:
+        return self._conversation_histories.get(conversation_key or "", [])
 
-    def _set_history(self, history: list, conversation_key: str | None = None) -> None:
-        if conversation_key:
-            self._conversation_histories[conversation_key] = history
-        else:
-            self._message_history = history
+    def _set_history(self, history: list[ModelMessage], conversation_key: str | None = None) -> None:
+        self._conversation_histories[conversation_key or ""] = history
 
     async def clear_history(self, conversation_key: str | None = None) -> None:
-        if conversation_key and conversation_key in self._conversation_histories:
-            del self._conversation_histories[conversation_key]
-            logger.info("Cleared conversation history for key %s", conversation_key)
-        else:
-            self._message_history = []
-            logger.info("Cleared conversation history")
+        key = conversation_key or ""
+        self._conversation_histories.pop(key, None)
+        logger.info("Cleared conversation history for key %s", key or "default")
 
         # Persist the cleared state so restart doesn't reload stale data
         empty_messages: list[ModelMessage] = []
-        if conversation_key:
-            self._conversation_histories[conversation_key] = empty_messages
+        self._conversation_histories[key] = empty_messages
         if self._cache is not None:
             await self._cache.save(
-                self.agent_id, empty_messages, conversation_key=conversation_key or ""
+                self.agent_id, empty_messages, conversation_key=key
             )
         if self._store is not None and conversation_key is not None:
             await self._store.save(conversation_key, empty_messages)
 
-    def get_status(self) -> dict:
-        total_chars = sum(
-            len(getattr(p, "content", "")) if hasattr(p, "content") else len(str(p))
-            for msg in self._message_history
-            for p in (msg.parts if hasattr(msg, "parts") else [])
-        )
+    def get_status(self) -> dict[str, Any]:
+        total_chars = 0
+        total_messages = 0
+        for history in self._conversation_histories.values():
+            total_messages += len(history)
+            total_chars += sum(
+                len(getattr(p, "content", "")) if hasattr(p, "content") else len(str(p))
+                for msg in history
+                for p in (msg.parts if hasattr(msg, "parts") else [])
+            )
         return {
             "model_name": self._model_name,
-            "message_count": len(self._message_history),
+            "message_count": total_messages,
             "estimated_tokens": round(total_chars / 4),
             "agent_id": self.agent_id,
             "channel": self.personality.channel,
@@ -459,6 +437,7 @@ class PillywigginAgent:
             council_memory=self._council_memory,
             nats_bus=self._nats_bus,
             scheduler=self._scheduler,
+            settings=self._settings,
         )
         result = await self._brain.run(
             "",
@@ -634,6 +613,7 @@ class PillywigginAgent:
                 conversation_key=conversation_key or "",
                 conversation_info=_get_conversation_info,
                 logger=agent_logger,
+                settings=self._settings,
             )
 
             total_start = time.perf_counter()

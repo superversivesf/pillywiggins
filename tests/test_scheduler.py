@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pillywiggins.agents.base import _ACTIVE_AGENTS
 from pillywiggins.scheduling.scheduler import (
     AgentScheduler,
     _builtin_custom,
@@ -280,57 +279,51 @@ class TestBuiltInHandlers:
 class TestBuiltinMemoryReview:
     async def test_calls_compact_history(self, tmp_path):
         agent = _make_mock_agent()
-        with patch.dict(_ACTIVE_AGENTS, {"testagent": agent}, clear=False):
-            await _builtin_memory_review(agent_id="testagent", args={"conversation_key": "ck1"})
+        await _builtin_memory_review(agent_id="testagent", args={"conversation_key": "ck1"}, _agent_handler=agent)
         agent.compact_history.assert_awaited_once_with(conversation_key="ck1")
 
     async def test_calls_compact_history_no_conversation_key(self, tmp_path):
         agent = _make_mock_agent()
-        with patch.dict(_ACTIVE_AGENTS, {"testagent": agent}, clear=False):
-            await _builtin_memory_review(agent_id="testagent", args={})
+        await _builtin_memory_review(agent_id="testagent", args={}, _agent_handler=agent)
         agent.compact_history.assert_awaited_once_with(conversation_key=None)
 
-    async def test_noop_when_agent_missing(self, caplog):
+    async def test_noop_when_agent_handler_missing(self, caplog):
         with caplog.at_level("WARNING"):
             await _builtin_memory_review(agent_id="noagent", args={})
-        assert "not found" in caplog.text
+        assert "no agent handler" in caplog.text
 
     async def test_logs_exception_on_error(self, caplog):
         agent = _make_mock_agent()
         agent.compact_history.side_effect = RuntimeError("boom")
-        with patch.dict(_ACTIVE_AGENTS, {"testagent": agent}, clear=False):
-            with caplog.at_level("ERROR"):
-                await _builtin_memory_review(agent_id="testagent", args={})
+        with caplog.at_level("ERROR"):
+            await _builtin_memory_review(agent_id="testagent", args={}, _agent_handler=agent)
         assert "boom" in caplog.text
 
 
 class TestBuiltinSkillReload:
     async def test_calls_load_all_and_refresh(self, tmp_path):
         agent = _make_mock_agent()
-        with patch.dict(_ACTIVE_AGENTS, {"testagent": agent}, clear=False):
-            await _builtin_skill_reload(agent_id="testagent")
+        await _builtin_skill_reload(agent_id="testagent", _agent_handler=agent)
         agent._skill_registry.load_all.assert_called_once()
         agent._refresh_brain_tools.assert_called_once()
 
     async def test_noop_when_no_skill_registry(self, caplog):
         agent = _make_mock_agent()
         agent._skill_registry = None
-        with patch.dict(_ACTIVE_AGENTS, {"testagent": agent}, clear=False):
-            with caplog.at_level("WARNING"):
-                await _builtin_skill_reload(agent_id="testagent")
+        with caplog.at_level("WARNING"):
+            await _builtin_skill_reload(agent_id="testagent", _agent_handler=agent)
         assert "no skill_registry" in caplog.text
 
-    async def test_noop_when_agent_missing(self, caplog):
+    async def test_noop_when_agent_handler_missing(self, caplog):
         with caplog.at_level("WARNING"):
             await _builtin_skill_reload(agent_id="noagent")
-        assert "not found" in caplog.text
+        assert "no agent handler" in caplog.text
 
     async def test_logs_exception_on_error(self, caplog):
         agent = _make_mock_agent()
         agent._skill_registry.load_all.side_effect = RuntimeError("boom")
-        with patch.dict(_ACTIVE_AGENTS, {"testagent": agent}, clear=False):
-            with caplog.at_level("ERROR"):
-                await _builtin_skill_reload(agent_id="testagent")
+        with caplog.at_level("ERROR"):
+            await _builtin_skill_reload(agent_id="testagent", _agent_handler=agent)
         assert "boom" in caplog.text
 
 
@@ -340,44 +333,39 @@ class TestBuiltinCustom:
         skill = MagicMock()
         skill.execute = AsyncMock(return_value="skill_output")
         agent._skill_registry.get_skill.return_value = skill
-        with patch.dict(_ACTIVE_AGENTS, {"testagent": agent}, clear=False):
-            await _builtin_custom(agent_id="testagent", args={"skill": "my_skill", "extra": 1})
+        await _builtin_custom(agent_id="testagent", args={"skill": "my_skill", "extra": 1}, _agent_handler=agent)
         agent._skill_registry.get_skill.assert_called_once_with("my_skill")
         skill.execute.assert_awaited_once_with(agent_id="testagent", channel="scheduler", skill="my_skill", extra=1)
 
     async def test_runs_brain_when_args_has_prompt(self):
         agent = _make_mock_agent()
-        with patch.dict(_ACTIVE_AGENTS, {"testagent": agent}, clear=False):
-            await _builtin_custom(agent_id="testagent", args={"prompt": "hello"})
+        await _builtin_custom(agent_id="testagent", args={"prompt": "hello"}, _agent_handler=agent)
         agent._brain.run.assert_awaited_once()
         call_args = agent._brain.run.call_args
         assert call_args.kwargs["user_prompt"] == "hello"
 
     async def test_logs_when_no_skill_or_prompt(self, caplog):
         agent = _make_mock_agent()
-        with patch.dict(_ACTIVE_AGENTS, {"testagent": agent}, clear=False):
-            with caplog.at_level("INFO"):
-                await _builtin_custom(agent_id="testagent", args={})
+        with caplog.at_level("INFO"):
+            await _builtin_custom(agent_id="testagent", args={}, _agent_handler=agent)
         assert "no skill or prompt configured" in caplog.text
 
-    async def test_noop_when_agent_missing(self, caplog):
+    async def test_noop_when_agent_handler_missing(self, caplog):
         with caplog.at_level("WARNING"):
             await _builtin_custom(agent_id="noagent", args={})
-        assert "not found" in caplog.text
+        assert "no agent handler" in caplog.text
 
     async def test_noop_when_args_not_dict(self, caplog):
         agent = _make_mock_agent()
-        with patch.dict(_ACTIVE_AGENTS, {"testagent": agent}, clear=False):
-            with caplog.at_level("WARNING"):
-                await _builtin_custom(agent_id="testagent", args=None)
+        with caplog.at_level("WARNING"):
+            await _builtin_custom(agent_id="testagent", args=None, _agent_handler=agent)
         assert "args is not a dict" in caplog.text
 
     async def test_logs_exception_on_error(self, caplog):
         agent = _make_mock_agent()
         agent._skill_registry.get_skill.side_effect = RuntimeError("boom")
-        with patch.dict(_ACTIVE_AGENTS, {"testagent": agent}, clear=False):
-            with caplog.at_level("ERROR"):
-                await _builtin_custom(agent_id="testagent", args={"skill": "my_skill"})
+        with caplog.at_level("ERROR"):
+            await _builtin_custom(agent_id="testagent", args={"skill": "my_skill"}, _agent_handler=agent)
         assert "boom" in caplog.text
 
 

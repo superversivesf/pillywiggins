@@ -1,11 +1,9 @@
-import json
+from __future__ import annotations
+
 import logging
 import math
-from typing import Optional
 
-import asyncpg
-from pgvector.asyncpg import register_vector
-
+from pillywiggins.memory.base import PgVectorMemoryBase
 from pillywiggins.security.prompt_sanitizer import sanitize_or_default
 
 logger = logging.getLogger(__name__)
@@ -28,76 +26,14 @@ RATE_LIMIT_PER_HOUR = 10
 DEDUP_SIMILARITY_THRESHOLD = 0.95
 
 
-class CouncilMemory:
-    def __init__(self, database_url: str, agent_id: str, embedding_dimension: int | None = None):
-        self._database_url = database_url
-        self._agent_id = agent_id
-        self._embedding_dimension = embedding_dimension or 768
-        self._pool: Optional[asyncpg.Pool] = None
-
-    async def _ensure_agent_id(self, conn: asyncpg.Connection) -> None:
-        """Re-apply the agent_id GUC on every connection checkout."""
-        await conn.execute(
-            "SELECT set_config('app.agent_id', $1, false)",
-            self._agent_id,
-        )
-
-    async def _migrate_embedding_dimension(self, conn: asyncpg.Connection) -> None:
-        """Check and migrate embedding column dimension if it differs from runtime config."""
-        row = await conn.fetchrow(
-            """SELECT atttypmod
-               FROM pg_attribute
-               WHERE attrelid = 'council_memory'::regclass
-               AND attname = 'embedding'"""
-        )
-        if row is None:
-            # Table or column doesn't exist yet; nothing to migrate.
-            return
-        current_dim = row.get("atttypmod")
-        if current_dim is None or current_dim == self._embedding_dimension:
-            return
-        logger.warning(
-            "Migrating council_memory.embedding from vector(%s) to vector(%s) for agent %s",
-            current_dim, self._embedding_dimension, self._agent_id,
-        )
-        await conn.execute(
-            f"ALTER TABLE council_memory ALTER COLUMN embedding TYPE vector({self._embedding_dimension})"
-        )
-
-    async def connect(self) -> None:
-        async def _init_connection(conn):
-            await register_vector(conn)
-            # Register JSONB codec so Python dicts/lists are auto-encoded/decoded.
-            await conn.set_type_codec(
-                'jsonb',
-                encoder=json.dumps,
-                decoder=json.loads,
-                schema='pg_catalog',
-            )
-            await self._ensure_agent_id(conn)
-
-        self._pool = await asyncpg.create_pool(
-            self._database_url,
-            init=_init_connection,
-            min_size=1,
-            max_size=5,
-        )
-        # After pool creation, acquire an owning connection to run dimension migration.
-        async with self._pool.acquire() as conn:
-            await self._migrate_embedding_dimension(conn)
-        logger.info("Council memory connected for agent %s", self._agent_id)
-
-    async def close(self) -> None:
-        if self._pool is not None:
-            await self._pool.close()
-            self._pool = None
-            logger.info("Council memory closed for agent %s", self._agent_id)
+class CouncilMemory(PgVectorMemoryBase):
+    _table_name = "council_memory"
 
     async def write_entry(
         self,
         content: str,
         tags: list[str],
-        embedding: Optional[list[float]],
+        embedding: list[float] | None,
         message_type: str = "insight",
         confidence: float = 1.0,
     ) -> dict:
@@ -124,6 +60,7 @@ class CouncilMemory:
             }
 
         if self._pool is None:
+            logger.warning("Council memory not connected, cannot write entry")
             return {"success": False, "error": "Not connected", "id": None}
 
         # Normalize: treat empty lists the same as None (no embedding).
@@ -134,10 +71,10 @@ class CouncilMemory:
 
         # Validate embedding dimension when one is provided.
         # None is allowed — the row will store NULL for the vector column.
-        if embedding is not None and len(embedding) != self._embedding_dimension:
+        if embedding is not None and not await self._validate_dimension(embedding):
             return {
                 "success": False,
-                "error": f"Embedding dimension {len(embedding)} does not match council_memory column dimension {self._embedding_dimension}",
+                "error": f"Embedding dimension {len(embedding)} does not match {self._table_name} column dimension {self._embedding_dimension}",
                 "id": None,
             }
 
@@ -212,18 +149,13 @@ class CouncilMemory:
     async def search(
         self,
         query_embedding: list[float],
-        tags: Optional[list[str]] = None,
+        tags: list[str] | None = None,
         limit: int = 10,
     ) -> list[dict]:
         if self._pool is None:
-            logger.error("Council memory not connected, cannot search")
+            logger.warning("Council memory not connected, cannot search")
             return []
-        if len(query_embedding) != self._embedding_dimension:
-            logger.error(
-                "Council memory search rejected: query embedding dimension %d does not match "
-                "pgvector column dimension %d (agent=%s)",
-                len(query_embedding), self._embedding_dimension, self._agent_id,
-            )
+        if not await self._validate_dimension(query_embedding):
             return []
         try:
             async with self._pool.acquire() as conn:
@@ -273,22 +205,12 @@ class CouncilMemory:
             return []
 
     async def delete_entry(self, entry_id: str) -> bool:
-        if self._pool is None:
-            return False
-        try:
-            async with self._pool.acquire() as conn:
-                await self._ensure_agent_id(conn)
-                result = await conn.execute(
-                    "DELETE FROM council_memory WHERE id = $1::uuid",
-                    entry_id,
-                )
-            return result.endswith("1")
-        except Exception:
-            logger.exception("Council memory delete failed for agent %s", self._agent_id)
-            return False
+        """Delete a council memory entry by ID. Alias for :meth:`delete`."""
+        return await self.delete(entry_id)
 
-    async def get_entry(self, entry_id: str) -> Optional[dict]:
+    async def get_entry(self, entry_id: str) -> dict | None:
         if self._pool is None:
+            logger.warning("Council memory not connected, cannot get entry")
             return None
         try:
             async with self._pool.acquire() as conn:
@@ -317,6 +239,7 @@ class CouncilMemory:
 
     async def list_entries(self, limit: int = 50, offset: int = 0) -> list[dict]:
         if self._pool is None:
+            logger.warning("Council memory not connected, cannot list entries")
             return []
         try:
             async with self._pool.acquire() as conn:

@@ -65,7 +65,7 @@ async def test_init_connection_sets_agent_id(puck_memory):
         captured_init = kwargs.get("init")
         return mock_pool
 
-    with patch("pillywiggins.memory.private.asyncpg.create_pool", side_effect=capture_init):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", side_effect=capture_init):
         await puck_memory.connect()
 
     assert captured_init is not None
@@ -87,7 +87,7 @@ async def test_init_uses_parameterised_set_config(puck_memory):
         captured_init = kwargs.get("init")
         return mock_pool
 
-    with patch("pillywiggins.memory.private.asyncpg.create_pool", side_effect=capture_init):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", side_effect=capture_init):
         await puck_memory.connect()
 
     mock_conn = AsyncMock()
@@ -118,10 +118,10 @@ async def test_different_agents_set_different_ids(puck_memory, oberon_memory):
         oberon_init = kwargs.get("init")
         return oberon_pool
 
-    with patch("pillywiggins.memory.private.asyncpg.create_pool", side_effect=capture_puck_init):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", side_effect=capture_puck_init):
         await puck_memory.connect()
 
-    with patch("pillywiggins.memory.private.asyncpg.create_pool", side_effect=capture_oberon_init):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", side_effect=capture_oberon_init):
         await oberon_memory.connect()
 
     puck_conn = AsyncMock()
@@ -156,7 +156,7 @@ async def test_save_sets_agent_id_before_insert(puck_memory):
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
     with patch(
-        "pillywiggins.memory.private.asyncpg.create_pool",
+        "pillywiggins.memory.base.asyncpg.create_pool",
         new_callable=AsyncMock,
         return_value=mock_pool,
     ):
@@ -177,7 +177,7 @@ async def test_save_uses_correct_agent_id_in_values(puck_memory):
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
     with patch(
-        "pillywiggins.memory.private.asyncpg.create_pool",
+        "pillywiggins.memory.base.asyncpg.create_pool",
         new_callable=AsyncMock,
         return_value=mock_pool,
     ):
@@ -209,7 +209,7 @@ async def test_search_sets_agent_id_before_select(puck_memory):
     mock_pool.acquire = tracking_acquire
 
     with patch(
-        "pillywiggins.memory.private.asyncpg.create_pool",
+        "pillywiggins.memory.base.asyncpg.create_pool",
         new_callable=AsyncMock,
         return_value=mock_pool,
     ):
@@ -231,7 +231,7 @@ async def test_search_uses_agent_id_scoped_query(puck_memory):
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
     with patch(
-        "pillywiggins.memory.private.asyncpg.create_pool",
+        "pillywiggins.memory.base.asyncpg.create_pool",
         new_callable=AsyncMock,
         return_value=mock_pool,
     ):
@@ -251,7 +251,7 @@ async def test_delete_sets_agent_id_before_delete(puck_memory):
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
     with patch(
-        "pillywiggins.memory.private.asyncpg.create_pool",
+        "pillywiggins.memory.base.asyncpg.create_pool",
         new_callable=AsyncMock,
         return_value=mock_pool,
     ):
@@ -278,7 +278,7 @@ async def test_cross_agent_isolation_search_returns_no_rows(puck_memory):
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
     with patch(
-        "pillywiggins.memory.private.asyncpg.create_pool",
+        "pillywiggins.memory.base.asyncpg.create_pool",
         new_callable=AsyncMock,
         return_value=mock_pool,
     ):
@@ -293,7 +293,7 @@ async def test_cross_agent_isolation_search_returns_no_rows(puck_memory):
         init_callback = kwargs.get("init")
         return mock_pool
 
-    with patch("pillywiggins.memory.private.asyncpg.create_pool", side_effect=capture_init):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", side_effect=capture_init):
         await wrong_agent_mem.close()
         wrong_agent_mem._pool = None
         await wrong_agent_mem.connect()
@@ -315,7 +315,7 @@ async def test_cross_agent_cannot_delete_other_memory(puck_memory):
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
     with patch(
-        "pillywiggins.memory.private.asyncpg.create_pool",
+        "pillywiggins.memory.base.asyncpg.create_pool",
         new_callable=AsyncMock,
         return_value=mock_pool,
     ):
@@ -333,7 +333,7 @@ async def test_cross_agent_save_cannot_inject_wrong_id(puck_memory):
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
     with patch(
-        "pillywiggins.memory.private.asyncpg.create_pool",
+        "pillywiggins.memory.base.asyncpg.create_pool",
         new_callable=AsyncMock,
         return_value=mock_pool,
     ):
@@ -357,7 +357,7 @@ async def test_pool_connect_lifecycle(puck_memory):
         init_callback = kwargs.get("init")
         return mock_pool
 
-    with patch("pillywiggins.memory.private.asyncpg.create_pool", side_effect=capture_init):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", side_effect=capture_init):
         await puck_memory.connect()
 
     assert puck_memory._pool is not None
@@ -382,7 +382,7 @@ async def test_pool_close_idempotent(puck_memory):
 @pytest.mark.asyncio
 async def test_pool_connect_error(puck_memory):
     with patch(
-        "pillywiggins.memory.private.asyncpg.create_pool",
+        "pillywiggins.memory.base.asyncpg.create_pool",
         new_callable=AsyncMock,
         side_effect=ConnectionRefusedError("postgres unavailable"),
     ):
@@ -399,7 +399,7 @@ async def test_pool_acquire_releases_connection(puck_memory):
     mock_pool = _make_pool_mock(acquire_return=mock_conn)
 
     with patch(
-        "pillywiggins.memory.private.asyncpg.create_pool",
+        "pillywiggins.memory.base.asyncpg.create_pool",
         new_callable=AsyncMock,
         return_value=mock_pool,
     ):
@@ -438,7 +438,7 @@ async def test_init_callback_called_per_connection():
         embedding_dimension=3,
     )
 
-    with patch("pillywiggins.memory.private.asyncpg.create_pool", side_effect=create_and_capture):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", side_effect=create_and_capture):
         await memory.connect()
 
     assert len(init_calls) == 3
@@ -464,7 +464,7 @@ async def test_agent_id_sql_injection_safety():
         init_callback = kwargs.get("init")
         return mock_pool
 
-    with patch("pillywiggins.memory.private.asyncpg.create_pool", side_effect=capture_init):
+    with patch("pillywiggins.memory.base.asyncpg.create_pool", side_effect=capture_init):
         await memory.connect()
 
     mock_conn = AsyncMock()
@@ -495,7 +495,7 @@ async def test_rls_set_before_every_acquire_operation(puck_memory):
     mock_pool.acquire = tracking_acquire
 
     with patch(
-        "pillywiggins.memory.private.asyncpg.create_pool",
+        "pillywiggins.memory.base.asyncpg.create_pool",
         new_callable=AsyncMock,
         return_value=mock_pool,
     ):
@@ -504,12 +504,12 @@ async def test_rls_set_before_every_acquire_operation(puck_memory):
         await puck_memory.search([0.1, 0.2, 0.3])
         await puck_memory.delete("abc-123")
 
-    assert operation_order == ["acquired", "acquired", "acquired"]
-    # _ensure_agent_id now calls execute before every operation, so:
+    assert operation_order == ["acquired", "acquired", "acquired", "acquired"]
+    # connect: migration fetchrow (0) + alter execute (1) = 1
     # save: set_config + INSERT = 2
     # search: set_config = 1
     # delete: set_config + DELETE = 2
-    assert mock_conn.execute.call_count == 5
+    assert mock_conn.execute.call_count == 6
     mock_conn.fetch.assert_called_once()
     await puck_memory.close()
 

@@ -101,7 +101,7 @@ async def test_recall_private_memory_embedding_fails():
          patch("pillywiggins.config.Settings", return_value=_make_settings()):
         result = await recall_private_memory(mock_ctx, "test query")
 
-    assert result == "Could not generate embedding for search."
+    assert result == "Private memory could not generate embedding for search."
 
 
 @pytest.mark.asyncio
@@ -145,5 +145,5 @@ async def test_save_to_private_memory_embedding_fails():
          patch("pillywiggins.config.Settings", return_value=_make_settings()):
         result = await save_to_private_memory(mock_ctx, "test content")
 
-    assert result == "Could not generate embedding — memory not saved."
+    assert result == "Private memory could not generate embedding."
     mock_memory.save.assert_not_called()

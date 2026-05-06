@@ -23,6 +23,8 @@ def clear_embedding_cache(monkeypatch):
     monkeypatch.setattr(emb_mod, "_CACHE_TTL_SECONDS", 3600)
     monkeypatch.setattr(emb_mod, "_MAX_RETRIES", 3)
     emb_mod._session = None
+    monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
+    monkeypatch.delenv("EMBEDDING_DIMENSION", raising=False)
 
 
 @pytest.fixture

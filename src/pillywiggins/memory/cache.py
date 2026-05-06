@@ -1,5 +1,6 @@
+from __future__ import annotations
+
 import logging
-from typing import Optional
 
 import redis.asyncio as aioredis
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
@@ -13,9 +14,9 @@ _KEY_PREFIX = "conversation:"
 class ConversationCache:
     def __init__(self, redis_url: str):
         self._redis_url = redis_url
-        self._redis: Optional[aioredis.Redis] = None
+        self._redis: aioredis.Redis | None = None
 
-    async def _get_redis(self) -> Optional[aioredis.Redis]:
+    async def _get_redis(self) -> aioredis.Redis | None:
         if self._redis is not None:
             try:
                 await self._redis.ping()
@@ -47,10 +48,10 @@ class ConversationCache:
             logger.exception("Failed to save conversation cache for %s/%s", agent_id, conversation_key)
             self._redis = None
 
-    async def load(self, agent_id: str, conversation_key: str = "") -> Optional[list[ModelMessage]]:
+    async def load(self, agent_id: str, conversation_key: str = "") -> list[ModelMessage] | None:
         r = await self._get_redis()
         if r is None:
-            logger.debug(
+            logger.warning(
                 "Conversation cache unavailable; falling back for %s/%s",
                 agent_id,
                 conversation_key,

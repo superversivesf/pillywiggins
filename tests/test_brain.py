@@ -351,7 +351,7 @@ class TestRecallPrivateMemoryEdgeCases:
         memory = MagicMock()
         ctx = _make_ctx(private_memory=memory)
         result = await recall_private_memory(ctx, "test")
-        assert result == "Could not generate embedding for search."
+        assert result == "Private memory could not generate embedding for search."
         memory.search.assert_not_called()
 
     @pytest.mark.asyncio
@@ -427,7 +427,7 @@ class TestSaveToPrivateMemoryEdgeCases:
         memory = MagicMock()
         ctx = _make_ctx(private_memory=memory)
         result = await save_to_private_memory(ctx, "something")
-        assert result == "Could not generate embedding — memory not saved."
+        assert result == "Private memory could not generate embedding."
         memory.save.assert_not_called()
 
     @pytest.mark.asyncio
@@ -511,7 +511,7 @@ class TestQueryCouncilMemory:
         council = MagicMock()
         ctx = _make_ctx(council_memory=council)
         result = await query_council_memory(ctx, "test")
-        assert result == "Could not generate embedding for council search."
+        assert result == "Council memory could not generate embedding for search."
         council.search.assert_not_called()
 
 
@@ -531,7 +531,7 @@ class TestShareToCouncil:
         council = MagicMock()
         ctx = _make_ctx(council_memory=council)
         result = await share_to_council(ctx, "something")
-        assert result == "Could not generate embedding — council insight not shared."
+        assert result == "Council memory could not generate embedding."
         council.write_entry.assert_not_called()
 
     @pytest.mark.asyncio
@@ -671,7 +671,7 @@ class TestRunSandboxedSkill:
         skill = _make_skill(name="fail_skill", file_path=Path("/some/path/fail_skill.py"))
         with patch.object(Path, "read_text", return_value="code"):
             result = await _run_sandboxed_skill(skill, {}, "puck", "discord")
-        assert "Sandbox error" in result
+        assert "Sandbox failed" in result
 
     @pytest.mark.asyncio
     @patch("pillywiggins.skills.sandbox.run_sandboxed", new_callable=AsyncMock)
@@ -739,7 +739,7 @@ class TestMakeSkillTool:
         skill = _make_skill(name="test_skill", description="test", run_func=run_func)
         tool_fn = _make_skill_tool(skill)
         ctx = _make_ctx()
-        with patch("pillywiggins.agents.brain._should_sandbox", return_value=False):
+        with patch("pillywiggins.agents.tools._should_sandbox", return_value=False):
             result = await tool_fn(ctx, query="hello")
         run_func.assert_awaited_once_with(query="hello")
         assert result == "executed"
@@ -750,7 +750,7 @@ class TestMakeSkillTool:
         skill = _make_skill(name="json_skill", description="json test", run_func=run_func)
         tool_fn = _make_skill_tool(skill)
         ctx = _make_ctx()
-        with patch("pillywiggins.agents.brain._should_sandbox", return_value=False):
+        with patch("pillywiggins.agents.tools._should_sandbox", return_value=False):
             result = await tool_fn(ctx)
         import json
 
@@ -768,14 +768,14 @@ class TestMakeSkillTool:
         )
         tool_fn = _make_skill_tool(skill)
         ctx = _make_ctx()
-        with patch("pillywiggins.agents.brain._should_sandbox", return_value=False):
+        with patch("pillywiggins.agents.tools._should_sandbox", return_value=False):
             result = await tool_fn(ctx, bad_param="oops")
-        assert "Error" in result
+        assert "invalid arguments" in result
         assert "valid_param" in result
 
     @pytest.mark.asyncio
-    @patch("pillywiggins.agents.brain._should_sandbox", return_value=True)
-    @patch("pillywiggins.agents.brain._run_sandboxed_skill", new_callable=AsyncMock)
+    @patch("pillywiggins.agents.tools._should_sandbox", return_value=True)
+    @patch("pillywiggins.agents.tools._run_sandboxed_skill", new_callable=AsyncMock)
     async def test_skill_tool_sandbox_path(self, mock_run_sandboxed, mock_should_sandbox):
         skill = _make_skill(name="dangerous", description="dangerous skill")
         tool_fn = _make_skill_tool(skill)
@@ -875,7 +875,7 @@ class TestTestSkillCode:
     async def test_invalid_json(self):
         ctx = _make_ctx()
         result = await run_skill_test(ctx, name="skill", code="pass", test_cases_json="not json")
-        assert "Invalid test_cases_json" in result
+        assert "test cases JSON is invalid" in result
 
     @pytest.mark.asyncio
     async def test_not_array(self):
@@ -1009,7 +1009,7 @@ class TestReviewSkillCode:
     async def test_invalid_json(self):
         ctx = _make_ctx()
         result = await review_skill_code(ctx, name="skill", code="pass", test_cases_json="bad json")
-        assert "Invalid test_cases_json" in result
+        assert "test cases JSON is invalid" in result
 
     @pytest.mark.asyncio
     async def test_not_array(self):
@@ -1067,7 +1067,7 @@ class TestPublishSkillCode:
         result = await publish_skill_code(
             ctx, name="skill", code="pass", test_cases_json="bad", approved=True
         )
-        assert "Invalid test_cases_json" in result
+        assert "test cases JSON is invalid" in result
 
     @pytest.mark.asyncio
     async def test_not_array(self):
@@ -1114,7 +1114,7 @@ class TestScheduleTask:
     async def test_returns_unavailable_when_no_scheduler(self):
         ctx = _make_ctx(scheduler=None)
         result = await schedule_task(ctx, name="test", action="heartbeat")
-        assert result == "Scheduler not available"
+        assert result == "Scheduler is not available."
 
     @pytest.mark.asyncio
     async def test_schedules_interval_job(self):
@@ -1141,7 +1141,7 @@ class TestScheduleTask:
         scheduler.add_job = AsyncMock(return_value={"success": True, "name": "test"})
         ctx = _make_ctx(scheduler=scheduler)
         result = await schedule_task(ctx, name="test", action="send_message", args_json="not json")
-        assert "Invalid args_json" in result
+        assert "invalid args_json" in result
 
     @pytest.mark.asyncio
     async def test_valid_args_json(self):
@@ -1169,7 +1169,7 @@ class TestUnscheduleTask:
     async def test_returns_unavailable_when_no_scheduler(self):
         ctx = _make_ctx(scheduler=None)
         result = await unschedule_task(ctx, name="test")
-        assert result == "Scheduler not available"
+        assert result == "Scheduler is not available."
 
     @pytest.mark.asyncio
     async def test_successful_removal(self):
@@ -1193,7 +1193,7 @@ class TestListScheduledTasks:
     async def test_returns_unavailable_when_no_scheduler(self):
         ctx = _make_ctx(scheduler=None)
         result = await list_scheduled_tasks(ctx)
-        assert result == "Scheduler not available"
+        assert result == "Scheduler is not available."
 
     @pytest.mark.asyncio
     async def test_returns_no_tasks_when_empty(self):

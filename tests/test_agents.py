@@ -40,7 +40,7 @@ def test_agent_initialization(agent):
     assert agent._provider == "ollama"
     assert agent._base_url == "http://localhost:11434"
     assert agent._api_key == ""
-    assert agent._message_history == []
+    assert agent._conversation_histories == {}
 
 
 def test_model_name_property(agent):
@@ -72,13 +72,13 @@ def test_switch_model_updates_brain_reference(agent):
 
 
 @pytest.mark.asyncio
-async def test_clear_history_empties_message_history(agent):
-    agent._message_history = [MagicMock(), MagicMock()]
-    assert len(agent._message_history) == 2
+async def test_clear_history_empties_default_conversation(agent):
+    agent._conversation_histories[""] = [MagicMock(), MagicMock()]
+    assert len(agent._conversation_histories[""]) == 2
 
     await agent.clear_history()
 
-    assert agent._message_history == []
+    assert agent._conversation_histories[""] == []
 
 
 @pytest.mark.asyncio
@@ -172,7 +172,7 @@ async def test_load_history_from_cache(personality):
 
     await agent.load_history()
 
-    assert len(agent._message_history) == 2
+    assert len(agent._conversation_histories[""]) == 2
     mock_cache.load.assert_called_once_with("puck", conversation_key="")
 
 
@@ -190,7 +190,7 @@ async def test_load_history_no_cache(personality):
 
     await agent.load_history()
 
-    assert agent._message_history == []
+    assert agent._conversation_histories == {}
 
 
 @pytest.mark.asyncio
@@ -227,7 +227,7 @@ async def test_handle_message_without_cache_does_not_error(personality):
 
 
 def test_get_status_returns_fields(agent):
-    agent._message_history = [MagicMock(), MagicMock(), MagicMock()]
+    agent._conversation_histories[""] = [MagicMock(), MagicMock(), MagicMock()]
     status = agent.get_status()
     assert "model_name" in status
     assert "message_count" in status
@@ -276,15 +276,15 @@ async def test_compact_history_summarizes_old_messages(personality):
     old_msg2 = ModelResponse(parts=[TextPart(content="hi")])
     kept_msg1 = ModelRequest(parts=[UserPromptPart(content="recent question")])
     kept_msg2 = ModelResponse(parts=[TextPart(content="recent answer")])
-    agent._message_history = [old_msg1, old_msg2, kept_msg1, kept_msg2]
+    agent._conversation_histories[""] = [old_msg1, old_msg2, kept_msg1, kept_msg2]
 
     result = await agent.compact_history()
 
     assert "Compacted 2 messages into summary" in result
     assert "Keeping 2 recent" in result
-    assert len(agent._message_history) == 4
-    assert isinstance(agent._message_history[0], ModelRequest)
-    assert isinstance(agent._message_history[1], ModelResponse)
+    assert len(agent._conversation_histories[""]) == 4
+    assert isinstance(agent._conversation_histories[""][0], ModelRequest)
+    assert isinstance(agent._conversation_histories[""][1], ModelResponse)
 
 
 @pytest.mark.asyncio
@@ -300,11 +300,11 @@ async def test_compact_history_noop_when_few_messages(personality):
             compact_keep_messages=6,
         )
 
-    agent._message_history = [MagicMock(), MagicMock()]
+    agent._conversation_histories[""] = [MagicMock(), MagicMock()]
     result = await agent.compact_history()
 
     assert result == "Nothing to compact — only 2 messages."
-    assert len(agent._message_history) == 2
+    assert len(agent._conversation_histories[""]) == 2
 
 
 @pytest.mark.asyncio
@@ -344,12 +344,12 @@ async def test_compact_history_truncates_long_messages(personality):
     old_msg = ModelRequest(parts=[UserPromptPart(content="old")])
     old_response = ModelResponse(parts=[TextPart(content="old reply")])
     kept_msg = ModelResponse(parts=[TextPart(content=long_text)])
-    agent._message_history = [old_msg, old_response, kept_msg]
+    agent._conversation_histories[""] = [old_msg, old_response, kept_msg]
 
     result = await agent.compact_history()
 
     assert "Compacted" in result
-    truncated_text = agent._message_history[-1].parts[0].content
+    truncated_text = agent._conversation_histories[""][-1].parts[0].content
     assert truncated_text.endswith("...[truncated]")
     assert len(truncated_text) == 10 + len("...[truncated]")
 
@@ -391,7 +391,7 @@ async def test_load_history_no_cache_with_none_store(personality):
 
     await agent.load_history(conversation_key="chat_123")
 
-    assert agent._message_history == []
+    assert agent._conversation_histories == {}
 
 
 @pytest.mark.asyncio
@@ -412,7 +412,7 @@ async def test_load_history_store_returns_none(personality):
 
     await agent.load_history(conversation_key="chat_123")
 
-    assert agent._message_history == []
+    assert agent._conversation_histories == {}
 
 
 @pytest.mark.asyncio
@@ -485,13 +485,13 @@ async def test_compact_history_no_summary_parts_fallback(personality):
     old_msg = ModelRequest(parts=[UserPromptPart(content="old")])
     old_response = ModelResponse(parts=[TextPart(content="old reply")])
     kept_msg = ModelRequest(parts=[UserPromptPart(content="recent")])
-    agent._message_history = [old_msg, old_response, kept_msg]
+    agent._conversation_histories[""] = [old_msg, old_response, kept_msg]
 
     result = await agent.compact_history()
 
     assert "Compacted" in result
-    assert isinstance(agent._message_history[1], ModelResponse)
-    summary_content = agent._message_history[1].parts[0].content
+    assert isinstance(agent._conversation_histories[""][1], ModelResponse)
+    summary_content = agent._conversation_histories[""][1].parts[0].content
     assert "Fallback summary text." in summary_content
 
 
@@ -534,7 +534,7 @@ async def test_compact_history_non_string_content_part(personality):
         content = 12345
 
     kept_msg = ModelResponse(parts=[NonStringPart()])
-    agent._message_history = [old_msg, old_response, kept_msg]
+    agent._conversation_histories[""] = [old_msg, old_response, kept_msg]
 
     result = await agent.compact_history()
 
@@ -554,7 +554,7 @@ async def test_compact_history_exact_keep_count(personality):
             compact_keep_messages=6,
         )
 
-    agent._message_history = [MagicMock()] * 6
+    agent._conversation_histories[""] = [MagicMock()] * 6
     result = await agent.compact_history()
 
     assert result == "Nothing to compact — only 6 messages."
@@ -831,10 +831,10 @@ async def test_clear_history_persists_to_cache(personality):
             cache=mock_cache,
         )
 
-    agent._message_history = [MagicMock(), MagicMock()]
+    agent._conversation_histories[""] = [MagicMock(), MagicMock()]
     await agent.clear_history()
 
-    assert agent._message_history == []
+    assert agent._conversation_histories[""] == []
     mock_cache.save.assert_called_once_with("puck", [], conversation_key="")
 
 

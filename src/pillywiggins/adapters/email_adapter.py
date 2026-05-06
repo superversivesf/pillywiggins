@@ -11,22 +11,11 @@ import aiosmtplib
 from imap_tools import MailBox, AND
 
 from pillywiggins.adapters.base import BaseAdapter
-from pillywiggins.adapters.models import list_models
 from pillywiggins.agents.base import PillywigginAgent
 from pillywiggins.config import Settings
 from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
 
 logger = logging.getLogger(__name__)
-
-HELP_TEXT = """Pillywiggins Email Commands
-
-!help — Show this message
-!status — Show agent status (model, context size, etc.)
-!models — List available LLM models
-!model <name> — Switch to a different model
-!skills — List loaded skills
-!compact — Summarize conversation history to free context
-!reset — Clear conversation history"""
 
 # Strip Re:/Fwd: prefixes to find thread subject
 _RE_PREFIX = re.compile(r"^(Re|Fw|Fwd|RE|FW|FWD)\s*:\s*", re.IGNORECASE)
@@ -44,6 +33,8 @@ def _normalize_subject(subject: str) -> str:
 
 
 class EmailAdapter(BaseAdapter):
+    command_prefix = "!"
+
     def __init__(
         self,
         agent: PillywigginAgent,
@@ -58,7 +49,7 @@ class EmailAdapter(BaseAdapter):
         settings: Settings,
         poll_interval: int = 30,
     ):
-        super().__init__(agent)
+        super().__init__(agent, settings)
         self.smtp_host = smtp_host
         self.smtp_port = smtp_port
         self.smtp_user = smtp_user
@@ -69,18 +60,9 @@ class EmailAdapter(BaseAdapter):
         self.imap_password = imap_password
         self.settings = settings
         self.poll_interval = poll_interval
-        self._allowed_user_ids = settings.get_allowed_user_ids()
-        self._allow_all = settings.allowed_user_ids.strip().lower() == "all"
         self._shutdown_event = asyncio.Event()
         # Thread-local conversation context: thread_key -> list of last 3 messages
         self._thread_contexts: dict[str, list[dict[str, Any]]] = {}
-
-    def _is_authorized(self, sender_email: str) -> bool:
-        if self._allow_all:
-            return True
-        # ALLOWED_USER_IDS is numeric; for email we check exact match on the email string
-        allowed = {str(uid) for uid in self._allowed_user_ids}
-        return sender_email in allowed
 
     def _get_thread_key(self, msg) -> str:
         """Build a stable thread key from message references or subject."""
@@ -194,9 +176,9 @@ class EmailAdapter(BaseAdapter):
         if not self.agent.should_process_message(unified):
             return
 
-        # Slash commands
-        if content.startswith("!"):
-            response = await self._handle_command(content, conversation_key)
+        # Commands
+        if content.startswith(self.command_prefix):
+            response = await self.dispatch_command(content, conversation_key)
             if response:
                 reply_subject = f"Re: {msg.subject or 'Pillywiggins Response'}"
                 await self._send_email(sender, reply_subject, response, in_reply_to=msg.headers.get("message-id", [None])[0])
@@ -223,63 +205,6 @@ class EmailAdapter(BaseAdapter):
                 f"Re: {msg.subject or 'Error'}",
                 "Sorry, something went wrong processing your email.",
             )
-
-    async def _handle_command(self, text: str, conversation_key: str) -> str | None:
-        parts = text[1:].split(None, 1)
-        if not parts:
-            return None
-        cmd = parts[0].lower()
-        arg = parts[1] if len(parts) > 1 else ""
-
-        if cmd in ("help", "h"):
-            return HELP_TEXT
-
-        if cmd == "status":
-            status = self.agent.get_status()
-            return (
-                f"Status\n"
-                f"Model: {status['model_name']}\n"
-                f"Messages: {status['message_count']}\n"
-                f"Est. tokens: {status['estimated_tokens']}\n"
-                f"Agent: {status['agent_id']}\n"
-                f"Channel: {status['channel']}"
-            )
-
-        if cmd == "models":
-            try:
-                models = await list_models(self.settings)
-                if not models:
-                    return "No models available."
-                lines = [f"{m['id']} — {m.get('name', 'Unknown')}" for m in models[:20]]
-                return "Available Models\n" + "\n".join(lines)
-            except Exception as exc:
-                return f"Could not list models: {exc}"
-
-        if cmd == "model":
-            if not arg:
-                return "Usage: !model <name>"
-            self.agent.switch_model(arg.strip())
-            return f"Switched to model {self.agent.model_name}"
-
-        if cmd == "skills":
-            registry = getattr(self.agent, "_skill_registry", None)
-            if registry is None:
-                return "No skill registry loaded."
-            skills = registry.list_skills()
-            if not skills:
-                return "No skills loaded."
-            lines = [f"{s.name} — {s.description or 'No description'}" for s in skills]
-            return "Loaded Skills\n" + "\n".join(lines)
-
-        if cmd == "compact":
-            result = await self.agent.compact_history(conversation_key)
-            return f"Compacted: {result}"
-
-        if cmd == "reset":
-            await self.agent.clear_history(conversation_key)
-            return "Conversation history cleared."
-
-        return None
 
     async def _send_email(
         self,

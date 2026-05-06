@@ -1,14 +1,18 @@
+from __future__ import annotations
+
 import json
 import logging
-from pathlib import Path
+from collections.abc import Callable, Coroutine
 from functools import partial
-from typing import Any, Callable, Coroutine, Optional
+from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from apscheduler.jobstores.memory import MemoryJobStore
-from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
 from apscheduler.jobstores.redis import RedisJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
 
 logger = logging.getLogger(__name__)
 
@@ -24,15 +28,13 @@ async def _builtin_memory_review(**kwargs: Any) -> None:
     agent_id = kwargs.get("agent_id", "unknown")
     args = kwargs.get("args", {})
     logger.info("memory review for %s", agent_id)
+    handler = kwargs.get("_agent_handler")
+    if handler is None:
+        logger.warning("memory_review: no agent handler for %s", agent_id)
+        return
     try:
-        from pillywiggins.agents.base import _ACTIVE_AGENTS
-
-        agent = _ACTIVE_AGENTS.get(agent_id)
-        if agent is None:
-            logger.warning("memory_review: agent %s not found", agent_id)
-            return
         conversation_key = args.get("conversation_key") if isinstance(args, dict) else None
-        result = await agent.compact_history(conversation_key=conversation_key)
+        result = await handler.compact_history(conversation_key=conversation_key)
         logger.info("memory_review result for %s: %s", agent_id, result)
     except Exception:
         logger.exception("memory_review failed for %s", agent_id)
@@ -41,16 +43,14 @@ async def _builtin_memory_review(**kwargs: Any) -> None:
 async def _builtin_skill_reload(**kwargs: Any) -> None:
     agent_id = kwargs.get("agent_id", "unknown")
     logger.info("skill reload for %s", agent_id)
+    handler = kwargs.get("_agent_handler")
+    if handler is None:
+        logger.warning("skill_reload: no agent handler for %s", agent_id)
+        return
     try:
-        from pillywiggins.agents.base import _ACTIVE_AGENTS
-
-        agent = _ACTIVE_AGENTS.get(agent_id)
-        if agent is None:
-            logger.warning("skill_reload: agent %s not found", agent_id)
-            return
-        if agent._skill_registry is not None:
-            agent._skill_registry.load_all()
-            agent._refresh_brain_tools()
+        if handler._skill_registry is not None:
+            handler._skill_registry.load_all()
+            handler._refresh_brain_tools()
             logger.info("skill_reload completed for %s", agent_id)
         else:
             logger.warning("skill_reload: no skill_registry for %s", agent_id)
@@ -62,20 +62,18 @@ async def _builtin_custom(**kwargs: Any) -> None:
     agent_id = kwargs.get("agent_id", "unknown")
     args = kwargs.get("args", {})
     logger.info("custom action for %s: %s", agent_id, args)
+    handler = kwargs.get("_agent_handler")
+    if handler is None:
+        logger.warning("custom: no agent handler for %s", agent_id)
+        return
     try:
-        from pillywiggins.agents.base import _ACTIVE_AGENTS
-
-        agent = _ACTIVE_AGENTS.get(agent_id)
-        if agent is None:
-            logger.warning("custom: agent %s not found", agent_id)
-            return
         if not isinstance(args, dict):
             logger.warning("custom: args is not a dict for %s", agent_id)
             return
 
         skill_name = args.get("skill")
-        if skill_name and agent._skill_registry is not None:
-            skill = agent._skill_registry.get_skill(skill_name)
+        if skill_name and handler._skill_registry is not None:
+            skill = handler._skill_registry.get_skill(skill_name)
             if skill is not None:
                 result = await skill.execute(agent_id=agent_id, channel="scheduler", **args)
                 logger.info("custom skill %s executed for %s: %s", skill_name, agent_id, result)
@@ -83,20 +81,21 @@ async def _builtin_custom(**kwargs: Any) -> None:
             logger.warning("custom: skill %s not found for %s", skill_name, agent_id)
 
         prompt = args.get("prompt")
-        if prompt and hasattr(agent, "_brain"):
+        if prompt and hasattr(handler, "_brain"):
             from pillywiggins.agents.deps import AgentDeps
 
-            result = await agent._brain.run(
+            result = await handler._brain.run(
                 user_prompt=prompt,
                 deps=AgentDeps(
-                    agent_id=agent.agent_id,
+                    agent_id=handler.agent_id,
                     channel="scheduler",
-                    personality=agent.personality,
-                    private_memory=agent._private_memory,
-                    skill_registry=agent._skill_registry,
-                    council_memory=agent._council_memory,
-                    nats_bus=agent._nats_bus,
-                    scheduler=agent._scheduler,
+                    personality=handler.personality,
+                    private_memory=handler._private_memory,
+                    skill_registry=handler._skill_registry,
+                    council_memory=handler._council_memory,
+                    nats_bus=handler._nats_bus,
+                    scheduler=handler._scheduler,
+                    settings=handler._settings,
                 ),
             )
             logger.info("custom prompt executed for %s: %s", agent_id, getattr(result, "output", result))
@@ -125,12 +124,14 @@ class AgentScheduler:
         agent_id: str,
         schedules_dir: str = "/app/skills",
         channel: str = "",
+        agent_handler: Any = None,
     ):
         self._redis_url = redis_url
         self._agent_id = agent_id
         self._schedules_dir = Path(schedules_dir)
         self._channel = channel
-        self._scheduler: Optional[AsyncIOScheduler] = None
+        self._agent_handler = agent_handler
+        self._scheduler: AsyncIOScheduler | None = None
         self._action_handlers: dict[str, Callable[..., Coroutine]] = {}
         self._yaml_schedules: dict = {}
         self._json_path = self._schedules_dir / f"{agent_id}_schedules.json"
@@ -186,7 +187,7 @@ class AgentScheduler:
             )
         return AsyncIOScheduler(jobstores=jobstores)
 
-    async def start(self, yaml_schedules: Optional[dict] = None) -> None:
+    async def start(self, yaml_schedules: dict | None = None) -> None:
         self._yaml_schedules = yaml_schedules or {}
         self._scheduler = self._create_scheduler()
         yaml_jobs = self._load_schedules(self._yaml_schedules)
@@ -282,6 +283,8 @@ class AgentScheduler:
         job_id = _make_job_id(self._agent_id, name)
         handler = self._get_handler(action)
         kwargs = {"action": action, "agent_id": self._agent_id}
+        if self._agent_handler is not None:
+            kwargs["_agent_handler"] = self._agent_handler
         if "args" in job:
             kwargs["args"] = job["args"]
 
@@ -320,9 +323,9 @@ class AgentScheduler:
         self,
         name: str,
         action: str,
-        interval_seconds: Optional[int] = None,
-        cron_expr: Optional[str] = None,
-        args: Optional[dict] = None,
+        interval_seconds: int | None = None,
+        cron_expr: str | None = None,
+        args: dict | None = None,
     ) -> dict:
         if self._scheduler is None:
             return {"success": False, "name": name, "error": "scheduler not started"}
@@ -369,7 +372,7 @@ class AgentScheduler:
             result.append(entry)
         return result
 
-    async def reload(self, yaml_schedules: Optional[dict] = None) -> None:
+    async def reload(self, yaml_schedules: dict | None = None) -> None:
         if self._scheduler is None:
             return
         if yaml_schedules is not None:

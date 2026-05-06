@@ -6,7 +6,7 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from pillywiggins.security.prompt_sanitizer import sanitize_or_default
 
@@ -27,7 +27,7 @@ DEFAULT_TIMEOUT = 30
 class SandboxResult:
     success: bool
     result: Any = None
-    error: Optional[str] = None
+    error: str | None = None
     timed_out: bool = False
     execution_time_ms: float = 0.0
 
@@ -134,6 +134,62 @@ if __name__ == "__main__":
 """
 
 
+async def _run_subprocess(
+    code: str,
+    *,
+    timeout: int = DEFAULT_TIMEOUT,
+    env_vars: dict[str, str] | None = None,
+    extra_args: list[str] | None = None,
+) -> tuple[int | None, str, str, float]:
+    """Run code in a sandboxed subprocess.
+
+    Returns (exit_code, stdout, stderr, elapsed_ms).
+    ``exit_code`` is ``None`` when the process was killed due to timeout.
+    Raises on unexpected errors (e.g. filesystem failures).
+    """
+    start = time.monotonic()
+
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".py", dir="/tmp", delete=False,
+    ) as f:
+        f.write(code)
+        script_path = f.name
+
+    try:
+        cmd = [sys.executable, script_path]
+        if extra_args:
+            cmd.extend(extra_args)
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env_vars or {},
+            cwd="/tmp",
+        )
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            elapsed = (time.monotonic() - start) * 1000
+            return None, "", "", elapsed
+
+        elapsed = (time.monotonic() - start) * 1000
+        stdout_text = stdout.decode("utf-8", errors="replace").strip()
+        stderr_text = stderr.decode("utf-8", errors="replace").strip()
+        return proc.returncode, stdout_text, stderr_text, elapsed
+
+    finally:
+        try:
+            os.unlink(script_path)
+        except OSError:
+            pass
+
+
 async def run_test_driven(
     code: str,
     test_code: str,
@@ -146,100 +202,66 @@ async def run_test_driven(
     so the test code can call ``run()`` directly.
     """
     env = restricted_env(permissions)
-    start = time.monotonic()
-
     script = _TEST_DRIVEN_WRAPPER.format(skill_code=code, test_code=test_code)
 
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", dir="/tmp", delete=False,
-        ) as f:
-            f.write(script)
-            script_path = f.name
-
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable, script_path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env,
-                cwd="/tmp",
-            )
-
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=timeout,
-                )
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
-                elapsed = (time.monotonic() - start) * 1000
-                return _sanitize_sandbox_result(SandboxResult(
-                    success=False,
-                    error=f"Sandbox timed out after {timeout}s",
-                    timed_out=True,
-                    execution_time_ms=elapsed,
-                ))
-
-            elapsed = (time.monotonic() - start) * 1000
-
-            if proc.returncode != 0:
-                stderr_text = stderr.decode("utf-8", errors="replace").strip()
-                return _sanitize_sandbox_result(SandboxResult(
-                    success=False,
-                    error=f"Process exited with code {proc.returncode}: {stderr_text}",
-                    execution_time_ms=elapsed,
-                ))
-
-            stdout_text = stdout.decode("utf-8", errors="replace").strip()
-            if not stdout_text:
-                stderr_text = stderr.decode("utf-8", errors="replace").strip()
-                return _sanitize_sandbox_result(SandboxResult(
-                    success=False,
-                    error=f"No output from sandbox{': ' + stderr_text if stderr_text else ''}",
-                    execution_time_ms=elapsed,
-                ))
-
-            try:
-                parsed = json.loads(stdout_text)
-            except json.JSONDecodeError as e:
-                stderr_text = stderr.decode("utf-8", errors="replace").strip()
-                err_detail = f"Invalid JSON output: {e}"
-                if stderr_text:
-                    err_detail += f" | stderr: {stderr_text}"
-                return _sanitize_sandbox_result(SandboxResult(
-                    success=False,
-                    error=err_detail,
-                    execution_time_ms=elapsed,
-                ))
-
-            if not parsed.get("success", False):
-                return _sanitize_sandbox_result(SandboxResult(
-                    success=False,
-                    error=parsed.get("error", "Unknown test error"),
-                    execution_time_ms=elapsed,
-                ))
-
-            return _sanitize_sandbox_result(SandboxResult(
-                success=True,
-                result=parsed.get("result"),
-                execution_time_ms=elapsed,
-            ))
-
-        finally:
-            try:
-                os.unlink(script_path)
-            except OSError:
-                pass
-
+        returncode, stdout, stderr, elapsed = await _run_subprocess(
+            script, timeout=timeout, env_vars=env,
+        )
     except Exception as e:
-        elapsed = (time.monotonic() - start) * 1000
         logger.exception("Test-driven sandbox execution failed")
         return _sanitize_sandbox_result(SandboxResult(
             success=False,
             error=str(e),
+            execution_time_ms=0,
+        ))
+
+    if returncode is None:
+        return _sanitize_sandbox_result(SandboxResult(
+            success=False,
+            error=f"Sandbox timed out after {timeout}s",
+            timed_out=True,
             execution_time_ms=elapsed,
         ))
+
+    if returncode != 0:
+        return _sanitize_sandbox_result(SandboxResult(
+            success=False,
+            error=f"Process exited with code {returncode}: {stderr}",
+            execution_time_ms=elapsed,
+        ))
+
+    if not stdout:
+        return _sanitize_sandbox_result(SandboxResult(
+            success=False,
+            error=f"No output from sandbox{': ' + stderr if stderr else ''}",
+            execution_time_ms=elapsed,
+        ))
+
+    try:
+        parsed = json.loads(stdout)
+    except json.JSONDecodeError as e:
+        err_detail = f"Invalid JSON output: {e}"
+        if stderr:
+            err_detail += f" | stderr: {stderr}"
+        return _sanitize_sandbox_result(SandboxResult(
+            success=False,
+            error=err_detail,
+            execution_time_ms=elapsed,
+        ))
+
+    if not parsed.get("success", False):
+        return _sanitize_sandbox_result(SandboxResult(
+            success=False,
+            error=parsed.get("error", "Unknown test error"),
+            execution_time_ms=elapsed,
+        ))
+
+    return _sanitize_sandbox_result(SandboxResult(
+        success=True,
+        result=parsed.get("result"),
+        execution_time_ms=elapsed,
+    ))
 
 
 async def run_sandboxed(
@@ -249,98 +271,64 @@ async def run_sandboxed(
     timeout: int = DEFAULT_TIMEOUT,
 ) -> SandboxResult:
     env = restricted_env(permissions)
-    start = time.monotonic()
-
     script = _WRAPPER_TEMPLATE.format(skill_code=code)
+    args_json = json.dumps(args)
 
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", dir="/tmp", delete=False,
-        ) as f:
-            f.write(script)
-            script_path = f.name
-
-        try:
-            args_json = json.dumps(args)
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable, script_path, args_json,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env,
-                cwd="/tmp",
-            )
-
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=timeout,
-                )
-            except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
-                elapsed = (time.monotonic() - start) * 1000
-                return _sanitize_sandbox_result(SandboxResult(
-                    success=False,
-                    error=f"Sandbox timed out after {timeout}s",
-                    timed_out=True,
-                    execution_time_ms=elapsed,
-                ))
-
-            elapsed = (time.monotonic() - start) * 1000
-
-            if proc.returncode != 0:
-                stderr_text = stderr.decode("utf-8", errors="replace").strip()
-                return _sanitize_sandbox_result(SandboxResult(
-                    success=False,
-                    error=f"Process exited with code {proc.returncode}: {stderr_text}",
-                    execution_time_ms=elapsed,
-                ))
-
-            stdout_text = stdout.decode("utf-8", errors="replace").strip()
-            if not stdout_text:
-                stderr_text = stderr.decode("utf-8", errors="replace").strip()
-                return _sanitize_sandbox_result(SandboxResult(
-                    success=False,
-                    error=f"No output from skill{': ' + stderr_text if stderr_text else ''}",
-                    execution_time_ms=elapsed,
-                ))
-
-            try:
-                parsed = json.loads(stdout_text)
-            except json.JSONDecodeError as e:
-                stderr_text = stderr.decode("utf-8", errors="replace").strip()
-                err_detail = f"Invalid JSON output: {e}"
-                if stderr_text:
-                    err_detail += f" | stderr: {stderr_text}"
-                return _sanitize_sandbox_result(SandboxResult(
-                    success=False,
-                    error=err_detail,
-                    execution_time_ms=elapsed,
-                ))
-
-            if not parsed.get("success", False):
-                return _sanitize_sandbox_result(SandboxResult(
-                    success=False,
-                    error=parsed.get("error", "Unknown skill error"),
-                    execution_time_ms=elapsed,
-                ))
-
-            return _sanitize_sandbox_result(SandboxResult(
-                success=True,
-                result=parsed.get("result"),
-                execution_time_ms=elapsed,
-            ))
-
-        finally:
-            try:
-                os.unlink(script_path)
-            except OSError:
-                pass
-
+        returncode, stdout, stderr, elapsed = await _run_subprocess(
+            script, timeout=timeout, env_vars=env, extra_args=[args_json],
+        )
     except Exception as e:
-        elapsed = (time.monotonic() - start) * 1000
         logger.exception("Sandbox execution failed")
         return _sanitize_sandbox_result(SandboxResult(
             success=False,
             error=str(e),
+            execution_time_ms=0,
+        ))
+
+    if returncode is None:
+        return _sanitize_sandbox_result(SandboxResult(
+            success=False,
+            error=f"Sandbox timed out after {timeout}s",
+            timed_out=True,
             execution_time_ms=elapsed,
         ))
+
+    if returncode != 0:
+        return _sanitize_sandbox_result(SandboxResult(
+            success=False,
+            error=f"Process exited with code {returncode}: {stderr}",
+            execution_time_ms=elapsed,
+        ))
+
+    if not stdout:
+        return _sanitize_sandbox_result(SandboxResult(
+            success=False,
+            error=f"No output from skill{': ' + stderr if stderr else ''}",
+            execution_time_ms=elapsed,
+        ))
+
+    try:
+        parsed = json.loads(stdout)
+    except json.JSONDecodeError as e:
+        err_detail = f"Invalid JSON output: {e}"
+        if stderr:
+            err_detail += f" | stderr: {stderr}"
+        return _sanitize_sandbox_result(SandboxResult(
+            success=False,
+            error=err_detail,
+            execution_time_ms=elapsed,
+        ))
+
+    if not parsed.get("success", False):
+        return _sanitize_sandbox_result(SandboxResult(
+            success=False,
+            error=parsed.get("error", "Unknown skill error"),
+            execution_time_ms=elapsed,
+        ))
+
+    return _sanitize_sandbox_result(SandboxResult(
+        success=True,
+        result=parsed.get("result"),
+        execution_time_ms=elapsed,
+    ))

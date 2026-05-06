@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from pillywiggins.skills import schema
 from pillywiggins.skills.sandbox import SandboxResult, run_sandboxed, run_test_driven

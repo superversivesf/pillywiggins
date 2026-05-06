@@ -1,5 +1,6 @@
+from __future__ import annotations
+
 import logging
-from typing import Optional
 
 import asyncpg
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
@@ -12,7 +13,7 @@ class ConversationStore:
         self._database_url = database_url
         self._agent_id = agent_id
         self._channel = channel
-        self._pool: Optional[asyncpg.Pool] = None
+        self._pool: asyncpg.Pool | None = None
 
     async def _ensure_agent_id(self, conn: asyncpg.Connection) -> None:
         """Re-apply the agent_id GUC on every connection checkout.
@@ -47,6 +48,7 @@ class ConversationStore:
 
     async def save(self, conversation_key: str, messages: list[ModelMessage]) -> None:
         if self._pool is None:
+            logger.warning("Conversation store not connected, cannot save")
             return
         try:
             data = ModelMessagesTypeAdapter.dump_json(messages).decode()
@@ -65,8 +67,9 @@ class ConversationStore:
         except Exception:
             logger.exception("Failed to persist conversation for %s/%s", self._agent_id, conversation_key)
 
-    async def load(self, conversation_key: str) -> Optional[list[ModelMessage]]:
+    async def load(self, conversation_key: str) -> list[ModelMessage] | None:
         if self._pool is None:
+            logger.warning("Conversation store not connected, cannot load")
             return None
         try:
             async with self._pool.acquire() as conn:

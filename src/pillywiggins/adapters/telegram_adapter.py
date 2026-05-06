@@ -13,7 +13,6 @@ except Exception:  # pragma: no cover
         pass
 
 from pillywiggins.adapters.base import BaseAdapter
-from pillywiggins.adapters.models import list_models
 from pillywiggins.agents.base import PillywigginAgent
 from pillywiggins.config import Settings
 from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
@@ -31,36 +30,13 @@ HELP_TEXT = """*Pillywiggins Commands*
 
 
 class TelegramAdapter(BaseAdapter):
+    command_prefix = "/"
+
     def __init__(self, agent: PillywigginAgent, token: str, settings: Settings):
-        super().__init__(agent)
+        super().__init__(agent, settings)
         self.token = token
         self.settings = settings
-        self._allowed_user_ids = settings.get_allowed_user_ids()
-        self._allow_all = settings.allowed_user_ids.strip().lower() == "all"
         self._app: Application | None = None
-        self._bot_chat_counts: dict[str, int] = {}
-
-    def _is_authorized(self, user_id: int) -> bool:
-        if self._allow_all:
-            return True
-        return user_id in self._allowed_user_ids
-
-    def _should_respond_to_bot(self, chat_id: str, is_bot: bool) -> bool:
-        if not is_bot:
-            self._bot_chat_counts[chat_id] = 0
-            return True
-        limit = getattr(self.agent.personality, "bot_chat_limit", 3)
-        if not isinstance(limit, int):
-            limit = 3
-        if limit < 0:
-            return True
-        if limit == 0:
-            return False
-        count = self._bot_chat_counts.get(chat_id, 0)
-        if count >= limit:
-            logger.info("Bot chat limit reached (%d) in chat %s, staying quiet", limit, chat_id)
-            return False
-        return True
 
     async def connect(self) -> None:
         self._app = Application.builder().token(self.token).build()
@@ -84,7 +60,10 @@ class TelegramAdapter(BaseAdapter):
     async def _idle(self) -> None:
         event = asyncio.Event()
         for sig in (signal.SIGINT, signal.SIGTERM):
-            asyncio.get_event_loop().add_signal_handler(sig, event.set)
+            try:
+                asyncio.get_running_loop().add_signal_handler(sig, event.set)
+            except (NotImplementedError, ValueError):
+                pass
         await event.wait()
         await self.shutdown()
 
@@ -121,86 +100,45 @@ class TelegramAdapter(BaseAdapter):
             metadata=metadata,
         )
 
+    def _conversation_key(self, update: Update) -> str:
+        chat_id = update.message.chat_id
+        is_group = update.message.chat.type in ("group", "supergroup")
+        return str(update.message.from_user.id) if is_group else str(chat_id)
+
     async def _cmd_help(self, update: Update, context) -> None:
         await update.message.reply_text(HELP_TEXT, parse_mode="Markdown")
 
     async def _cmd_status(self, update: Update, context) -> None:
-        chat_id = update.message.chat_id
-        is_group = update.message.chat.type in ("group", "supergroup")
-        conversation_key = str(update.message.from_user.id) if is_group else str(chat_id)
-        history = self.agent._get_history(conversation_key)
-        message_count = len(history)
-        total_chars = sum(
-            len(getattr(p, "content", "")) if hasattr(p, "content") else len(str(p))
-            for msg in history
-            for p in (msg.parts if hasattr(msg, "parts") else [])
-        )
-        estimated_tokens = round(total_chars / 4)
-        model = self.agent.model_name
-        lines = [
-            f"*Agent:* `{self.agent.agent_id}`",
-            f"*Channel:* `{self.agent.personality.channel}`",
-            f"*Model:* `{model}`",
-            f"*Messages:* {message_count}",
-            f"*Est. tokens:* ~{estimated_tokens}",
-        ]
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        response = await self.dispatch_command("/status", self._conversation_key(update))
+        if response:
+            await update.message.reply_text(response, parse_mode="Markdown")
 
     async def _cmd_models(self, update: Update, context) -> None:
-        models = await list_models(
-            self.settings.llm_base_url,
-            self.settings.llm_api_key,
-            self.settings.llm_provider,
-        )
-        if not models:
-            await update.message.reply_text("Could not fetch model list.")
-            return
-        models = sorted(models, key=lambda m: m.id)
-        current = self.agent.model_name
-        lines = ["*Available models:*"]
-        for m in models:
-            marker = " ✅" if m.id == current else ""
-            lines.append(f"• `{m.id}`{marker}")
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        response = await self.dispatch_command("/models", self._conversation_key(update))
+        if response:
+            await update.message.reply_text(response, parse_mode="Markdown")
 
     async def _cmd_model(self, update: Update, context) -> None:
-        if not context.args:
-            await update.message.reply_text(
-                f"Current model: `{self.agent.model_name}`", parse_mode="Markdown"
-            )
-            return
-        new_model = " ".join(context.args)
-        self.agent.switch_model(new_model)
-        await update.message.reply_text(f"Switched to `{new_model}`", parse_mode="Markdown")
+        args_text = " ".join(context.args) if context.args else ""
+        cmd = "/model" if not args_text else f"/model {args_text}"
+        response = await self.dispatch_command(cmd, self._conversation_key(update))
+        if response:
+            await update.message.reply_text(response, parse_mode="Markdown")
 
     async def _cmd_reset(self, update: Update, context) -> None:
-        chat_id = update.message.chat_id
-        is_group = update.message.chat.type in ("group", "supergroup")
-        conversation_key = str(update.message.from_user.id) if is_group else str(chat_id)
-        await self.agent.clear_history(conversation_key=conversation_key)
-        await update.message.reply_text("Conversation history cleared.")
+        response = await self.dispatch_command("/reset", self._conversation_key(update))
+        if response:
+            await update.message.reply_text(response)
 
     async def _cmd_compact(self, update: Update, context) -> None:
-        chat_id = update.message.chat_id
-        is_group = update.message.chat.type in ("group", "supergroup")
-        conversation_key = str(update.message.from_user.id) if is_group else str(chat_id)
-        result = await self.agent.compact_history(conversation_key=conversation_key)
-        await update.message.reply_text(result)
+        response = await self.dispatch_command("/compact", self._conversation_key(update))
+        if response:
+            await update.message.reply_text(response)
 
     async def _cmd_skills(self, update: Update, context) -> None:
-        skills = self.agent._skill_registry.list_skills()
-        if not skills:
-            await update.message.reply_text("No skills loaded.")
-            return
-        lines = ["*Loaded skills:*"]
-        for skill in skills:
-            desc = (
-                skill.description[:60] + "..." if len(skill.description) > 60 else skill.description
-            )
-            perm_list = [k for k, v in skill.permissions.items() if v]
-            perm_str = f" [{', '.join(perm_list)}]" if perm_list else ""
-            lines.append(f"• `{skill.name}` — {desc}{perm_str}")
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+        response = await self.dispatch_command("/skills", self._conversation_key(update))
+        if response:
+            await update.message.reply_text(response, parse_mode="Markdown")
 
     async def _keep_typing(self, chat_id: str, done: asyncio.Event) -> None:
         while not done.is_set():

@@ -56,8 +56,8 @@ def test_settings_resolve_embedding_fallback_writes_empty_model_safely(monkeypat
     assert s2.embedding_model == ""
 
     # cleanup: remove env vars so subsequent tests aren't affected
-    monkeypatch.delenv("EMBEDDING_DIMENSION", raising=False)
-    monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
+    os.environ.pop("EMBEDDING_DIMENSION", None)
+    os.environ.pop("EMBEDDING_MODEL", None)
 
 
 def test_settings_defaults():

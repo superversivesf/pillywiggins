@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import ast
 import re
-from typing import Any, Optional
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Schema constants
@@ -46,7 +46,7 @@ DANGEROUS_PATTERNS = {
 # ---------------------------------------------------------------------------
 
 
-def _extract_literal_dict(node: ast.expr) -> Optional[dict]:
+def _extract_literal_dict(node: ast.expr) -> dict | None:
     """Attempt to safely evaluate an AST dict literal."""
     try:
         compiled = compile(ast.Expression(node), "<meta>", "eval")
@@ -80,7 +80,7 @@ def _find_function_defs(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFun
 
 def validate_skill_code(
     code: str,
-    permissions: Optional[dict[str, bool]] = None,
+    permissions: dict[str, bool] | None = None,
 ) -> tuple[bool, list[str]]:
     """Validate skill source code against the strict schema.
 
@@ -109,8 +109,8 @@ def validate_skill_code(
         return False, [f"Syntax error: {exc}"]
 
     # --- 2. SKILL_META -----------------------------------------------------
-    meta: Optional[dict] = None
-    meta_node: Optional[ast.Assign] = None
+    meta: dict | None = None
+    meta_node: ast.Assign | None = None
     for assign in _find_top_level_assignments(tree):
         for target in assign.targets:
             if isinstance(target, ast.Name) and target.id == "SKILL_META":

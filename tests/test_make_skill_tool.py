@@ -409,7 +409,7 @@ class TestMakeSkillToolMissingRunFunction:
         tool_fn = _make_skill_tool(skill)
         ctx = _make_ctx()
         result = await tool_fn(ctx)
-        assert "Error calling skill broken" in result
+        assert "Skill broken" in result
 
     @pytest.mark.asyncio
     async def test_skill_run_func_with_wrong_signature_gives_error_message(self):
@@ -431,7 +431,7 @@ class TestMakeSkillToolMissingRunFunction:
         tool_fn = _make_skill_tool(skill)
         ctx = _make_ctx()
         result = await tool_fn(ctx, wrong_param="oops")
-        assert "Error calling skill strict" in result
+        assert "Skill strict" in result
         assert "Available parameters: required_arg" in result
 
     @pytest.mark.asyncio
@@ -455,7 +455,7 @@ class TestMakeSkillToolMissingRunFunction:
         tool_fn = _make_skill_tool(skill)
         ctx = _make_ctx()
         result = await tool_fn(ctx, a="hello")
-        assert "Error calling skill two_arg" in result
+        assert "Skill two_arg" in result
         assert "Available parameters: a, b" in result
 
 

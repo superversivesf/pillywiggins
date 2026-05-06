@@ -12,6 +12,19 @@ from pillywiggins.agents_config import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _clean_agent_env(monkeypatch):
+    """Remove env vars commonly set by apply_agent_env tests to prevent cross-test leakage."""
+    for key in [
+        "TELEGRAM_BOT_TOKEN", "PLAIN_KEY", "SOME_KEY",
+        "ALLOWED_USER_IDS", "TIMEZONE", "TZ",
+        "KEY_A", "KEY_B", "BOT_TOKEN", "ENDPOINT",
+        "STATIC_KEY", "DYNAMIC_KEY",
+    ]:
+        monkeypatch.delenv(key, raising=False)
+    yield
+
+
 def _write_agents_yaml(tmp_path, data):
     path = tmp_path / "agents.yaml"
     path.write_text(yaml.dump(data))
@@ -102,6 +115,7 @@ def test_get_agent_config_not_found(tmp_path):
 
 
 def test_apply_agent_env_expands_vars(monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.setenv("MY_TOKEN", "secret123")
     cfg = AgentConfig(
         id="puck",
@@ -111,10 +125,12 @@ def test_apply_agent_env_expands_vars(monkeypatch):
     )
     apply_agent_env(cfg)
     assert os.environ["TELEGRAM_BOT_TOKEN"] == "secret123"
+    os.environ.pop("TELEGRAM_BOT_TOKEN", None)
 
 
 def test_apply_agent_env_missing_var(monkeypatch):
     monkeypatch.delenv("MISSING_VAR", raising=False)
+    monkeypatch.delenv("SOME_KEY", raising=False)
     cfg = AgentConfig(
         id="puck",
         personality="/config/puck.yaml",
@@ -134,18 +150,22 @@ def test_apply_agent_env_plain_value():
     )
     apply_agent_env(cfg)
     assert os.environ["PLAIN_KEY"] == "no_vars_here"
+    os.environ.pop("PLAIN_KEY", None)
 
 
-def test_apply_agent_env_empty_environment():
+def test_apply_agent_env_empty_environment(monkeypatch):
+    monkeypatch.delenv("ALLOWED_USER_IDS", raising=False)
+    monkeypatch.delenv("TIMEZONE", raising=False)
+    monkeypatch.delenv("TZ", raising=False)
     cfg = AgentConfig(
         id="puck",
         personality="/config/puck.yaml",
         channel="telegram",
         environment={},
     )
-    old_env = dict(os.environ)
     apply_agent_env(cfg)
-    assert os.environ == old_env
+    assert os.environ.get("ALLOWED_USER_IDS") == "all"
+    assert os.environ.get("TIMEZONE") == "UTC"
 
 
 def test_apply_agent_env_sets_allowed_user_ids(monkeypatch):
@@ -174,7 +194,8 @@ def test_apply_agent_env_sets_allowed_user_ids_all(monkeypatch):
     assert os.environ["ALLOWED_USER_IDS"] == "all"
 
 
-def test_apply_agent_env_skips_allowed_user_ids_when_empty():
+def test_apply_agent_env_skips_allowed_user_ids_when_empty(monkeypatch):
+    monkeypatch.delenv("ALLOWED_USER_IDS", raising=False)
     cfg = AgentConfig(
         id="puck",
         personality="/config/puck.yaml",
@@ -182,9 +203,8 @@ def test_apply_agent_env_skips_allowed_user_ids_when_empty():
         allowed_user_ids="",
         environment={},
     )
-    old_env = dict(os.environ)
     apply_agent_env(cfg)
-    assert os.environ.get("ALLOWED_USER_IDS") not in ("", "all") or os.environ == old_env
+    assert "ALLOWED_USER_IDS" not in os.environ
 
 
 def test_apply_agent_env_multiple_vars(monkeypatch):
@@ -212,6 +232,7 @@ def test_agent_config_dataclass():
 
 
 def test_apply_agent_env_resets_settings(monkeypatch):
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.setenv("AGENT_ID", "puck")
     monkeypatch.setenv("MY_SECRET", "tok_123")
     cfg = AgentConfig(
@@ -297,7 +318,7 @@ def test_load_agents_config_missing_id(tmp_path):
         load_agents_config(path)
 
 
-def test_apply_agent_env_does_not_overwrite_existing_unset_var(monkeypatch):
+def test_apply_agent_env_does_not_overwrite_existing_env_var(monkeypatch):
     monkeypatch.setenv("EXISTING_KEY", "original_value")
     monkeypatch.setenv("SRC_VAR", "new_value")
     cfg = AgentConfig(
@@ -307,7 +328,7 @@ def test_apply_agent_env_does_not_overwrite_existing_unset_var(monkeypatch):
         environment={"EXISTING_KEY": "${SRC_VAR}"},
     )
     apply_agent_env(cfg)
-    assert os.environ["EXISTING_KEY"] == "new_value"
+    assert os.environ["EXISTING_KEY"] == "original_value"
 
 
 def test_apply_agent_env_nested_var_references(monkeypatch):

@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 import asyncio
 import logging
-from typing import Optional
 
 import aiohttp
 
@@ -18,7 +19,7 @@ PREFERRED_OLLAMA_MODELS = [
 
 async def discover_ollama_embedding_model(
     ollama_base_url: str = "http://localhost:11434",
-) -> Optional[str]:
+) -> str | None:
     """Query Ollama /api/tags and pick the best embedding-capable model."""
     try:
         async with aiohttp.ClientSession() as client:

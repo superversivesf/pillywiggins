@@ -118,7 +118,7 @@ def mock_agent(personality):
     agent._base_url = "http://localhost:11434"
     agent._api_key = ""
     agent._lock = AsyncMock()
-    agent._message_history = []
+    agent._conversation_histories = {}
     agent._brain = MagicMock()
     agent.model_name = "qwen3.5:8b"
     agent.switch_model = MagicMock()
