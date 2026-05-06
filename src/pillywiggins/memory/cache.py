@@ -72,3 +72,4 @@ class ConversationCache:
         if self._redis is not None:
             await self._redis.close()
             self._redis = None
+            logger.info("Conversation cache closed")

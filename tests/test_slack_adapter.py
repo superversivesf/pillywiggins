@@ -97,12 +97,8 @@ def test_is_authorized_all(adapter):
     assert adapter._is_authorized("U123") is True
 
 
-def test_should_not_respond_to_bot_with_zero_limit(adapter):
-    """With bot_chat_limit=0, never respond to bots."""
-    adapter.agent.personality.bot_chat_limit = 0
-    assert adapter._should_respond_to_bot("C123", True) is False
-
-
-def test_should_respond_to_human(adapter):
-    """Always respond to humans."""
-    assert adapter._should_respond_to_bot("C123", False) is True
+def test_is_authorized_specific_user(adapter):
+    """Authorized user should pass."""
+    adapter._allow_all = False
+    adapter._allowed_user_ids = {"U123"}
+    assert adapter._is_authorized("U123") is True

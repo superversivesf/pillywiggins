@@ -14,7 +14,6 @@ class BaseAdapter(ABC):
     def __init__(self, agent: PillywigginAgent, settings=None):
         self.agent = agent
         self.settings = settings
-        self._bot_chat_counts: dict[str, int] = {}
         if settings is not None:
             self._allowed_user_ids = settings.get_allowed_user_ids()
             self._allow_all = settings.allowed_user_ids.strip().lower() == "all"
@@ -34,28 +33,15 @@ class BaseAdapter(ABC):
     @abstractmethod
     def normalize(self, raw_message: dict) -> UnifiedMessage: ...
 
+    async def shutdown(self) -> None:
+        """Gracefully shut down the adapter. Default no-op; override in subclasses."""
+        pass
+
     def _is_authorized(self, user_id) -> bool:
         if self._allow_all:
             return True
         allowed = {str(uid) for uid in self._allowed_user_ids}
         return str(user_id) in allowed
-
-    def _should_respond_to_bot(self, channel_id: str, is_bot: bool) -> bool:
-        if not is_bot:
-            self._bot_chat_counts[channel_id] = 0
-            return True
-        limit = getattr(self.agent.personality, "bot_chat_limit", 3)
-        if not isinstance(limit, int):
-            limit = 3
-        if limit < 0:
-            return True
-        if limit == 0:
-            return False
-        count = self._bot_chat_counts.get(channel_id, 0)
-        if count >= limit:
-            logger.info("Bot chat limit reached (%d) in channel %s, staying quiet", limit, channel_id)
-            return False
-        return True
 
     @property
     def HELP_TEXT(self) -> str:

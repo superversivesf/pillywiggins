@@ -313,6 +313,37 @@ def test_abstract_methods_are_four():
     assert abstract_methods == {"connect", "listen", "normalize", "send"}
 
 
+def test_shutdown_is_not_abstract():
+    """shutdown() should be a default no-op, not abstract."""
+    assert "shutdown" not in getattr(BaseAdapter, "__abstractmethods__", set())
+
+
+@pytest.mark.asyncio
+async def test_shutdown_default_is_noop():
+    """BaseAdapter.shutdown() should be callable and do nothing."""
+
+    class ConcreteAdapter(BaseAdapter):
+        async def connect(self) -> None:
+            pass
+
+        async def listen(self) -> None:
+            pass
+
+        async def send(self, channel_id: str, content: str, metadata: dict | None = None) -> None:
+            pass
+
+        def normalize(self, raw_message: dict) -> UnifiedMessage:
+            return UnifiedMessage(
+                channel=ChannelType.TELEGRAM,
+                channel_user_id="1",
+                content="",
+                conversation_key="1",
+            )
+
+    adapter = ConcreteAdapter(MagicMock())
+    await adapter.shutdown()  # should not raise
+
+
 # ---------------------------------------------------------------------------
 # _is_authorized
 # ---------------------------------------------------------------------------
@@ -380,47 +411,6 @@ def test_is_authorized_denies_all_when_empty():
     ))
     assert adapter._is_authorized(42) is False
     assert adapter._is_authorized("anyone") is False
-
-
-# ---------------------------------------------------------------------------
-# _should_respond_to_bot
-# ---------------------------------------------------------------------------
-
-
-def test_should_respond_to_bot_allows_non_bot():
-    adapter = _make_concrete_adapter()
-    assert adapter._should_respond_to_bot("ch1", False) is True
-
-
-def test_should_respond_to_bot_zero_limit():
-    adapter = _make_concrete_adapter()
-    adapter.agent.personality.bot_chat_limit = 0
-    assert adapter._should_respond_to_bot("ch1", True) is False
-
-
-def test_should_respond_to_bot_negative_limit():
-    adapter = _make_concrete_adapter()
-    adapter.agent.personality.bot_chat_limit = -1
-    assert adapter._should_respond_to_bot("ch1", True) is True
-
-
-def test_should_respond_to_bot_respects_limit():
-    adapter = _make_concrete_adapter()
-    adapter.agent.personality.bot_chat_limit = 2
-    assert adapter._should_respond_to_bot("ch1", True) is True
-    adapter._bot_chat_counts["ch1"] = 1
-    assert adapter._should_respond_to_bot("ch1", True) is True
-    adapter._bot_chat_counts["ch1"] = 2
-    assert adapter._should_respond_to_bot("ch1", True) is False
-
-
-def test_should_respond_to_bot_resets_on_human():
-    adapter = _make_concrete_adapter()
-    adapter.agent.personality.bot_chat_limit = 1
-    adapter._bot_chat_counts["ch1"] = 1
-    assert adapter._should_respond_to_bot("ch1", True) is False
-    assert adapter._should_respond_to_bot("ch1", False) is True
-    assert adapter._bot_chat_counts["ch1"] == 0
 
 
 # ---------------------------------------------------------------------------

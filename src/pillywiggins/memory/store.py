@@ -38,13 +38,17 @@ class ConversationStore:
                 self._agent_id,
             )
 
-        self._pool = await asyncpg.create_pool(
-            self._database_url,
-            init=_init_connection,
-            min_size=1,
-            max_size=3,
-        )
-        logger.info("Conversation store connected for agent %s", self._agent_id)
+        try:
+            self._pool = await asyncpg.create_pool(
+                self._database_url,
+                init=_init_connection,
+                min_size=1,
+                max_size=3,
+            )
+            logger.info("Conversation store connected for agent %s", self._agent_id)
+        except Exception as exc:
+            logger.error("Failed to connect conversation store for agent %s: %s", self._agent_id, exc)
+            self._pool = None
 
     async def save(self, conversation_key: str, messages: list[ModelMessage]) -> None:
         if self._pool is None:

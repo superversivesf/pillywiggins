@@ -83,9 +83,3 @@ def test_is_authorized_specific(adapter):
     adapter._allowed_user_ids = {"@user:example.com"}
     assert adapter._is_authorized("@user:example.com") is True
     assert adapter._is_authorized("@other:example.com") is False
-
-
-def test_should_respond_to_bot_zero_limit(adapter):
-    """With bot_chat_limit=0, never respond to bots."""
-    adapter.agent.personality.bot_chat_limit = 0
-    assert adapter._should_respond_to_bot("room1", True) is False

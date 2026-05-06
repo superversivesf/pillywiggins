@@ -105,8 +105,9 @@ async def test_close_does_nothing_if_no_pool(memory):
 async def test_write_entry_inserts_row(memory):
     entry_id = uuid4()
     mock_conn = AsyncMock()
-    mock_conn.fetchval = AsyncMock(return_value=0)
-    mock_conn.fetch = AsyncMock(return_value=[])
+    # First fetchval: rate limit count (0 = under limit)
+    # Second fetchval: dedup distance (None = no similar entries)
+    mock_conn.fetchval = AsyncMock(side_effect=[0, None])
     mock_conn.fetchrow = AsyncMock(return_value={"id": entry_id})
 
     mock_pool = make_pool_mock(acquire_return=mock_conn)
@@ -130,8 +131,8 @@ async def test_write_entry_inserts_row(memory):
 async def test_write_entry_with_custom_message_type(memory):
     entry_id = uuid4()
     mock_conn = AsyncMock()
-    mock_conn.fetchval = AsyncMock(return_value=0)
-    mock_conn.fetch = AsyncMock(return_value=[])
+    # First fetchval: rate limit count; second: dedup distance (None = no dup)
+    mock_conn.fetchval = AsyncMock(side_effect=[0, None])
     mock_conn.fetchrow = AsyncMock(return_value={"id": entry_id})
 
     mock_pool = make_pool_mock(acquire_return=mock_conn)
@@ -160,8 +161,8 @@ async def test_write_rejects_content_over_2000_chars(memory):
 async def test_write_accepts_content_at_max_length(memory):
     entry_id = uuid4()
     mock_conn = AsyncMock()
-    mock_conn.fetchval = AsyncMock(return_value=0)
-    mock_conn.fetch = AsyncMock(return_value=[])
+    # First fetchval: rate limit count; second: dedup distance (None = no dup)
+    mock_conn.fetchval = AsyncMock(side_effect=[0, None])
     mock_conn.fetchrow = AsyncMock(return_value={"id": entry_id})
 
     mock_pool = make_pool_mock(acquire_return=mock_conn)
@@ -230,8 +231,8 @@ async def test_write_rate_limits_ten_per_hour(memory):
 async def test_write_allows_under_rate_limit(memory):
     entry_id = uuid4()
     mock_conn = AsyncMock()
-    mock_conn.fetchval = AsyncMock(return_value=RATE_LIMIT_PER_HOUR - 1)
-    mock_conn.fetch = AsyncMock(return_value=[])
+    # First fetchval: rate limit count; second: dedup distance (None = no dup)
+    mock_conn.fetchval = AsyncMock(side_effect=[RATE_LIMIT_PER_HOUR - 1, None])
     mock_conn.fetchrow = AsyncMock(return_value={"id": entry_id})
 
     mock_pool = make_pool_mock(acquire_return=mock_conn)
@@ -245,17 +246,11 @@ async def test_write_allows_under_rate_limit(memory):
 
 
 @pytest.mark.asyncio
-async def test_write_dedup_rejects_cosine_similarity_above_threshold(memory):
-    existing_embedding = [1.0, 0.0, 0.0]
-    new_embedding = [0.999, 0.001, 0.0]
-    sim = CouncilMemory._cosine_similarity(new_embedding, existing_embedding)
-
-    mock_row = MagicMock()
-    mock_row.__getitem__ = lambda self, key: {"embedding": existing_embedding}[key]
-
+async def test_write_dedup_rejects_when_cosine_distance_below_threshold(memory):
+    """If pgvector reports a cosine distance < (1 - threshold), the entry is a duplicate."""
+    # cosine distance 0.01 means cosine similarity ≈ 0.99, well above 0.95 threshold
     mock_conn = AsyncMock()
-    mock_conn.fetchval = AsyncMock(return_value=0)
-    mock_conn.fetch = AsyncMock(return_value=[{"embedding": existing_embedding}])
+    mock_conn.fetchval = AsyncMock(side_effect=[0, 0.01])  # rate limit count, then dedup distance
 
     memory._pool = MagicMock()
 
@@ -265,22 +260,18 @@ async def test_write_dedup_rejects_cosine_similarity_above_threshold(memory):
 
     memory._pool.acquire = _acquire
 
-    if sim > DEDUP_SIMILARITY_THRESHOLD:
-        result = await memory.write_entry("duplicate content", ["general"], new_embedding)
-        assert result["success"] is False
-        assert "Duplicate entry" in result["error"]
+    result = await memory.write_entry("duplicate content", ["general"], [0.1, 0.2, 0.3])
+    assert result["success"] is False
+    assert "Duplicate entry" in result["error"]
 
 
 @pytest.mark.asyncio
-async def test_write_dedup_allows_below_threshold(memory):
+async def test_write_dedup_allows_when_cosine_distance_above_threshold(memory):
+    """If pgvector reports a cosine distance >= (1 - threshold), the entry is not a duplicate."""
     entry_id = uuid4()
-    existing_embedding = [1.0, 0.0, 0.0]
-    new_embedding = [0.5, 0.5, 0.5]
-    sim = CouncilMemory._cosine_similarity(new_embedding, existing_embedding)
-
+    # cosine distance 0.2 means cosine similarity ≈ 0.8, below 0.95 threshold
     mock_conn = AsyncMock()
-    mock_conn.fetchval = AsyncMock(return_value=0)
-    mock_conn.fetch = AsyncMock(return_value=[{"embedding": existing_embedding}])
+    mock_conn.fetchval = AsyncMock(side_effect=[0, 0.2])  # rate limit count, then dedup distance
     mock_conn.fetchrow = AsyncMock(return_value={"id": entry_id})
 
     memory._pool = MagicMock()
@@ -291,9 +282,8 @@ async def test_write_dedup_allows_below_threshold(memory):
 
     memory._pool.acquire = _acquire
 
-    if sim <= DEDUP_SIMILARITY_THRESHOLD:
-        result = await memory.write_entry("different content", ["general"], new_embedding)
-        assert result["success"] is True
+    result = await memory.write_entry("different content", ["general"], [0.1, 0.2, 0.3])
+    assert result["success"] is True
 
 
 @pytest.mark.asyncio
@@ -635,40 +625,6 @@ def test_valid_message_types_excludes_invalid():
     assert "broadcast" not in VALID_MESSAGE_TYPES
 
 
-def test_cosine_similarity_identical_vectors():
-    vec = [1.0, 2.0, 3.0]
-    sim = CouncilMemory._cosine_similarity(vec, vec)
-    assert abs(sim - 1.0) < 1e-9
-
-
-def test_cosine_similarity_orthogonal_vectors():
-    a = [1.0, 0.0]
-    b = [0.0, 1.0]
-    sim = CouncilMemory._cosine_similarity(a, b)
-    assert abs(sim) < 1e-9
-
-
-def test_cosine_similarity_zero_vector():
-    a = [1.0, 2.0]
-    b = [0.0, 0.0]
-    sim = CouncilMemory._cosine_similarity(a, b)
-    assert sim == 0.0
-
-
-def test_cosine_similarity_rejects_string_embedding():
-    a = [1.0, 0.0, 0.0]
-    b_str = "[1.0, 0.0, 0.0]"
-    with pytest.raises(TypeError, match="Expected list or tuple"):
-        CouncilMemory._cosine_similarity(a, b_str)
-
-
-def test_cosine_similarity_opposite_vectors():
-    a = [1.0, 0.0]
-    b = [-1.0, 0.0]
-    sim = CouncilMemory._cosine_similarity(a, b)
-    assert abs(sim - (-1.0)) < 1e-9
-
-
 def test_constants_values():
     assert MAX_CONTENT_LENGTH == 2000
     assert RATE_LIMIT_PER_HOUR == 10
@@ -692,7 +648,7 @@ async def test_search_empty_results(memory):
 
 @pytest.mark.asyncio
 async def test_write_entry_with_none_embedding(memory):
-    """Writing with embedding=None should insert with NULL vector (no embedding)."""
+    """Writing with embedding=None should pass None for the vector column (asyncpg sends SQL NULL)."""
     entry_id = uuid4()
     mock_conn = AsyncMock()
     mock_conn.fetchval = AsyncMock(return_value=0)
@@ -706,10 +662,11 @@ async def test_write_entry_with_none_embedding(memory):
 
     assert result["success"] is True
     assert result["id"] == str(entry_id)
-    # The INSERT should use NULL instead of a vector cast
+    # Single consolidated INSERT always uses $4::vector; asyncpg sends
+    # Python None as SQL NULL, which PostgreSQL coerces via ::vector.
     call_args = mock_conn.fetchrow.call_args[0]
-    assert "NULL" in call_args[0]
-    # No $4::vector when embedding is None — only 5 params
+    assert "$4::vector" in call_args[0]
+    assert call_args[4] is None  # embedding param is None
     assert call_args[1] == "puck"
     assert call_args[2] == "no-embedding entry"
     await memory.close()
@@ -732,7 +689,9 @@ async def test_write_entry_normalizes_empty_list_to_none(memory):
     assert result["success"] is True
     assert result["id"] == str(entry_id)
     call_args = mock_conn.fetchrow.call_args[0]
-    assert "NULL" in call_args[0]
+    # After normalisation, [] becomes None; asyncpg sends SQL NULL for $4::vector.
+    assert "$4::vector" in call_args[0]
+    assert call_args[4] is None  # embedding param normalised to None
     await memory.close()
 
 
@@ -750,8 +709,8 @@ async def test_write_entry_passes_embedding_as_native_list(memory):
     """write_entry should pass the embedding as a native Python list (not str) to the DB query."""
     entry_id = uuid4()
     mock_conn = AsyncMock()
-    mock_conn.fetchval = AsyncMock(return_value=0)
-    mock_conn.fetch = AsyncMock(return_value=[])
+    # First fetchval: rate limit count; second: dedup distance (None = no dup)
+    mock_conn.fetchval = AsyncMock(side_effect=[0, None])
     mock_conn.fetchrow = AsyncMock(return_value={"id": entry_id})
 
     mock_pool = make_pool_mock(acquire_return=mock_conn)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import math
 
 from pillywiggins.memory.base import PgVectorMemoryBase
 from pillywiggins.security.prompt_sanitizer import sanitize_or_default
@@ -94,53 +93,42 @@ class CouncilMemory(PgVectorMemoryBase):
                         "id": None,
                     }
 
-                # Dedup check: only run when we have an embedding to compare against.
+                # Dedup check: use pgvector's cosine distance operator (<=>)
+                # to push similarity comparison into the database.
+                # cosine similarity > 0.95  <=>  cosine distance < 0.05
                 if embedding is not None:
-                    recent = await conn.fetch(
-                        """SELECT embedding FROM council_memory
-                           WHERE contributing_agent = $1
+                    dup_distance = await conn.fetchval(
+                        """SELECT MIN(embedding <=> $1::vector)
+                           FROM council_memory
+                           WHERE contributing_agent = $2
                            AND created_at >= now() - interval '1 hour'
-                           ORDER BY created_at DESC
-                           LIMIT 50""",
-                        self._agent_id,
-                    )
-                    for row in recent:
-                        stored = row["embedding"]
-                        sim = self._cosine_similarity(embedding, stored)
-                        if sim > DEDUP_SIMILARITY_THRESHOLD:
-                            return {
-                                "success": False,
-                                "error": "Duplicate entry: similarity exceeds threshold",
-                                "id": None,
-                            }
-
-                if embedding is not None:
-                    row = await conn.fetchrow(
-                        """INSERT INTO council_memory
-                               (contributing_agent, content, tags, embedding, message_type, confidence)
-                           VALUES ($1, $2, $3, $4::vector, $5, $6)
-                           RETURNING id""",
-                        self._agent_id,
-                        content,
-                        tags,
+                           AND embedding IS NOT NULL""",
                         embedding,
-                        message_type,
-                        confidence,
-                    )
-                else:
-                    # Insert with NULL embedding — entry won't be searchable via
-                    # vector similarity but will still be retrievable by tags.
-                    row = await conn.fetchrow(
-                        """INSERT INTO council_memory
-                               (contributing_agent, content, tags, embedding, message_type, confidence)
-                           VALUES ($1, $2, $3, NULL, $4, $5)
-                           RETURNING id""",
                         self._agent_id,
-                        content,
-                        tags,
-                        message_type,
-                        confidence,
                     )
+                    if dup_distance is not None and dup_distance < (1 - DEDUP_SIMILARITY_THRESHOLD):
+                        return {
+                            "success": False,
+                            "error": "Duplicate entry: similarity exceeds threshold",
+                            "id": None,
+                        }
+
+                # Single INSERT: asyncpg passes Python None as SQL NULL, and
+                # NULL::vector is valid in PostgreSQL, so both the with-embedding
+                # and without-embedding branches collapse into one parameterised
+                # statement.
+                row = await conn.fetchrow(
+                    """INSERT INTO council_memory
+                           (contributing_agent, content, tags, embedding, message_type, confidence)
+                       VALUES ($1, $2, $3, $4::vector, $5, $6)
+                       RETURNING id""",
+                    self._agent_id,
+                    content,
+                    tags,
+                    embedding,
+                    message_type,
+                    confidence,
+                )
                 return {"success": True, "error": None, "id": str(row["id"])}
         except Exception as exc:
             logger.exception("Council memory write_entry failed for agent %s", self._agent_id)
@@ -268,14 +256,3 @@ class CouncilMemory(PgVectorMemoryBase):
         except Exception:
             logger.exception("Council memory list_entries failed for agent %s", self._agent_id)
             return []
-
-    @staticmethod
-    def _cosine_similarity(a: list[float], b) -> float:
-        if not isinstance(b, (list, tuple)):
-            raise TypeError(f"Expected list or tuple for vector b, got {type(b).__name__}")
-        dot = sum(x * y for x, y in zip(a, b))
-        norm_a = math.sqrt(sum(x * x for x in a))
-        norm_b = math.sqrt(sum(y * y for y in b))
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
-        return dot / (norm_a * norm_b)

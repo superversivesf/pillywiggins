@@ -224,26 +224,6 @@ def test_is_authorized_restricts_to_allowed_ids():
 
 
 # ---------------------------------------------------------------------------
-# bot_chat_limit
-# ---------------------------------------------------------------------------
-
-
-def test_should_respond_to_bot_allows_non_bot():
-    adapter = _make_adapter()
-    assert adapter._should_respond_to_bot("ch1", False) is True
-
-
-def test_should_respond_to_bot_respects_limit():
-    adapter = _make_adapter()
-    adapter.agent.personality.bot_chat_limit = 2
-    assert adapter._should_respond_to_bot("ch1", True) is True
-    adapter._bot_chat_counts["ch1"] = 1
-    assert adapter._should_respond_to_bot("ch1", True) is True
-    adapter._bot_chat_counts["ch1"] = 2
-    assert adapter._should_respond_to_bot("ch1", True) is False
-
-
-# ---------------------------------------------------------------------------
 # commands
 # ---------------------------------------------------------------------------
 
