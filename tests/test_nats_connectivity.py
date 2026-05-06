@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from pillywiggins.config import Settings
+from tests.helpers import make_mock_aiohttp_response, make_mock_aiohttp_session
 from pillywiggins.messaging.nats_bus import NatsBus, NatsConnectError, COUNCIL_STREAM
 
 
@@ -429,14 +430,8 @@ class TestHealthCheckNatsIntegration:
         mock_nc.close = AsyncMock()
         mock_nc.jetstream = MagicMock(return_value=mock_js)
 
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-        mock_session = AsyncMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_resp = make_mock_aiohttp_response(status=200)
+        mock_session = make_mock_aiohttp_session(method="get", response=mock_resp)
 
         with (
             patch("nats.connect", new_callable=AsyncMock, return_value=mock_nc),

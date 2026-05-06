@@ -1,9 +1,9 @@
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pillywiggins.memory.store import ConversationStore
+from tests.helpers import make_pool_mock
 
 
 @pytest.fixture
@@ -13,20 +13,6 @@ def store():
         agent_id="puck",
         channel="telegram",
     )
-
-
-def _make_pool_mock(acquire_return=None):
-    mock_pool = MagicMock()
-    mock_pool.close = AsyncMock()
-
-    if acquire_return is not None:
-        @asynccontextmanager
-        async def _acquire():
-            yield acquire_return
-
-        mock_pool.acquire = _acquire
-
-    return mock_pool
 
 
 @pytest.mark.asyncio
@@ -46,7 +32,7 @@ async def test_save_upserts_conversation(store):
     mock_conn = AsyncMock()
     mock_conn.execute = AsyncMock()
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch("pillywiggins.memory.store.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await store.connect()
@@ -76,7 +62,7 @@ async def test_load_returns_messages(store):
     mock_conn = AsyncMock()
     mock_conn.fetchrow = AsyncMock(return_value=mock_row)
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch("pillywiggins.memory.store.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await store.connect()
@@ -92,7 +78,7 @@ async def test_load_returns_none_when_missing(store):
     mock_conn = AsyncMock()
     mock_conn.fetchrow = AsyncMock(return_value=None)
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch("pillywiggins.memory.store.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await store.connect()
@@ -120,7 +106,7 @@ async def test_save_handles_error_gracefully(store):
     mock_conn = AsyncMock()
     mock_conn.execute = AsyncMock(side_effect=Exception("db error"))
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch("pillywiggins.memory.store.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await store.connect()
@@ -134,7 +120,7 @@ async def test_load_handles_error_gracefully(store):
     mock_conn = AsyncMock()
     mock_conn.fetchrow = AsyncMock(side_effect=Exception("db error"))
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch("pillywiggins.memory.store.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await store.connect()
@@ -194,7 +180,7 @@ async def test_save_serializes_messages_correctly(store):
     mock_conn = AsyncMock()
     mock_conn.execute = AsyncMock()
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch("pillywiggins.memory.store.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await store.connect()
@@ -216,7 +202,7 @@ async def test_load_deserialization_error_returns_none(store):
     mock_conn = AsyncMock()
     mock_conn.fetchrow = AsyncMock(return_value={"messages": "not valid json"})
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch("pillywiggins.memory.store.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await store.connect()
@@ -243,7 +229,7 @@ async def test_save_empty_messages_list(store):
     mock_conn = AsyncMock()
     mock_conn.execute = AsyncMock()
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch("pillywiggins.memory.store.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await store.connect()
@@ -260,7 +246,7 @@ async def test_load_null_messages_column_returns_none(store):
     mock_conn = AsyncMock()
     mock_conn.fetchrow = AsyncMock(return_value={"messages": None})
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch("pillywiggins.memory.store.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await store.connect()

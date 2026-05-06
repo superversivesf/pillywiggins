@@ -17,7 +17,7 @@ def _get_skill_logger() -> logging.Logger:
     if _skill_logger is not None:
         return _skill_logger
 
-    logger = logging.getLogger("pillywiggins.skill_exec")
+    logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO)
     logger.propagate = False
 

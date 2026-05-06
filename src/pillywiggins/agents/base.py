@@ -359,21 +359,44 @@ class PillywigginAgent:
     def model_name(self) -> str:
         return self._model_name
 
-    def _refresh_brain_tools(self) -> None:
+    @property
+    def provider(self) -> str:
+        return self._provider
+
+    @property
+    def skill_registry(self) -> SkillRegistry | None:
+        return self._skill_registry
+
+    @property
+    def has_council_memory(self) -> bool:
+        return self._council_memory is not None
+
+    @property
+    def has_nats_bus(self) -> bool:
+        return self._nats_bus is not None
+
+    def refresh_skills(self) -> None:
         """Re-register tools when skills change (e.g. after skill_published)."""
         self._brain = self._rebuild_brain()
         logger.info("Refreshed brain tools for %s", self.agent_id)
+
+    # Backwards-compatible alias
+    _refresh_brain_tools = refresh_skills
 
     def switch_model(self, new_model: str) -> None:
         self._model_name = new_model
         self._brain = self._rebuild_brain()
         logger.info("Switched model to %s", new_model)
 
-    def _get_history(self, conversation_key: str | None = None) -> list[ModelMessage]:
+    def get_history(self, conversation_key: str | None = None) -> list[ModelMessage]:
         return self._conversation_histories.get(conversation_key or "", [])
 
-    def _set_history(self, history: list[ModelMessage], conversation_key: str | None = None) -> None:
+    def set_history(self, history: list[ModelMessage], conversation_key: str | None = None) -> None:
         self._conversation_histories[conversation_key or ""] = history
+
+    # Backwards-compatible aliases
+    _get_history = get_history
+    _set_history = set_history
 
     async def clear_history(self, conversation_key: str | None = None) -> None:
         key = conversation_key or ""
@@ -402,6 +425,7 @@ class PillywigginAgent:
             )
         return {
             "model_name": self._model_name,
+            "provider": self._provider,
             "message_count": total_messages,
             "estimated_tokens": round(total_chars / 4),
             "agent_id": self.agent_id,

@@ -12,6 +12,7 @@ from pillywiggins.memory.embeddings import (
     normalize_ollama_url,
     KNOWN_EMBEDDING_DIMENSIONS,
 )
+from tests.helpers import make_mock_aiohttp_response, make_mock_aiohttp_session
 
 
 @pytest.fixture(autouse=True)
@@ -45,22 +46,15 @@ def openai_response():
 
 @pytest.mark.asyncio
 async def test_embed_texts_ollama_empty_embeddings_returns_none():
-    """When Ollama returns an empty embeddings list, that's an error — return None."""
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(
-        return_value={
+    """When Ollama returns an empty embeddings list, that's an error -- return None."""
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={
             "model": "nomic-embed-text",
             "embeddings": [],
-        }
+        },
     )
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", response=mock_resp)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result = await embed_texts(["hello"], "http://localhost:11434", "", "ollama", model="nomic-embed-text")
@@ -74,24 +68,13 @@ async def test_embed_texts_ollama_empty_embeddings_returns_none():
 @pytest.mark.asyncio
 async def test_embed_retries_on_5xx_then_succeeds():
     """Should retry on 5xx and eventually succeed."""
-    fail_resp = AsyncMock()
-    fail_resp.status = 503
-    fail_resp.text = AsyncMock(return_value="ollama busy")
-    fail_resp.__aenter__ = AsyncMock(return_value=fail_resp)
-    fail_resp.__aexit__ = AsyncMock(return_value=False)
-
-    success_resp = AsyncMock()
-    success_resp.status = 200
-    success_resp.json = AsyncMock(
-        return_value={"model": "nomic-embed-text", "embeddings": [[0.1, 0.2, 0.3]]}
+    fail_resp = make_mock_aiohttp_response(status=503, text_data="ollama busy")
+    success_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"model": "nomic-embed-text", "embeddings": [[0.1, 0.2, 0.3]]},
     )
-    success_resp.__aenter__ = AsyncMock(return_value=success_resp)
-    success_resp.__aexit__ = AsyncMock(return_value=False)
 
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(side_effect=[fail_resp, success_resp])
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", side_effect=[fail_resp, success_resp])
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         start = time.monotonic()
@@ -106,18 +89,12 @@ async def test_embed_retries_on_5xx_then_succeeds():
 @pytest.mark.asyncio
 async def test_embed_retries_on_network_exception_then_succeeds():
     """Should retry on network exception and eventually succeed."""
-    success_resp = AsyncMock()
-    success_resp.status = 200
-    success_resp.json = AsyncMock(
-        return_value={"model": "nomic-embed-text", "embeddings": [[0.1, 0.2, 0.3]]}
+    success_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"model": "nomic-embed-text", "embeddings": [[0.1, 0.2, 0.3]]},
     )
-    success_resp.__aenter__ = AsyncMock(return_value=success_resp)
-    success_resp.__aexit__ = AsyncMock(return_value=False)
 
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(side_effect=[Exception("connection refused"), success_resp])
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", side_effect=[Exception("connection refused"), success_resp])
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
@@ -129,16 +106,9 @@ async def test_embed_retries_on_network_exception_then_succeeds():
 @pytest.mark.asyncio
 async def test_embed_retries_exhaustion_returns_none():
     """Should return None after all retries exhausted."""
-    fail_resp = AsyncMock()
-    fail_resp.status = 503
-    fail_resp.text = AsyncMock(return_value="still busy")
-    fail_resp.__aenter__ = AsyncMock(return_value=fail_resp)
-    fail_resp.__aexit__ = AsyncMock(return_value=False)
+    fail_resp = make_mock_aiohttp_response(status=503, text_data="still busy")
 
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(side_effect=[fail_resp, fail_resp, fail_resp, fail_resp])
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", side_effect=[fail_resp, fail_resp, fail_resp, fail_resp])
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
@@ -150,16 +120,9 @@ async def test_embed_retries_exhaustion_returns_none():
 @pytest.mark.asyncio
 async def test_embed_no_retry_on_4xx():
     """Should not retry on 4xx client errors."""
-    fail_resp = AsyncMock()
-    fail_resp.status = 400
-    fail_resp.text = AsyncMock(return_value="bad request")
-    fail_resp.__aenter__ = AsyncMock(return_value=fail_resp)
-    fail_resp.__aexit__ = AsyncMock(return_value=False)
+    fail_resp = make_mock_aiohttp_response(status=400, text_data="bad request")
 
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=fail_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", response=fail_resp)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
@@ -174,18 +137,11 @@ async def test_embed_no_retry_on_4xx():
 @pytest.mark.asyncio
 async def test_embed_caches_result():
     """Same text should hit cache on second call."""
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(
-        return_value={"model": "nomic-embed-text", "embeddings": [[0.1, 0.2, 0.3]]}
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"model": "nomic-embed-text", "embeddings": [[0.1, 0.2, 0.3]]},
     )
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", response=mock_resp)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result1 = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
@@ -199,26 +155,16 @@ async def test_embed_caches_result():
 @pytest.mark.asyncio
 async def test_embed_cache_key_includes_model_and_provider():
     """Cache key should differentiate by model and provider."""
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(
-        return_value={"model": "nomic-embed-text", "embeddings": [[0.1, 0.2, 0.3]]}
+    ollama_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"model": "nomic-embed-text", "embeddings": [[0.1, 0.2, 0.3]]},
     )
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    openai_resp = AsyncMock()
-    openai_resp.status = 200
-    openai_resp.json = AsyncMock(
-        return_value={"data": [{"embedding": [0.4, 0.5, 0.6], "index": 0}]}
+    openai_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"data": [{"embedding": [0.4, 0.5, 0.6], "index": 0}]},
     )
-    openai_resp.__aenter__ = AsyncMock(return_value=openai_resp)
-    openai_resp.__aexit__ = AsyncMock(return_value=False)
 
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(side_effect=[mock_resp, mock_resp, openai_resp])
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", side_effect=[ollama_resp, ollama_resp, openai_resp])
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         r1 = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
@@ -234,18 +180,11 @@ async def test_embed_cache_key_includes_model_and_provider():
 @pytest.mark.asyncio
 async def test_embed_cache_ttl_expires(monkeypatch):
     """Cache entry should expire after TTL."""
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(
-        return_value={"model": "nomic-embed-text", "embeddings": [[0.1, 0.2, 0.3]]}
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"model": "nomic-embed-text", "embeddings": [[0.1, 0.2, 0.3]]},
     )
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", response=mock_resp)
 
     monkeypatch.setattr("pillywiggins.memory.embeddings._CACHE_TTL_SECONDS", 0.05)
 
@@ -262,18 +201,11 @@ async def test_embed_cache_ttl_expires(monkeypatch):
 @pytest.mark.asyncio
 async def test_embed_cache_can_be_disabled():
     """Passing use_cache=False should skip the cache."""
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(
-        return_value={"model": "nomic-embed-text", "embeddings": [[0.1, 0.2, 0.3]]}
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"model": "nomic-embed-text", "embeddings": [[0.1, 0.2, 0.3]]},
     )
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", response=mock_resp)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result1 = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
@@ -287,21 +219,14 @@ async def test_embed_cache_can_be_disabled():
 @pytest.mark.asyncio
 async def test_embed_texts_caches_result():
     """Same batch should hit cache on second call."""
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(
-        return_value={
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={
             "model": "nomic-embed-text",
             "embeddings": [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
-        }
+        },
     )
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", response=mock_resp)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result1 = await embed_texts(["hello", "world"], "http://localhost:11434", "", "ollama", model="nomic-embed-text")
@@ -315,27 +240,16 @@ async def test_embed_texts_caches_result():
 @pytest.mark.asyncio
 async def test_embed_texts_retries_on_5xx_then_succeeds():
     """Batch embed should also retry on 5xx."""
-    fail_resp = AsyncMock()
-    fail_resp.status = 502
-    fail_resp.text = AsyncMock(return_value="bad gateway")
-    fail_resp.__aenter__ = AsyncMock(return_value=fail_resp)
-    fail_resp.__aexit__ = AsyncMock(return_value=False)
-
-    success_resp = AsyncMock()
-    success_resp.status = 200
-    success_resp.json = AsyncMock(
-        return_value={
+    fail_resp = make_mock_aiohttp_response(status=502, text_data="bad gateway")
+    success_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={
             "model": "nomic-embed-text",
             "embeddings": [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]],
-        }
+        },
     )
-    success_resp.__aenter__ = AsyncMock(return_value=success_resp)
-    success_resp.__aexit__ = AsyncMock(return_value=False)
 
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(side_effect=[fail_resp, success_resp])
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", side_effect=[fail_resp, success_resp])
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result = await embed_texts(["hello", "world"], "http://localhost:11434", "", "ollama", model="nomic-embed-text")
@@ -346,16 +260,11 @@ async def test_embed_texts_retries_on_5xx_then_succeeds():
 
 @pytest.mark.asyncio
 async def test_embed_openai_no_api_key_no_auth():
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"data": [{"embedding": [0.1, 0.2, 0.3], "index": 0}]})
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"data": [{"embedding": [0.1, 0.2, 0.3], "index": 0}]},
+    )
+    mock_session = make_mock_aiohttp_session(method="post", response=mock_resp)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result = await embed("hello", "https://api.example.com/v1", "", "openai", model="nomic-embed-text")
@@ -369,18 +278,11 @@ async def test_embed_openai_no_api_key_no_auth():
 
 @pytest.mark.asyncio
 async def test_embed_ollama_no_api_key_no_auth():
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(
-        return_value={"model": "nomic-embed-text", "embeddings": [[0.1, 0.2, 0.3]]}
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"model": "nomic-embed-text", "embeddings": [[0.1, 0.2, 0.3]]},
     )
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", response=mock_resp)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
@@ -414,18 +316,11 @@ def test_normalize_ollama_url_docker_internal():
 @pytest.mark.asyncio
 async def test_embed_ollama_url_strips_v1():
     """Embedding with Ollama should strip /v1 from base URL before calling /api/embed."""
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(
-        return_value={"model": "nomic-embed-text", "embeddings": [[0.1] * 768]}
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"model": "nomic-embed-text", "embeddings": [[0.1] * 768]},
     )
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", response=mock_resp)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result = await embed("hello", "http://host.docker.internal:11434/v1", "", "ollama", model="nomic-embed-text")
@@ -441,16 +336,11 @@ async def test_embed_ollama_url_strips_v1():
 @pytest.mark.asyncio
 async def test_embed_openai_url_preserves_v1():
     """Embedding with OpenAI provider should NOT strip /v1 from base URL."""
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"data": [{"embedding": [0.1, 0.2, 0.3], "index": 0}]})
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"data": [{"embedding": [0.1, 0.2, 0.3], "index": 0}]},
+    )
+    mock_session = make_mock_aiohttp_session(method="post", response=mock_resp)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result = await embed("hello", "https://api.openai.com/v1", "", "openai", model="nomic-embed-text")
@@ -468,18 +358,11 @@ async def test_embed_openai_url_preserves_v1():
 async def test_embed_dimension_match_passes():
     """embed() should return the vector when expected_dimension matches."""
     vec768 = [0.1] * 768
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(
-        return_value={"model": "nomic-embed-text", "embeddings": [vec768]}
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"model": "nomic-embed-text", "embeddings": [vec768]},
     )
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", response=mock_resp)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text", expected_dimension=768)
@@ -492,18 +375,11 @@ async def test_embed_dimension_match_passes():
 async def test_embed_dimension_mismatch_returns_none():
     """embed() should return None and log error when dimension doesn't match."""
     vec3 = [0.1, 0.2, 0.3]
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(
-        return_value={"model": "nomic-embed-text", "embeddings": [vec3]}
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"model": "nomic-embed-text", "embeddings": [vec3]},
     )
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", response=mock_resp)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text", expected_dimension=768)
@@ -515,18 +391,11 @@ async def test_embed_dimension_mismatch_returns_none():
 async def test_embed_texts_dimension_mismatch_returns_none():
     """embed_texts() should return None when any vector dimension doesn't match."""
     vec3 = [0.1, 0.2, 0.3]
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(
-        return_value={"model": "nomic-embed-text", "embeddings": [vec3, vec3]}
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"model": "nomic-embed-text", "embeddings": [vec3, vec3]},
     )
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", response=mock_resp)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result = await embed_texts(
@@ -540,18 +409,11 @@ async def test_embed_texts_dimension_mismatch_returns_none():
 async def test_embed_no_dimension_check_when_not_provided():
     """embed() without expected_dimension should not validate dimensions."""
     vec3 = [0.1, 0.2, 0.3]
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(
-        return_value={"model": "nomic-embed-text", "embeddings": [vec3]}
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"model": "nomic-embed-text", "embeddings": [vec3]},
     )
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", response=mock_resp)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
@@ -603,18 +465,11 @@ def test_config_embedding_dimension_matches_schema():
 async def test_check_embedding_health_success():
     """Health check should report healthy when embedding endpoint works."""
     vec768 = [0.1] * 768
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(
-        return_value={"model": "nomic-embed-text", "embeddings": [vec768]}
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"model": "nomic-embed-text", "embeddings": [vec768]},
     )
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", response=mock_resp)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result = await check_embedding_health(
@@ -635,18 +490,11 @@ async def test_check_embedding_health_success():
 async def test_check_embedding_health_dimension_mismatch():
     """Health check should report unhealthy on dimension mismatch."""
     vec3 = [0.1, 0.2, 0.3]
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(
-        return_value={"model": "nomic-embed-text", "embeddings": [vec3]}
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"model": "nomic-embed-text", "embeddings": [vec3]},
     )
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", response=mock_resp)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result = await check_embedding_health(
@@ -666,16 +514,8 @@ async def test_check_embedding_health_dimension_mismatch():
 @pytest.mark.asyncio
 async def test_check_embedding_health_endpoint_failure():
     """Health check should report unhealthy when endpoint fails."""
-    fail_resp = AsyncMock()
-    fail_resp.status = 500
-    fail_resp.text = AsyncMock(return_value="internal error")
-    fail_resp.__aenter__ = AsyncMock(return_value=fail_resp)
-    fail_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=fail_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    fail_resp = make_mock_aiohttp_response(status=500, text_data="internal error")
+    mock_session = make_mock_aiohttp_session(method="post", response=fail_resp)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result = await check_embedding_health(
@@ -694,18 +534,11 @@ async def test_check_embedding_health_endpoint_failure():
 async def test_check_embedding_health_no_expected_dimension():
     """Health check without expected_dimension should pass if endpoint works."""
     vec3 = [0.1, 0.2, 0.3]
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(
-        return_value={"model": "nomic-embed-text", "embeddings": [vec3]}
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"model": "nomic-embed-text", "embeddings": [vec3]},
     )
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.post = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="post", response=mock_resp)
 
     with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
         result = await check_embedding_health(

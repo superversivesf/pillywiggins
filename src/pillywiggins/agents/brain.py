@@ -120,3 +120,14 @@ def create_brain(
             agent.tool(_make_skill_tool(skill))
 
     return agent
+
+
+def get_tool_names(agent: Agent) -> list[str]:
+    """Return the names of all tools registered on a pydantic-ai Agent."""
+    return list(agent._function_toolset.tools.keys())
+
+
+def get_system_prompt(agent: Agent, ctx: RunContext[AgentDeps]) -> str:
+    """Evaluate the agent's dynamic system prompt with the given context."""
+    prompt_fn = agent._system_prompt_functions[0].function
+    return prompt_fn(ctx)

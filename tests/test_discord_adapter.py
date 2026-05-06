@@ -7,6 +7,7 @@ import pytest
 
 from pillywiggins.adapters.discord_adapter import DiscordAdapter, HELP_TEXT
 from pillywiggins.messaging.unified import ChannelType
+from tests.helpers import make_mock_agent, make_mock_settings
 
 
 def _make_message(
@@ -39,30 +40,8 @@ def _make_message(
 
 
 def _make_adapter():
-    agent = MagicMock()
-    agent.agent_id = "puck"
-    agent.personality = MagicMock()
-    agent.personality.channel = "discord"
-    agent.model_name = "qwen3.5:8b"
-    agent.handle_message = AsyncMock(return_value="response")
-    agent.switch_model = MagicMock()
-    agent.clear_history = AsyncMock()
-    agent.get_status = MagicMock(
-        return_value={
-            "agent_id": "puck",
-            "channel": "discord",
-            "model_name": "qwen3.5:8b",
-            "message_count": 7,
-            "estimated_tokens": 1500,
-        }
-    )
-    agent.compact_history = AsyncMock(return_value="Compacted: 7 messages → 1 summary")
-    settings = MagicMock()
-    settings.llm_base_url = "http://localhost:11434"
-    settings.llm_api_key = ""
-    settings.llm_provider = "ollama"
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = "all"
+    agent = make_mock_agent(channel="discord")
+    settings = make_mock_settings()
     adapter = DiscordAdapter(agent, "fake-token", settings)
     adapter._client = MagicMock()
     adapter._client.get_channel = MagicMock()
@@ -83,9 +62,7 @@ def _make_adapter():
 
 def test_normalize_converts_discord_message_to_unified_message():
     agent = MagicMock()
-    settings = MagicMock()
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = "all"
+    settings = make_mock_settings()
     adapter = DiscordAdapter(agent, "fake-token", settings)
     message = _make_message(author_id=123, author_name="alice", content="hi there", channel_id=456)
 
@@ -101,9 +78,7 @@ def test_normalize_converts_discord_message_to_unified_message():
 
 def test_normalize_handles_dm_with_no_guild():
     agent = MagicMock()
-    settings = MagicMock()
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = "all"
+    settings = make_mock_settings()
     adapter = DiscordAdapter(agent, "fake-token", settings)
     message = _make_message(author_id=42, author_name="bob", content="dm text", channel_id=789)
 
@@ -114,9 +89,7 @@ def test_normalize_handles_dm_with_no_guild():
 
 def test_normalize_handles_guild_message():
     agent = MagicMock()
-    settings = MagicMock()
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = "all"
+    settings = make_mock_settings()
     adapter = DiscordAdapter(agent, "fake-token", settings)
     message = _make_message(
         author_id=42, author_name="bob", content="guild text", channel_id=789, guild_id=1001
@@ -129,9 +102,7 @@ def test_normalize_handles_guild_message():
 
 def test_normalize_timestamp_is_aware_utc():
     agent = MagicMock()
-    settings = MagicMock()
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = "all"
+    settings = make_mock_settings()
     adapter = DiscordAdapter(agent, "fake-token", settings)
     message = _make_message()
 
@@ -180,9 +151,7 @@ async def test_send_falls_back_to_fetch_channel():
 @pytest.mark.asyncio
 async def test_connect_creates_discord_client():
     agent = MagicMock()
-    settings = MagicMock()
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = "all"
+    settings = make_mock_settings()
     adapter = DiscordAdapter(agent, "fake-token", settings)
 
     with patch("pillywiggins.adapters.discord_adapter.discord.Client") as mock_client_cls:
@@ -211,9 +180,7 @@ async def test_listen_logs_in_and_connects():
 @pytest.mark.asyncio
 async def test_listen_connects_if_no_client():
     agent = MagicMock()
-    settings = MagicMock()
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = "all"
+    settings = make_mock_settings()
     adapter = DiscordAdapter(agent, "fake-token", settings)
     adapter._client = None
 
@@ -242,9 +209,7 @@ async def test_shutdown_closes_client():
 @pytest.mark.asyncio
 async def test_shutdown_does_nothing_if_no_client():
     agent = MagicMock()
-    settings = MagicMock()
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = "all"
+    settings = make_mock_settings()
     adapter = DiscordAdapter(agent, "fake-token", settings)
     adapter._client = None
 
@@ -507,9 +472,7 @@ async def test_on_message_dispatches_command():
 
 def test_is_authorized_denies_all_by_default():
     agent = MagicMock()
-    settings = MagicMock()
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = ""
+    settings = make_mock_settings(allowed_user_ids="")
     adapter = DiscordAdapter(agent, "fake-token", settings)
 
     assert adapter._is_authorized(42) is False
@@ -518,9 +481,7 @@ def test_is_authorized_denies_all_by_default():
 
 def test_is_authorized_allows_all_with_all_keyword():
     agent = MagicMock()
-    settings = MagicMock()
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = "all"
+    settings = make_mock_settings()
     adapter = DiscordAdapter(agent, "fake-token", settings)
 
     assert adapter._is_authorized(999) is True

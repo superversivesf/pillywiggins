@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.helpers import make_mock_aiohttp_response, make_mock_aiohttp_session
+
 
 @pytest.fixture
 def skill_module(tmp_path):
@@ -51,17 +53,8 @@ class TestCheckWebsiteMeta:
 class TestCheckWebsiteRun:
     @pytest.mark.asyncio
     async def test_returns_body_on_success(self, skill_module):
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.text = AsyncMock(return_value="<html>Hello</html>")
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
-
+        mock_resp = make_mock_aiohttp_response(status=200, text_data="<html>Hello</html>")
+        mock_session = make_mock_aiohttp_session(method="get", response=mock_resp)
         mock_client_timeout = MagicMock()
 
         with patch.object(skill_module.aiohttp, "ClientSession", return_value=mock_session), \
@@ -87,16 +80,8 @@ class TestCheckWebsiteRun:
     @pytest.mark.asyncio
     async def test_truncates_large_body(self, skill_module):
         large_body = "x" * 60000
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.text = AsyncMock(return_value=large_body)
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_resp = make_mock_aiohttp_response(status=200, text_data=large_body)
+        mock_session = make_mock_aiohttp_session(method="get", response=mock_resp)
 
         mock_client_timeout = MagicMock()
 
@@ -111,16 +96,8 @@ class TestCheckWebsiteRun:
     @pytest.mark.asyncio
     async def test_does_not_truncate_small_body(self, skill_module):
         small_body = "<html>small</html>"
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.text = AsyncMock(return_value=small_body)
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_resp = make_mock_aiohttp_response(status=200, text_data=small_body)
+        mock_session = make_mock_aiohttp_session(method="get", response=mock_resp)
 
         mock_client_timeout = MagicMock()
 
@@ -133,16 +110,8 @@ class TestCheckWebsiteRun:
 
     @pytest.mark.asyncio
     async def test_custom_timeout_passed(self, skill_module):
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.text = AsyncMock(return_value="ok")
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_resp = make_mock_aiohttp_response(status=200, text_data="ok")
+        mock_session = make_mock_aiohttp_session(method="get", response=mock_resp)
 
         mock_client_timeout = MagicMock()
 
@@ -154,16 +123,8 @@ class TestCheckWebsiteRun:
 
     @pytest.mark.asyncio
     async def test_returns_404_with_body(self, skill_module):
-        mock_resp = AsyncMock()
-        mock_resp.status = 404
-        mock_resp.text = AsyncMock(return_value="<h1>Not Found</h1>")
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_resp = make_mock_aiohttp_response(status=404, text_data="<h1>Not Found</h1>")
+        mock_session = make_mock_aiohttp_session(method="get", response=mock_resp)
 
         mock_client_timeout = MagicMock()
 

@@ -54,7 +54,7 @@ async def test_start_council_memory_failure_does_not_crash(agent, personality):
             mock_sched.return_value.start = AsyncMock()
             await agent.start()
 
-    assert agent._council_memory is None
+    assert not agent.has_council_memory
 
 
 @pytest.mark.asyncio
@@ -71,7 +71,7 @@ async def test_start_nats_failure_does_not_crash(agent, personality):
                 mock_sched.return_value.start = AsyncMock()
                 await agent.start()
 
-    assert agent._nats_bus is None
+    assert not agent.has_nats_bus
 
 
 @pytest.mark.asyncio
@@ -99,7 +99,7 @@ async def test_shutdown_council_close_failure_does_not_crash(agent):
     bad_mem.close = AsyncMock(side_effect=ConnectionError("db gone"))
     agent._council_memory = bad_mem
     await agent.shutdown()
-    assert agent._council_memory is None
+    assert not agent.has_council_memory
 
 
 @pytest.mark.asyncio
@@ -109,7 +109,7 @@ async def test_shutdown_nats_close_failure_does_not_crash(agent):
     bad_bus.close = AsyncMock(side_effect=RuntimeError("nats gone"))
     agent._nats_bus = bad_bus
     await agent.shutdown()
-    assert agent._nats_bus is None
+    assert not agent.has_nats_bus
 
 
 @pytest.mark.asyncio

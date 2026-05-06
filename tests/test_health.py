@@ -7,6 +7,7 @@ import pytest
 from aiohttp import web
 
 from pillywiggins.health import check_health, create_health_app
+from tests.helpers import make_mock_aiohttp_response, make_mock_aiohttp_session
 
 
 def _make_mock_nats():
@@ -61,15 +62,8 @@ def _make_mock_redis():
 
 
 def _make_mock_aiohttp_client(status=200):
-    mock_resp = AsyncMock()
-    mock_resp.status = status
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.get = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_resp = make_mock_aiohttp_response(status=status)
+    mock_session = make_mock_aiohttp_session(method="get", response=mock_resp)
 
     mock_aiohttp = MagicMock()
     mock_aiohttp.ClientSession = MagicMock(return_value=mock_session)
@@ -80,10 +74,7 @@ def _make_capturing_aiohttp_client():
     """Return an aiohttp mock that captures the GET URL in a non-async way."""
     captured_url = None
 
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    mock_resp = make_mock_aiohttp_response(status=200)
 
     def capture_get(url):
         nonlocal captured_url
@@ -98,14 +89,6 @@ def _make_capturing_aiohttp_client():
     mock_aiohttp = MagicMock()
     mock_aiohttp.ClientSession = MagicMock(return_value=mock_session)
     return mock_aiohttp, (lambda: captured_url)
-
-
-def _make_mock_nats():
-    mock_nc = AsyncMock()
-    mock_nc.close = AsyncMock()
-    mock_mod = MagicMock()
-    mock_mod.connect = AsyncMock(return_value=mock_nc)
-    return mock_mod
 
 
 @pytest.mark.asyncio

@@ -15,10 +15,19 @@ import os
 import socket
 import subprocess
 import tempfile
-import time
 
 import pytest
 import yaml
+
+from tests.integration.conftest import (
+    ALT_PORTS_SEQ,
+    INFRA_SERVICES,
+    _container_id,
+    _docker_compose_cmd,
+    _merged_compose_with_alt_ports,
+    _project_dir,
+    _wait_for_healthy,
+)
 
 pytestmark = [
     pytest.mark.integration,
@@ -28,64 +37,7 @@ pytestmark = [
 
 # Base compose file to test (the canonical example/source of truth)
 BASE_COMPOSE_FILE = os.environ.get("COMPOSE_FILE", "docker-compose.yaml.example")
-INFRA_SERVICES = ["postgres", "redis", "nats"]
-# Free host ports to use for the smoke test (nats has two ports)
-ALT_PORTS_SEQ = {"postgres": [15432], "redis": [16379], "nats": [14222, 18222]}
-HEALTHY_TIMEOUT = 60
-POLL_INTERVAL = 2
 RESTART_TIMEOUT = 30
-
-
-def _docker_compose_cmd():
-    for base in (["docker", "compose"], ["docker-compose"]):
-        if subprocess.run(base + ["version"], capture_output=True).returncode == 0:
-            return base
-    pytest.skip("No docker compose command available")
-
-
-def _project_dir():
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def _merged_compose_path(base_path, alt_dir):
-    """Generate a merged compose where infra services use alternative host ports."""
-    with open(base_path) as f:
-        data = yaml.safe_load(f)
-    for svc in INFRA_SERVICES:
-        ports = data.get("services", {}).get(svc, {}).get("ports", [])
-        if not ports:
-            continue
-        new_ports = []
-        alt_seq = ALT_PORTS_SEQ[svc]
-        for idx, p in enumerate(ports):
-            alt = alt_seq[idx] if idx < len(alt_seq) else alt_seq[0]
-            if isinstance(p, str):
-                parts = p.split(":")
-                if len(parts) == 1:
-                    new_ports.append(f"{alt}:{parts[0]}")
-                elif len(parts) == 2:
-                    new_ports.append(f"{alt}:{parts[1]}")
-                else:
-                    new_ports.append(f"{alt}:{parts[1]}")
-            elif isinstance(p, dict):
-                target = p.get("target", p.get("container", ""))
-                proto = p.get("protocol", "tcp")
-                if target:
-                    new_ports.append(f"{alt}:{target}/{proto}")
-                else:
-                    new_ports.append(str(alt))
-            elif isinstance(p, int):
-                new_ports.append(f"{alt}:{p}")
-        data["services"][svc]["ports"] = new_ports
-    # Force restart:always for redis so the restart-policy smoke test can actually
-    # observe an automatic restart.  Docker Desktop (macOS) does not restart
-    # unless-stopped containers when the main process is killed from inside the
-    # container, so we relax the policy to always for the test fixture only.
-    data["services"]["redis"]["restart"] = "always"
-    merged_path = os.path.join(alt_dir, "docker-compose.smoke-override.yaml")
-    with open(merged_path, "w") as f:
-        yaml.dump(data, f)
-    return merged_path
 
 
 @pytest.fixture(scope="module")
@@ -98,8 +50,19 @@ def compose_file():
 
 @pytest.fixture(scope="module")
 def alt_compose_file(compose_file):
+    """Merged compose with alt ports and redis restart policy override for smoke tests."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        yield _merged_compose_path(compose_file, tmpdir)
+        merged = _merged_compose_with_alt_ports(compose_file, tmpdir)
+        # Force restart:always for redis so the restart-policy smoke test can
+        # observe automatic recovery.  Docker Desktop (macOS) does not restart
+        # unless-stopped containers when the main process is killed from inside
+        # the container, so we relax the policy to always for the test fixture.
+        with open(merged) as f:
+            data = yaml.safe_load(f)
+        data["services"]["redis"]["restart"] = "always"
+        with open(merged, "w") as f:
+            yaml.dump(data, f)
+        yield merged
 
 
 @pytest.fixture(scope="module")
@@ -134,52 +97,6 @@ def _infra_up(dc):
         pytest.fail(f"docker compose up failed:\n{output}")
     yield
     subprocess.run(dc + ["down", "--remove-orphans"], capture_output=True)
-
-
-def _container_id(dc, service: str) -> str:
-    res = subprocess.run(
-        dc + ["ps", "-q", service],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return res.stdout.strip()
-
-
-def _container_status(container_id: str) -> dict:
-    if not container_id:
-        return {"running": False, "healthy": False, "status": "missing"}
-    inspect = subprocess.run(
-        ["docker", "inspect", container_id],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    data = json.loads(inspect.stdout)[0]
-    state = data.get("State", {})
-    health = state.get("Health", {})
-    return {
-        "running": state.get("Running", False),
-        "status": state.get("Status", ""),
-        "healthy": health.get("Status") == "healthy",
-        "health_status": health.get("Status", "none"),
-    }
-
-
-def _wait_for_healthy(dc, service: str, timeout: int = HEALTHY_TIMEOUT):
-    cid = _container_id(dc, service)
-    start = time.time()
-    while time.time() - start < timeout:
-        status = _container_status(cid)
-        if status["healthy"]:
-            return
-        if not status["running"] and time.time() - start > 10:
-            pytest.fail(
-                f"Container for {service} is not running (status={status['status']})"
-            )
-        time.sleep(POLL_INTERVAL)
-        cid = _container_id(dc, service)
-    pytest.fail(f"Container for {service} did not become healthy within {timeout}s")
 
 
 def _host_ports(parsed_compose):

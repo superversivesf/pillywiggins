@@ -6,6 +6,7 @@ import pytest
 
 from pillywiggins.adapters.telegram_adapter import HELP_TEXT, TelegramAdapter
 from pillywiggins.messaging.unified import ChannelType
+from tests.helpers import make_mock_agent, make_mock_settings
 
 
 def _make_update(user_id=42, username="testuser", first_name="Test", text="hello", chat_id=99):
@@ -25,30 +26,8 @@ def _make_update(user_id=42, username="testuser", first_name="Test", text="hello
 
 
 def _make_adapter():
-    agent = MagicMock()
-    agent.agent_id = "puck"
-    agent.personality = MagicMock()
-    agent.personality.channel = "telegram"
-    agent.model_name = "qwen3.5:8b"
-    agent.handle_message = AsyncMock(return_value="response")
-    agent.switch_model = MagicMock()
-    agent.clear_history = AsyncMock()
-    agent.get_status = MagicMock(
-        return_value={
-            "agent_id": "puck",
-            "channel": "telegram",
-            "model_name": "qwen3.5:8b",
-            "message_count": 7,
-            "estimated_tokens": 1500,
-        }
-    )
-    agent.compact_history = AsyncMock(return_value="Compacted: 7 messages → 1 summary")
-    settings = MagicMock()
-    settings.llm_base_url = "http://localhost:11434"
-    settings.llm_api_key = ""
-    settings.llm_provider = "ollama"
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = "all"
+    agent = make_mock_agent(channel="telegram")
+    settings = make_mock_settings()
     adapter = TelegramAdapter(agent, "fake-token", settings)
     adapter._app = MagicMock()
     adapter._app.bot = MagicMock()
@@ -78,9 +57,7 @@ def test_help_text_constant_exists():
 
 def test_normalize_converts_update_to_unified_message():
     agent = MagicMock()
-    settings = MagicMock()
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = "all"
+    settings = make_mock_settings()
     adapter = TelegramAdapter(agent, "fake-token", settings)
     update = _make_update(user_id=123, username="alice", text="hi there", chat_id=456)
 
@@ -95,9 +72,7 @@ def test_normalize_converts_update_to_unified_message():
 
 def test_normalize_handles_none_text():
     agent = MagicMock()
-    settings = MagicMock()
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = "all"
+    settings = make_mock_settings()
     adapter = TelegramAdapter(agent, "fake-token", settings)
     update = _make_update(text=None)
 
@@ -108,9 +83,7 @@ def test_normalize_handles_none_text():
 
 def test_normalize_preserves_large_chat_id():
     agent = MagicMock()
-    settings = MagicMock()
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = "all"
+    settings = make_mock_settings()
     adapter = TelegramAdapter(agent, "fake-token", settings)
     update = _make_update(chat_id=-1001234567890)
 
@@ -121,9 +94,7 @@ def test_normalize_preserves_large_chat_id():
 
 def test_normalize_timestamp_is_aware_utc():
     agent = MagicMock()
-    settings = MagicMock()
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = "all"
+    settings = make_mock_settings()
     adapter = TelegramAdapter(agent, "fake-token", settings)
     update = _make_update()
 
@@ -417,9 +388,7 @@ async def test_cmd_models_sorted_alphabetically():
 
 def test_is_authorized_denies_all_by_default():
     agent = MagicMock()
-    settings = MagicMock()
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = ""
+    settings = make_mock_settings(allowed_user_ids="")
     adapter = TelegramAdapter(agent, "fake-token", settings)
 
     assert adapter._is_authorized(42) is False
@@ -428,9 +397,7 @@ def test_is_authorized_denies_all_by_default():
 
 def test_is_authorized_allows_all_with_all_keyword():
     agent = MagicMock()
-    settings = MagicMock()
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = "all"
+    settings = make_mock_settings()
     adapter = TelegramAdapter(agent, "fake-token", settings)
 
     assert adapter._is_authorized(999) is True
@@ -558,9 +525,7 @@ async def test_on_message_typing_cancellation_on_success():
 
 def test_is_authorized_whitespace_all_keyword():
     agent = MagicMock()
-    settings = MagicMock()
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = "  ALL  "
+    settings = make_mock_settings(allowed_user_ids="  ALL  ")
     adapter = TelegramAdapter(agent, "fake-token", settings)
 
     assert adapter._is_authorized(42) is True
@@ -568,9 +533,7 @@ def test_is_authorized_whitespace_all_keyword():
 
 def test_normalize_handles_missing_username():
     agent = MagicMock()
-    settings = MagicMock()
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = "all"
+    settings = make_mock_settings()
     adapter = TelegramAdapter(agent, "fake-token", settings)
     update = _make_update(username=None)
 

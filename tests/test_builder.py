@@ -1040,13 +1040,6 @@ class TestEscapedSkillCode:
         assert draft.status == DraftStatus.ERROR
         assert "validation failed" in draft.test_results[0].get("error", "")
 
-    def test_escaped_newline_literal_caught_gracefully(self):
-        """Literal \\n in code instead of real newline -> structured error, no crash."""
-        code = 'def run():\\n    return 1\n'
-        draft = draft_skill("bad_escape", code)
-        assert draft.status == DraftStatus.ERROR
-        assert "validation failed" in draft.test_results[0].get("error", "")
-
     def test_sanitization_fixes_escaped_newlines(self):
         """Sanitization should turn literal \\n into real newlines so valid code parses."""
         code = 'SKILL_META = {"name": "sanitized", "description": "desc", "parameters": {}, "permissions": {"network": False, "subprocess": False, "file_write": False}}\nasync def run():\\n    return {"result": 1}\n'

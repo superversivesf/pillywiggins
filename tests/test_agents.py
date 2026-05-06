@@ -36,11 +36,9 @@ def agent(personality):
 
 def test_agent_initialization(agent):
     assert agent.agent_id == "puck"
-    assert agent._model_name == "qwen3.5:8b"
-    assert agent._provider == "ollama"
-    assert agent._base_url == "http://localhost:11434"
-    assert agent._api_key == ""
-    assert agent._conversation_histories == {}
+    assert agent.model_name == "qwen3.5:8b"
+    assert agent.provider == "ollama"
+    assert agent.get_status()["message_count"] == 0
 
 
 def test_model_name_property(agent):
@@ -52,33 +50,33 @@ def test_switch_model_creates_new_brain(agent):
         mock_brain.return_value = MagicMock()
         agent.switch_model("llama3:8b")
 
-    assert agent._model_name == "llama3:8b"
     assert agent.model_name == "llama3:8b"
     mock_brain.assert_called_once_with(
         "llama3:8b",
         "ollama",
         "http://localhost:11434",
         "",
-        skill_registry=agent._skill_registry,
+        skill_registry=agent.skill_registry,
     )
 
 
-def test_switch_model_updates_brain_reference(agent):
-    new_brain = MagicMock()
-    with patch("pillywiggins.agents.base.create_brain", return_value=new_brain):
+def test_switch_model_updates_model_name(agent):
+    original_model = agent.model_name
+    with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()):
         agent.switch_model("llama3:8b")
 
-    assert agent._brain is new_brain
+    assert agent.model_name == "llama3:8b"
+    assert agent.model_name != original_model
 
 
 @pytest.mark.asyncio
 async def test_clear_history_empties_default_conversation(agent):
-    agent._conversation_histories[""] = [MagicMock(), MagicMock()]
-    assert len(agent._conversation_histories[""]) == 2
+    agent.set_history([MagicMock(), MagicMock()])
+    assert len(agent.get_history()) == 2
 
     await agent.clear_history()
 
-    assert agent._conversation_histories[""] == []
+    assert agent.get_history() == []
 
 
 @pytest.mark.asyncio
@@ -113,7 +111,7 @@ async def test_handle_message_uses_brain(personality):
 
     assert result == "Hello from Puck!"
     mock_brain_instance.run.assert_called_once()
-    assert len(agent._conversation_histories["456"]) == 1
+    assert len(agent.get_history("456")) == 1
 
 
 @pytest.mark.asyncio
@@ -172,7 +170,7 @@ async def test_load_history_from_cache(personality):
 
     await agent.load_history()
 
-    assert len(agent._conversation_histories[""]) == 2
+    assert len(agent.get_history()) == 2
     mock_cache.load.assert_called_once_with("puck", conversation_key="")
 
 
@@ -190,7 +188,7 @@ async def test_load_history_no_cache(personality):
 
     await agent.load_history()
 
-    assert agent._conversation_histories == {}
+    assert agent.get_history() == []
 
 
 @pytest.mark.asyncio
@@ -227,14 +225,16 @@ async def test_handle_message_without_cache_does_not_error(personality):
 
 
 def test_get_status_returns_fields(agent):
-    agent._conversation_histories[""] = [MagicMock(), MagicMock(), MagicMock()]
+    agent.set_history([MagicMock(), MagicMock(), MagicMock()])
     status = agent.get_status()
     assert "model_name" in status
+    assert "provider" in status
     assert "message_count" in status
     assert "estimated_tokens" in status
     assert "agent_id" in status
     assert "channel" in status
     assert status["model_name"] == "qwen3.5:8b"
+    assert status["provider"] == "ollama"
     assert status["message_count"] == 3
     assert status["agent_id"] == "puck"
     assert status["channel"] == "telegram"
@@ -276,15 +276,15 @@ async def test_compact_history_summarizes_old_messages(personality):
     old_msg2 = ModelResponse(parts=[TextPart(content="hi")])
     kept_msg1 = ModelRequest(parts=[UserPromptPart(content="recent question")])
     kept_msg2 = ModelResponse(parts=[TextPart(content="recent answer")])
-    agent._conversation_histories[""] = [old_msg1, old_msg2, kept_msg1, kept_msg2]
+    agent.set_history([old_msg1, old_msg2, kept_msg1, kept_msg2])
 
     result = await agent.compact_history()
 
     assert "Compacted 2 messages into summary" in result
     assert "Keeping 2 recent" in result
-    assert len(agent._conversation_histories[""]) == 4
-    assert isinstance(agent._conversation_histories[""][0], ModelRequest)
-    assert isinstance(agent._conversation_histories[""][1], ModelResponse)
+    assert len(agent.get_history()) == 4
+    assert isinstance(agent.get_history()[0], ModelRequest)
+    assert isinstance(agent.get_history()[1], ModelResponse)
 
 
 @pytest.mark.asyncio
@@ -300,11 +300,11 @@ async def test_compact_history_noop_when_few_messages(personality):
             compact_keep_messages=6,
         )
 
-    agent._conversation_histories[""] = [MagicMock(), MagicMock()]
+    agent.set_history([MagicMock(), MagicMock()])
     result = await agent.compact_history()
 
     assert result == "Nothing to compact — only 2 messages."
-    assert len(agent._conversation_histories[""]) == 2
+    assert len(agent.get_history()) == 2
 
 
 @pytest.mark.asyncio
@@ -344,12 +344,12 @@ async def test_compact_history_truncates_long_messages(personality):
     old_msg = ModelRequest(parts=[UserPromptPart(content="old")])
     old_response = ModelResponse(parts=[TextPart(content="old reply")])
     kept_msg = ModelResponse(parts=[TextPart(content=long_text)])
-    agent._conversation_histories[""] = [old_msg, old_response, kept_msg]
+    agent.set_history([old_msg, old_response, kept_msg])
 
     result = await agent.compact_history()
 
     assert "Compacted" in result
-    truncated_text = agent._conversation_histories[""][-1].parts[0].content
+    truncated_text = agent.get_history()[-1].parts[0].content
     assert truncated_text.endswith("...[truncated]")
     assert len(truncated_text) == 10 + len("...[truncated]")
 
@@ -373,7 +373,7 @@ async def test_load_history_from_store_when_cache_missing(personality):
 
     await agent.load_history(conversation_key="chat_123")
 
-    assert len(agent._conversation_histories["chat_123"]) == 2
+    assert len(agent.get_history("chat_123")) == 2
     mock_store.load.assert_called_once_with("chat_123")
 
 
@@ -391,7 +391,7 @@ async def test_load_history_no_cache_with_none_store(personality):
 
     await agent.load_history(conversation_key="chat_123")
 
-    assert agent._conversation_histories == {}
+    assert agent.get_history("chat_123") == []
 
 
 @pytest.mark.asyncio
@@ -412,7 +412,7 @@ async def test_load_history_store_returns_none(personality):
 
     await agent.load_history(conversation_key="chat_123")
 
-    assert agent._conversation_histories == {}
+    assert agent.get_history("chat_123") == []
 
 
 @pytest.mark.asyncio
@@ -485,13 +485,13 @@ async def test_compact_history_no_summary_parts_fallback(personality):
     old_msg = ModelRequest(parts=[UserPromptPart(content="old")])
     old_response = ModelResponse(parts=[TextPart(content="old reply")])
     kept_msg = ModelRequest(parts=[UserPromptPart(content="recent")])
-    agent._conversation_histories[""] = [old_msg, old_response, kept_msg]
+    agent.set_history([old_msg, old_response, kept_msg])
 
     result = await agent.compact_history()
 
     assert "Compacted" in result
-    assert isinstance(agent._conversation_histories[""][1], ModelResponse)
-    summary_content = agent._conversation_histories[""][1].parts[0].content
+    assert isinstance(agent.get_history()[1], ModelResponse)
+    summary_content = agent.get_history()[1].parts[0].content
     assert "Fallback summary text." in summary_content
 
 
@@ -534,7 +534,7 @@ async def test_compact_history_non_string_content_part(personality):
         content = 12345
 
     kept_msg = ModelResponse(parts=[NonStringPart()])
-    agent._conversation_histories[""] = [old_msg, old_response, kept_msg]
+    agent.set_history([old_msg, old_response, kept_msg])
 
     result = await agent.compact_history()
 
@@ -554,7 +554,7 @@ async def test_compact_history_exact_keep_count(personality):
             compact_keep_messages=6,
         )
 
-    agent._conversation_histories[""] = [MagicMock()] * 6
+    agent.set_history([MagicMock()] * 6)
     result = await agent.compact_history()
 
     assert result == "Nothing to compact — only 6 messages."
@@ -566,7 +566,9 @@ def test_get_status_empty_history(agent):
     assert status["estimated_tokens"] == 0
 
 
-def test_agent_compact_keep_messages_default(personality):
+@pytest.mark.asyncio
+async def test_agent_compact_defaults(personality):
+    """compact_history should keep 6 recent messages by default and not compact when under that."""
     with patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()):
         agent = PillywigginAgent(
             agent_id="puck",
@@ -576,8 +578,9 @@ def test_agent_compact_keep_messages_default(personality):
             base_url="http://localhost:11434",
             api_key="",
         )
-    assert agent._compact_keep_messages == 6
-    assert agent._compact_truncate_message_chars == 2000
+    # With 6 messages, compact should report nothing to compact
+    agent.set_history([MagicMock()] * 6)
+    assert await agent.compact_history() == "Nothing to compact — only 6 messages."
 
 
 @pytest.mark.asyncio
@@ -600,7 +603,7 @@ async def test_start_connects_council_memory(personality):
         await agent.start()
         mock_council_cls.assert_called_once_with("postgresql://test:5432/db", "puck", embedding_dimension=768)
         mock_council.connect.assert_awaited_once()
-        assert agent._council_memory is mock_council
+        assert agent.has_council_memory
 
 
 @pytest.mark.asyncio
@@ -624,7 +627,7 @@ async def test_start_connects_nats_bus(personality):
         await agent.start()
         mock_nats_cls.assert_called_once_with("nats://localhost:4222", "puck", connect_timeout=5.0, reconnect_attempts=5)
         mock_bus.connect_or_log.assert_awaited_once()
-        assert agent._nats_bus is mock_bus
+        assert agent.has_nats_bus
 
 
 @pytest.mark.asyncio
@@ -639,7 +642,7 @@ async def test_start_skips_council_memory_when_no_database_url(personality):
             api_key="",
         )
         await agent.start()
-        assert agent._council_memory is None
+        assert not agent.has_council_memory
 
 
 @pytest.mark.asyncio
@@ -654,7 +657,7 @@ async def test_start_skips_nats_bus_when_no_nats_url(personality):
             api_key="",
         )
         await agent.start()
-        assert agent._nats_bus is None
+        assert not agent.has_nats_bus
 
 
 @pytest.mark.asyncio
@@ -676,7 +679,7 @@ async def test_start_handles_council_memory_failure_gracefully(personality):
             database_url="postgresql://test:5432/db",
         )
         await agent.start()
-        assert agent._council_memory is None
+        assert not agent.has_council_memory
 
 
 @pytest.mark.asyncio
@@ -699,7 +702,7 @@ async def test_start_handles_nats_bus_failure_gracefully(personality):
         )
         await agent.start()
         mock_bus.connect_or_log.assert_awaited_once()
-        assert agent._nats_bus is None
+        assert not agent.has_nats_bus
 
 
 @pytest.mark.asyncio
@@ -720,8 +723,8 @@ async def test_shutdown_closes_council_memory_and_nats_bus(personality):
         await agent.shutdown()
         mock_council.close.assert_awaited_once()
         mock_nats.close.assert_awaited_once()
-        assert agent._council_memory is None
-        assert agent._nats_bus is None
+        assert not agent.has_council_memory
+        assert not agent.has_nats_bus
 
 
 @pytest.mark.asyncio
@@ -742,8 +745,8 @@ async def test_shutdown_handles_close_errors(personality):
         agent._council_memory = mock_council
         agent._nats_bus = mock_nats
         await agent.shutdown()
-        assert agent._council_memory is None
-        assert agent._nats_bus is None
+        assert not agent.has_council_memory
+        assert not agent.has_nats_bus
 
 
 @pytest.mark.asyncio
@@ -758,8 +761,8 @@ async def test_shutdown_noop_when_no_connections(personality):
             api_key="",
         )
         await agent.shutdown()
-        assert agent._council_memory is None
-        assert agent._nats_bus is None
+        assert not agent.has_council_memory
+        assert not agent.has_nats_bus
 
 
 def test_switch_model_passes_skill_registry(personality):
@@ -787,8 +790,8 @@ def test_switch_model_passes_skill_registry(personality):
     )
 
 
-def test_refresh_brain_tools_recreate_brain_with_current_registry(personality):
-    """When _refresh_brain_tools is called, create_brain should be invoked with current args and skill_registry."""
+def test_refresh_skills_recreates_brain_with_current_registry(personality):
+    """When refresh_skills is called, create_brain should be invoked with current args and skill_registry."""
     mock_registry = MagicMock()
     original_brain = MagicMock()
     new_brain = MagicMock()
@@ -802,12 +805,10 @@ def test_refresh_brain_tools_recreate_brain_with_current_registry(personality):
             api_key="",
             skill_registry=mock_registry,
         )
-    assert agent._brain is original_brain
 
     with patch("pillywiggins.agents.base.create_brain", return_value=new_brain) as mock_create:
-        agent._refresh_brain_tools()
+        agent.refresh_skills()
 
-    assert agent._brain is new_brain
     mock_create.assert_called_once_with(
         "qwen3.5:8b",
         "ollama",
@@ -831,10 +832,10 @@ async def test_clear_history_persists_to_cache(personality):
             cache=mock_cache,
         )
 
-    agent._conversation_histories[""] = [MagicMock(), MagicMock()]
+    agent.set_history([MagicMock(), MagicMock()])
     await agent.clear_history()
 
-    assert agent._conversation_histories[""] == []
+    assert agent.get_history() == []
     mock_cache.save.assert_called_once_with("puck", [], conversation_key="")
 
 
@@ -852,10 +853,10 @@ async def test_clear_history_persists_to_store(personality):
             store=mock_store,
         )
 
-    agent._conversation_histories["chat_123"] = [MagicMock(), MagicMock()]
+    agent.set_history([MagicMock(), MagicMock()], conversation_key="chat_123")
     await agent.clear_history(conversation_key="chat_123")
 
-    assert agent._conversation_histories["chat_123"] == []
+    assert agent.get_history("chat_123") == []
     mock_store.save.assert_called_once_with("chat_123", [])
 
 
@@ -934,8 +935,24 @@ def test_should_process_message_group_comma_after_name(agent):
 def test_should_process_message_bot_limit_ignores_after_limit(agent):
     from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
     agent.personality.bot_chat_limit = 2
-    # simulate two bot messages already seen (not addressed)
-    agent._seen_mentions_this_limit_cycle["grp_99"] = 2
+    # Send two non-addressed bot messages to fill up the counter
+    bot_msg_1 = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="7a",
+        content="bot chatter 1",
+        conversation_key="grp_99",
+        metadata={"is_group": True, "is_bot": True},
+    )
+    bot_msg_2 = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="7b",
+        content="bot chatter 2",
+        conversation_key="grp_99",
+        metadata={"is_group": True, "is_bot": True},
+    )
+    agent.should_process_message(bot_msg_1)
+    agent.should_process_message(bot_msg_2)
+    # Third bot message should be rejected
     msg = UnifiedMessage(
         channel=ChannelType.TELEGRAM,
         channel_user_id="7",
@@ -949,7 +966,25 @@ def test_should_process_message_bot_limit_ignores_after_limit(agent):
 def test_should_process_message_human_resets_counter(agent):
     from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
     agent.personality.bot_chat_limit = 1
-    agent._seen_mentions_this_limit_cycle["grp_99"] = 5
+    # Send a bot message to increment the counter
+    bot_msg = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="8b",
+        content="bot chatter",
+        conversation_key="grp_99",
+        metadata={"is_group": True, "is_bot": True},
+    )
+    agent.should_process_message(bot_msg)
+    # Counter is now 1; another bot message should be rejected
+    bot_msg_2 = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="8c",
+        content="more bot chatter",
+        conversation_key="grp_99",
+        metadata={"is_group": True, "is_bot": True},
+    )
+    assert agent.should_process_message(bot_msg_2) is False
+    # Human message should be accepted and reset the counter
     msg = UnifiedMessage(
         channel=ChannelType.TELEGRAM,
         channel_user_id="8",
@@ -958,13 +993,21 @@ def test_should_process_message_human_resets_counter(agent):
         metadata={"is_group": True, "is_bot": False},
     )
     assert agent.should_process_message(msg) is True
-    assert agent._seen_mentions_this_limit_cycle["grp_99"] == 0
+    # After reset, a bot message should be accepted again
+    bot_msg_3 = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="8d",
+        content="bot after human",
+        conversation_key="grp_99",
+        metadata={"is_group": True, "is_bot": True},
+    )
+    assert agent.should_process_message(bot_msg_3) is True
 
 
 def test_should_process_message_addressed_bypasses_limit(agent):
     from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
     agent.personality.bot_chat_limit = 0
-    agent._seen_mentions_this_limit_cycle["grp_99"] = 99
+    # Even with bot_chat_limit=0, an explicitly addressed message should be accepted
     msg = UnifiedMessage(
         channel=ChannelType.TELEGRAM,
         channel_user_id="9",

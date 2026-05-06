@@ -8,27 +8,11 @@ from pydantic_ai import RunContext
 from pillywiggins.agents.brain import _make_skill_tool
 from pillywiggins.agents.deps import AgentDeps
 from pillywiggins.skills.registry import Skill
+from tests.helpers import make_ctx, make_skill
 
 
-def _make_ctx(agent_id="puck", channel="discord", private_memory=None, skill_registry=None):
-    ctx = MagicMock(spec=RunContext)
-    ctx.deps = AgentDeps(
-        agent_id=agent_id,
-        channel=channel,
-        private_memory=private_memory,
-        skill_registry=skill_registry,
-    )
-    return ctx
-
-
-def _make_skill(name="test_skill", description="A test skill", run_func=None, meta=None, permissions=None):
-    if run_func is None:
-        run_func = AsyncMock(return_value="ok")
-    if meta is None:
-        meta = {"name": name, "description": description}
-    if permissions is None:
-        permissions = {"network": False, "subprocess": False, "file_write": False}
-    return Skill(name=name, description=description, run_func=run_func, meta=meta, permissions=permissions)
+_make_ctx = make_ctx
+_make_skill = make_skill
 
 
 class TestMakeSkillToolFunctionGeneration:

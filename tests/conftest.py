@@ -113,14 +113,13 @@ def mock_agent(personality):
     agent = MagicMock(spec=PillywigginAgent)
     agent.agent_id = "puck"
     agent.personality = personality
-    agent._model_name = "qwen3.5:8b"
-    agent._provider = "ollama"
-    agent._base_url = "http://localhost:11434"
-    agent._api_key = ""
-    agent._lock = AsyncMock()
-    agent._conversation_histories = {}
-    agent._brain = MagicMock()
     agent.model_name = "qwen3.5:8b"
+    agent.provider = "ollama"
+    agent.has_council_memory = False
+    agent.has_nats_bus = False
+    agent.skill_registry = None
+    agent._lock = AsyncMock()
+    agent._brain = MagicMock()
     agent.switch_model = MagicMock()
     agent.clear_history = AsyncMock()
     agent.handle_message = AsyncMock(return_value="response")

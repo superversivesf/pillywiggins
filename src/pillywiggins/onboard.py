@@ -1,3 +1,4 @@
+import logging
 import re
 import shutil
 import subprocess
@@ -57,6 +58,8 @@ YELLOW = "\033[33m"
 MAGENTA = "\033[35m"
 RED = "\033[31m"
 RESET = "\033[0m"
+
+logger = logging.getLogger(__name__)
 
 
 def _host_url(url: str) -> str:
@@ -300,7 +303,7 @@ def add_agent_to_agents_yaml(
 
     for entry in data["agents"]:
         if entry.get("id") == agent_id:
-            print(f"Agent '{agent_id}' already exists in agents.yaml")
+            logger.warning(f"Agent '{agent_id}' already exists in agents.yaml")
             return
 
     environment = {
@@ -333,7 +336,7 @@ def add_agent_to_agents_yaml(
 
     data["agents"].append(entry)
     save_yaml(AGENTS_YAML, data)
-    print(f"Added '{agent_id}' to agents.yaml")
+    logger.info(f"Added '{agent_id}' to agents.yaml")
 
 
 def add_agent_to_docker_compose(
@@ -354,7 +357,7 @@ def add_agent_to_docker_compose(
         compose["services"] = {}
 
     if agent_id in compose["services"]:
-        print(f"Service '{agent_id}' already exists in docker-compose.yaml")
+        logger.warning(f"Service '{agent_id}' already exists in docker-compose.yaml")
         return
 
     service_env = {
@@ -411,7 +414,7 @@ def add_agent_to_docker_compose(
             compose["volumes"][vol] = None
 
     save_yaml(DOCKER_COMPOSE, compose)
-    print(f"Added '{agent_id}' service to docker-compose.yaml")
+    logger.info(f"Added '{agent_id}' service to docker-compose.yaml")
 
 
 def add_token_to_env(agent_id: str, token_value: str, env_path: Path = ENV_FILE, channel: str = "telegram") -> None:
@@ -426,7 +429,7 @@ def add_token_to_env(agent_id: str, token_value: str, env_path: Path = ENV_FILE,
             token_line,
         ]
         write_text(env_path, "\n".join(lines) + "\n")
-        print(f"Created {env_path} with {token_env}")
+        logger.info(f"Created {env_path} with {token_env}")
         return
 
     content = read_text(env_path)
@@ -441,7 +444,7 @@ def add_token_to_env(agent_id: str, token_value: str, env_path: Path = ENV_FILE,
             else:
                 new_lines.append(line)
         write_text(env_path, "\n".join(new_lines))
-        print(f"Updated {token_env} in {env_path}")
+        logger.info(f"Updated {token_env} in {env_path}")
         return
 
     lines = content.split("\n")
@@ -469,7 +472,7 @@ def add_token_to_env(agent_id: str, token_value: str, env_path: Path = ENV_FILE,
         new_lines.append(token_line)
 
     write_text(env_path, "\n".join(new_lines))
-    print(f"Added {token_env} to {env_path}")
+    logger.info(f"Added {token_env} to {env_path}")
 
 
 def add_llm_api_key_to_env(agent_id: str, api_key: str, env_path: Path = ENV_FILE) -> None:
@@ -515,7 +518,7 @@ def add_llm_api_key_to_env(agent_id: str, api_key: str, env_path: Path = ENV_FIL
         new_lines.append(key_line)
 
     write_text(env_path, "\n".join(new_lines))
-    print(f"Added {key_env} to {env_path}")
+    logger.info(f"Added {key_env} to {env_path}")
 
 
 def add_brave_api_key_to_env(api_key: str, env_path: Path = ENV_FILE) -> None:
@@ -532,7 +535,7 @@ def add_brave_api_key_to_env(api_key: str, env_path: Path = ENV_FILE) -> None:
         if line.strip().startswith("BRAVE_API_KEY="):
             lines[i] = key_line
             write_text(env_path, "\n".join(lines))
-            print(f"Updated BRAVE_API_KEY in {env_path}")
+            logger.info(f"Updated BRAVE_API_KEY in {env_path}")
             return
 
     # Insert after search-related section
@@ -540,7 +543,7 @@ def add_brave_api_key_to_env(api_key: str, env_path: Path = ENV_FILE) -> None:
         if "Search" in line or "SEARXNG" in line or "BRAVE" in line:
             lines.insert(i + 1, key_line)
             write_text(env_path, "\n".join(lines))
-            print(f"Added BRAVE_API_KEY to {env_path}")
+            logger.info(f"Added BRAVE_API_KEY to {env_path}")
             return
 
     # Append at end with header
@@ -548,7 +551,7 @@ def add_brave_api_key_to_env(api_key: str, env_path: Path = ENV_FILE) -> None:
     lines.append("# --- Search Configuration ---")
     lines.append(key_line)
     write_text(env_path, "\n".join(lines))
-    print(f"Added BRAVE_API_KEY to {env_path}")
+    logger.info(f"Added BRAVE_API_KEY to {env_path}")
 
 
 def add_agent_to_configs(
@@ -589,7 +592,7 @@ def remove_agent_from_agents_yaml(agent_id: str) -> None:
         return
     data["agents"] = [a for a in data["agents"] if a.get("id") != agent_id]
     save_yaml(AGENTS_YAML, data)
-    print(f"Removed '{agent_id}' from agents.yaml")
+    logger.info(f"Removed '{agent_id}' from agents.yaml")
 
 
 def remove_agent_from_docker_compose(agent_id: str) -> None:
@@ -601,7 +604,7 @@ def remove_agent_from_docker_compose(agent_id: str) -> None:
     if agent_id in compose["services"]:
         del compose["services"][agent_id]
     save_yaml(DOCKER_COMPOSE, compose)
-    print(f"Removed '{agent_id}' service from docker-compose.yaml")
+    logger.info(f"Removed '{agent_id}' service from docker-compose.yaml")
 
 
 def comment_token_in_env(agent_id: str, env_path: Path = ENV_FILE) -> None:
@@ -623,7 +626,7 @@ def comment_token_in_env(agent_id: str, env_path: Path = ENV_FILE) -> None:
 
     if changed:
         write_text(env_path, "\n".join(new_lines))
-        print(f"Commented out {token_env} in {env_path}")
+        logger.info(f"Commented out {token_env} in {env_path}")
 
 
 def remove_agent_from_configs(agent_id: str) -> None:
@@ -635,7 +638,7 @@ def remove_agent_from_configs(agent_id: str) -> None:
 async def _add_agent_flow() -> None:
     personalities = discover_personalities()
     if not personalities:
-        print("No personality files found in personalities/")
+        logger.warning("No personality files found in personalities/")
         return
 
     personality = None  # initialise to avoid UnboundLocalError
@@ -740,13 +743,13 @@ async def _add_agent_flow() -> None:
             return
         valid, info = await validate_telegram_token(token)
         if not valid:
-            print(f"Token validation failed: {info}")
+            logger.warning(f"Token validation failed: {info}")
             confirm = await questionary.confirm("Continue anyway?", default=False).ask_async()
             if not confirm:
                 return
             bot_info = "(validation failed)"
         else:
-            print(f"Token valid! Bot: @{info}")
+            logger.info(f"Token valid! Bot: @{info}")
             bot_info = f"@{info}"
     elif channel == "discord":
         token = await questionary.text(
@@ -951,21 +954,21 @@ async def _add_agent_flow() -> None:
         "MODEL_NAME": chosen_model,
     }
 
-    print("\n--- Review ---")
-    print(f"  Agent ID:       {agent_id}")
-    print(f"  Personality:    {personality['name']} ({personality['filename']})")
-    print(f"  Channel:        {channel}")
-    print(f"  Bot:            {bot_info}")
-    print(f"  Token env var:  {token_env}")
-    print(f"  LLM provider:   {llm_provider}")
-    print(f"  LLM base URL:   {llm_base_url}")
-    print(f"  Model:          {chosen_model}")
-    print(f"  Allowed users:  {allowed_user_ids}")
-    print(f"  Bot chat limit: {bot_chat_limit}")
-    print(f"  Timezone:       {tz}")
+    logger.info("\n--- Review ---")
+    logger.info(f"  Agent ID:       {agent_id}")
+    logger.info(f"  Personality:    {personality['name']} ({personality['filename']})")
+    logger.info(f"  Channel:        {channel}")
+    logger.info(f"  Bot:            {bot_info}")
+    logger.info(f"  Token env var:  {token_env}")
+    logger.info(f"  LLM provider:   {llm_provider}")
+    logger.info(f"  LLM base URL:   {llm_base_url}")
+    logger.info(f"  Model:          {chosen_model}")
+    logger.info(f"  Allowed users:  {allowed_user_ids}")
+    logger.info(f"  Bot chat limit: {bot_chat_limit}")
+    logger.info(f"  Timezone:       {tz}")
     if llm_api_key:
-        print(f"  API key:        {'*' * 8}{llm_api_key[-4:]}")
-    print()
+        logger.info(f"  API key:        {'*' * 8}{llm_api_key[-4:]}")
+    logger.info("")
 
     confirm = await questionary.confirm("Write configs and start agent?", default=True).ask_async()
     if not confirm:
@@ -990,19 +993,19 @@ async def _add_agent_flow() -> None:
         default=True,
     ).ask_async()
     if start:
-        print("Building and starting all services...")
+        logger.info("Building and starting all services...")
         try:
             subprocess.run(["docker", "compose", "up", "-d", "--build"], check=False)
         except FileNotFoundError:
-            print("docker compose not found. Run manually: docker compose up -d --build")
+            logger.warning("docker compose not found. Run manually: docker compose up -d --build")
     else:
-        print("Run when ready: docker compose up -d --build")
+        logger.info("Run when ready: docker compose up -d --build")
 
 
 async def _reconfigure_agent_flow() -> None:
     agents = load_existing_agents()
     if not agents:
-        print("No agents found in agents.yaml")
+        logger.warning("No agents found in agents.yaml")
         return
 
     choices = [a["id"] for a in agents]
@@ -1142,7 +1145,7 @@ async def _reconfigure_agent_flow() -> None:
     data = load_yaml(AGENTS_YAML)
     data["agents"] = agents
     save_yaml(AGENTS_YAML, data)
-    print(f"Updated '{agent_id}' in agents.yaml")
+    logger.info(f"Updated '{agent_id}' in agents.yaml")
 
     channel = agent_data.get("channel", "telegram")
     if new_token:
@@ -1179,25 +1182,25 @@ async def _reconfigure_agent_flow() -> None:
 
         save_yaml(DOCKER_COMPOSE, compose)
 
-    print(f"\nReconfigured '{agent_id}'.")
+    logger.info(f"\nReconfigured '{agent_id}'.")
     start = await questionary.confirm(
         "Build and restart all services now?",
         default=True,
     ).ask_async()
     if start:
-        print("Building and restarting all services...")
+        logger.info("Building and restarting all services...")
         try:
             subprocess.run(["docker", "compose", "up", "-d", "--build"], check=False)
         except FileNotFoundError:
-            print("docker compose not found. Run manually: docker compose up -d --build")
+            logger.warning("docker compose not found. Run manually: docker compose up -d --build")
     else:
-        print("Run when ready: docker compose up -d --build")
+        logger.info("Run when ready: docker compose up -d --build")
 
 
 async def _remove_agent_flow() -> None:
     agents = load_existing_agents()
     if not agents:
-        print("No agents found in agents.yaml")
+        logger.warning("No agents found in agents.yaml")
         return
 
     choices = [a["id"] for a in agents]
@@ -1219,13 +1222,13 @@ async def _remove_agent_flow() -> None:
         pass
 
     remove_agent_from_configs(agent_id)
-    print(f"Agent '{agent_id}' removed.")
+    logger.info(f"Agent '{agent_id}' removed.")
 
 
 async def _start_restart_flow() -> None:
     agents = load_existing_agents()
     if not agents:
-        print("No agents configured. Add one first.")
+        logger.warning("No agents configured. Add one first.")
         return
 
     choices = ["All agents", "Select specific agent"]
@@ -1237,7 +1240,7 @@ async def _start_restart_flow() -> None:
         try:
             subprocess.run(["docker", "compose", "up", "-d", "--build"], check=False)
         except FileNotFoundError:
-            print("docker compose not found. Run manually: docker compose up -d --build")
+            logger.warning("docker compose not found. Run manually: docker compose up -d --build")
     else:
         agent_choices = [a["id"] for a in agents]
         agent_id = await questionary.select("Select agent:", choices=agent_choices).ask_async()
@@ -1246,7 +1249,7 @@ async def _start_restart_flow() -> None:
         try:
             subprocess.run(["docker", "compose", "up", "-d", "--build", agent_id], check=False)
         except FileNotFoundError:
-            print("docker compose not found. Run manually: docker compose up -d --build")
+            logger.warning("docker compose not found. Run manually: docker compose up -d --build")
 
 
 async def _configure_search_flow() -> None:
@@ -1256,8 +1259,8 @@ async def _configure_search_flow() -> None:
     env = _read_env_dict(ENV_FILE)
     current_provider = env.get("SEARCH_PROVIDER", "searxng")
 
-    print(f"\n{B}{CYAN}🔍 Search Configuration{RESET}")
-    print(f"{DIM}Current provider: {current_provider}{RESET}\n")
+    logger.info(f"\n{B}{CYAN}🔍 Search Configuration{RESET}")
+    logger.info(f"{DIM}Current provider: {current_provider}{RESET}\n")
 
     provider = await questionary.select(
         "Select web search provider:",
@@ -1308,15 +1311,16 @@ async def _configure_search_flow() -> None:
             env["SEARXNG_SECRET"] = new_secret
 
     _write_env_dict(ENV_FILE, env)
-    print(f"\n✅ Search provider set to: {provider}")
-    print(f"Values saved to {ENV_FILE}")
+    logger.info(f"\n✅ Search provider set to: {provider}")
+    logger.info(f"Values saved to {ENV_FILE}")
 
 
 async def onboard() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     ensure_config_files()
 
-    print(f"\n{B}{MAGENTA}🧚 Pillywiggins Onboard Wizard{RESET}")
-    print(f"{DIM}{'─' * 40}{RESET}\n")
+    logger.info(f"\n{B}{MAGENTA}🧚 Pillywiggins Onboard Wizard{RESET}")
+    logger.info(f"{DIM}{'─' * 40}{RESET}\n")
 
     while True:
         action = await questionary.select(
@@ -1332,7 +1336,7 @@ async def onboard() -> None:
         ).ask_async()
 
         if action is None or action == "👋 Exit":
-            print(f"\n{DIM}Goodbye!{RESET}")
+            logger.info(f"\n{DIM}Goodbye!{RESET}")
             return
 
         if action == "✨ Add agent":

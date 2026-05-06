@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, call
 import pytest
 
 from pillywiggins.memory.private import PrivateMemory
+from tests.helpers import make_pool_mock
 
 pytestmark = [
     pytest.mark.integration,
@@ -29,28 +30,13 @@ def oberon_memory():
     )
 
 
-def _make_pool_mock(acquire_return=None):
-    mock_pool = MagicMock()
-    mock_pool.close = AsyncMock()
-
-    if acquire_return is not None:
-
-        @asynccontextmanager
-        async def _acquire():
-            yield acquire_return
-
-        mock_pool.acquire = _acquire
-
-    return mock_pool
-
-
 def _capture_init_callback():
     init_callback = None
 
     async def capture_init(dsn, **kwargs):
         nonlocal init_callback
         init_callback = kwargs.get("init")
-        return _make_pool_mock()
+        return make_pool_mock()
 
     return capture_init, lambda: init_callback
 
@@ -58,7 +44,7 @@ def _capture_init_callback():
 @pytest.mark.asyncio
 async def test_init_connection_sets_agent_id(puck_memory):
     captured_init = None
-    mock_pool = _make_pool_mock()
+    mock_pool = make_pool_mock()
 
     async def capture_init(dsn, **kwargs):
         nonlocal captured_init
@@ -80,7 +66,7 @@ async def test_init_connection_sets_agent_id(puck_memory):
 @pytest.mark.asyncio
 async def test_init_uses_parameterised_set_config(puck_memory):
     captured_init = None
-    mock_pool = _make_pool_mock()
+    mock_pool = make_pool_mock()
 
     async def capture_init(dsn, **kwargs):
         nonlocal captured_init
@@ -105,8 +91,8 @@ async def test_init_uses_parameterised_set_config(puck_memory):
 async def test_different_agents_set_different_ids(puck_memory, oberon_memory):
     puck_init = None
     oberon_init = None
-    puck_pool = _make_pool_mock()
-    oberon_pool = _make_pool_mock()
+    puck_pool = make_pool_mock()
+    oberon_pool = make_pool_mock()
 
     async def capture_puck_init(dsn, **kwargs):
         nonlocal puck_init
@@ -153,7 +139,7 @@ async def test_save_sets_agent_id_before_insert(puck_memory):
         return await inner_execute(*args, **kwargs)
 
     mock_conn.execute = tracking_execute
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -174,7 +160,7 @@ async def test_save_sets_agent_id_before_insert(puck_memory):
 async def test_save_uses_correct_agent_id_in_values(puck_memory):
     mock_conn = AsyncMock()
     mock_conn.execute = AsyncMock()
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -228,7 +214,7 @@ async def test_search_sets_agent_id_before_select(puck_memory):
 async def test_search_uses_agent_id_scoped_query(puck_memory):
     mock_conn = AsyncMock()
     mock_conn.fetch = AsyncMock(return_value=[])
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -248,7 +234,7 @@ async def test_search_uses_agent_id_scoped_query(puck_memory):
 async def test_delete_sets_agent_id_before_delete(puck_memory):
     mock_conn = AsyncMock()
     mock_conn.execute = AsyncMock(return_value="DELETE 1")
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -275,7 +261,7 @@ async def test_cross_agent_isolation_search_returns_no_rows(puck_memory):
 
     mock_conn = AsyncMock()
     mock_conn.fetch = AsyncMock(return_value=[])
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -312,7 +298,7 @@ async def test_cross_agent_isolation_search_returns_no_rows(puck_memory):
 async def test_cross_agent_cannot_delete_other_memory(puck_memory):
     mock_conn = AsyncMock()
     mock_conn.execute = AsyncMock(return_value="DELETE 0")
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -330,7 +316,7 @@ async def test_cross_agent_cannot_delete_other_memory(puck_memory):
 async def test_cross_agent_save_cannot_inject_wrong_id(puck_memory):
     mock_conn = AsyncMock()
     mock_conn.execute = AsyncMock()
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -350,7 +336,7 @@ async def test_cross_agent_save_cannot_inject_wrong_id(puck_memory):
 @pytest.mark.asyncio
 async def test_pool_connect_lifecycle(puck_memory):
     init_callback = None
-    mock_pool = _make_pool_mock()
+    mock_pool = make_pool_mock()
 
     async def capture_init(dsn, **kwargs):
         nonlocal init_callback
@@ -396,7 +382,7 @@ async def test_pool_connect_error(puck_memory):
 async def test_pool_acquire_releases_connection(puck_memory):
     mock_conn = AsyncMock()
     mock_conn.fetch = AsyncMock(return_value=[])
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -457,7 +443,7 @@ async def test_agent_id_sql_injection_safety():
     )
 
     init_callback = None
-    mock_pool = _make_pool_mock()
+    mock_pool = make_pool_mock()
 
     async def capture_init(dsn, **kwargs):
         nonlocal init_callback

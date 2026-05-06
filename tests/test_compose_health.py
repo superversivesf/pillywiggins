@@ -8,57 +8,33 @@ Proves the compose stack works end-to-end by:
 4. Verifying inter-container TCP connectivity.
 5. Cleaning up unconditionally.
 
-This test is **slow** (30–90s) and is tagged so CI can skip it.
+This test is **slow** (30-90s) and is tagged so CI can skip it.
 """
 
-import json
 import os
 import shutil
 import subprocess
 import tempfile
-import time
 
 import pytest
 import yaml
 
+from tests.integration.conftest import (
+    INFRA_SERVICES,
+    _docker_compose_cmd,
+    _merged_compose_with_alt_ports,
+    _project_dir,
+    _wait_for_healthy,
+)
+
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.slow,
+    pytest.mark.usefixtures("docker_available"),
 ]
 
 PROJECT_NAME = "pillywiggins-health"
 COMPOSE_FILE = "docker-compose.yaml"
-INFRA_SERVICES = ["postgres", "redis", "nats"]
-HEALTH_TIMEOUT = 60
-POLL_INTERVAL = 2
-# Alternative host ports so we don't collide with local infra or other tests.
-ALT_PORTS = {
-    "postgres": ["15432:5432"],
-    "redis": ["16379:6379"],
-    "nats": ["14222:4222", "18222:8222"],
-}
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="module")
-def docker_available():
-    """Skip the entire module if Docker is not running."""
-    try:
-        subprocess.run(
-            ["docker", "info"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=True,
-        )
-    except Exception as exc:
-        pytest.skip(f"Docker not available: {exc}")
-
-
-def _project_dir():
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _ensure_compose_file(project_dir: str) -> str:
@@ -72,29 +48,17 @@ def _ensure_compose_file(project_dir: str) -> str:
     return compose_path
 
 
-def _parse_ps_json(stdout: str):
-    """Handle both JSON-array and newline-delimited JSON from ``docker compose ps``."""
-    stdout = stdout.strip()
-    if not stdout:
-        return []
-    try:
-        data = json.loads(stdout)
-        if isinstance(data, list):
-            return data
-        return [data]
-    except json.JSONDecodeError:
-        return [json.loads(line) for line in stdout.splitlines() if line.strip()]
+def _add_healthchecks(merged_path: str) -> None:
+    """Add missing healthchecks for redis and nats to the merged compose file.
 
-
-def _merged_compose_file(compose_path: str, tmpdir: str) -> str:
-    """Return a merged compose file with alt host ports and missing healthchecks."""
-    with open(compose_path) as f:
+    Some compose templates omit healthchecks for these services; without them
+    ``docker compose ps`` will never report ``healthy``, causing the shared
+    ``_wait_for_healthy`` helper to time out.
+    """
+    with open(merged_path) as f:
         data = yaml.safe_load(f)
 
     services = data.setdefault("services", {})
-    for svc, port_mappings in ALT_PORTS.items():
-        if svc in services:
-            services[svc]["ports"] = port_mappings
 
     if "redis" in services and not services["redis"].get("healthcheck"):
         services["redis"]["healthcheck"] = {
@@ -118,14 +82,17 @@ def _merged_compose_file(compose_path: str, tmpdir: str) -> str:
             "start_period": "3s",
         }
 
-    merged_path = os.path.join(tmpdir, "docker-compose.merged.yaml")
     with open(merged_path, "w") as f:
         yaml.dump(data, f)
-    return merged_path
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
-def compose_infra(docker_available):
+def compose_infra():
     """
     Bring up infrastructure services and tear them down after the module.
 
@@ -136,10 +103,11 @@ def compose_infra(docker_available):
     compose_path = _ensure_compose_file(project_dir)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        merged_path = _merged_compose_file(compose_path, tmpdir)
-        dc = [
-            "docker",
-            "compose",
+        merged_path = _merged_compose_with_alt_ports(compose_path, tmpdir)
+        _add_healthchecks(merged_path)
+
+        base = _docker_compose_cmd()
+        dc = base + [
             "-f",
             merged_path,
             "--project-directory",
@@ -172,48 +140,8 @@ def compose_infra(docker_available):
 
         # --- 3. Wait for healthy ---
         try:
-            start = time.monotonic()
-            last_status = {}
-            while time.monotonic() - start < HEALTH_TIMEOUT:
-                ps = subprocess.run(
-                    dc + ["ps", "--format", "json"],
-                    capture_output=True,
-                    text=True,
-                )
-                containers = _parse_ps_json(ps.stdout)
-                healthy_by_svc = {svc: False for svc in INFRA_SERVICES}
-                for c in containers:
-                    svc = c.get("Service") or c.get("service")
-                    health = c.get("Health") or c.get("health")
-                    if svc in healthy_by_svc and health == "healthy":
-                        healthy_by_svc[svc] = True
-                last_status = {
-                    (c.get("Service") or c.get("service")): (
-                        c.get("Health") or c.get("health")
-                    )
-                    for c in containers
-                }
-                if all(healthy_by_svc.values()):
-                    break
-                time.sleep(POLL_INTERVAL)
-            else:
-                # Timeout reached — collect logs and fail
-                logs = {}
-                for svc in INFRA_SERVICES:
-                    if not healthy_by_svc.get(svc):
-                        log_res = subprocess.run(
-                            dc + ["logs", svc],
-                            capture_output=True,
-                            text=True,
-                        )
-                        logs[svc] = log_res.stdout + log_res.stderr
-                msg = (
-                    f"Services did not become healthy within {HEALTH_TIMEOUT}s.\n"
-                    f"Last status: {last_status}\n"
-                )
-                for svc, log in logs.items():
-                    msg += f"\n--- {svc} logs ---\n{log}\n"
-                pytest.fail(msg)
+            for svc in INFRA_SERVICES:
+                _wait_for_healthy(dc, svc)
 
             yield {
                 "services": INFRA_SERVICES,

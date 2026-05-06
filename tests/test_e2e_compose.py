@@ -36,6 +36,16 @@ import time
 import pytest
 import yaml
 
+from tests.integration.conftest import (
+    ALT_PORTS_SEQ,
+    INFRA_SERVICES,
+    _container_id,
+    _docker_compose_cmd,
+    _merged_compose_with_alt_ports,
+    _project_dir,
+    _wait_for_healthy,
+)
+
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.usefixtures("docker_available"),
@@ -48,113 +58,8 @@ pytestmark = [
 BASE_COMPOSE_FILE = os.environ.get("COMPOSE_FILE",
     "docker-compose.yaml" if os.path.exists("docker-compose.yaml") else "docker-compose.yaml.example")
 E2E_PROJECT = "pillywiggins-e2e"
-INFRA_SERVICES = ["postgres", "redis", "nats"]
-# Alternative host ports so we don't collide with local postgres/redis/nats.
-ALT_PORTS_SEQ = {"postgres": [25432], "redis": [26379], "nats": [24222, 28222]}
-HEALTHY_TIMEOUT = 120
-POLL_INTERVAL = 2
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _docker_compose_cmd():
-    """Return the working Docker Compose command as a list.
-
-    Prefers ``docker compose`` (Compose V2 plugin) and falls back to
-    ``docker-compose`` (legacy standalone binary).
-    """
-    for base in (["docker", "compose"], ["docker-compose"]):
-        if subprocess.run(base + ["version"], capture_output=True).returncode == 0:
-            return base
-    pytest.skip("No docker compose command available")
-
-
-def _project_dir():
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def _merged_compose_with_alt_ports(compose_file, tmpdir):
-    """Return a path to a merged compose file where infra services use alt host ports."""
-    with open(compose_file) as f:
-        data = yaml.safe_load(f)
-    for svc in INFRA_SERVICES:
-        ports = data.get("services", {}).get(svc, {}).get("ports", [])
-        if not ports:
-            continue
-        new_ports = []
-        alt_seq = ALT_PORTS_SEQ[svc]
-        for idx, p in enumerate(ports):
-            alt = alt_seq[idx] if idx < len(alt_seq) else alt_seq[0]
-            if isinstance(p, str):
-                parts = p.split(":")
-                if len(parts) == 1:
-                    new_ports.append(f"{alt}:{parts[0]}")
-                elif len(parts) == 2:
-                    new_ports.append(f"{alt}:{parts[1]}")
-                else:
-                    new_ports.append(f"{alt}:{parts[1]}")
-            elif isinstance(p, dict):
-                target = p.get("target", p.get("container", ""))
-                proto = p.get("protocol", "tcp")
-                if target:
-                    new_ports.append(f"{alt}:{target}/{proto}")
-                else:
-                    new_ports.append(str(alt))
-            elif isinstance(p, int):
-                new_ports.append(f"{alt}:{p}")
-        data["services"][svc]["ports"] = new_ports
-    merged_path = os.path.join(tmpdir, "docker-compose.e2e-alt-ports.yaml")
-    with open(merged_path, "w") as f:
-        yaml.dump(data, f)
-    return merged_path
-
-
-def _container_id(dc, service: str) -> str:
-    res = subprocess.run(
-        dc + ["ps", "-q", service],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return res.stdout.strip()
-
-
-def _container_status(container_id: str) -> dict:
-    if not container_id:
-        return {"running": False, "healthy": False, "status": "missing"}
-    inspect = subprocess.run(
-        ["docker", "inspect", container_id],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    data = json.loads(inspect.stdout)[0]
-    state = data.get("State", {})
-    health = state.get("Health", {})
-    return {
-        "running": state.get("Running", False),
-        "status": state.get("Status", ""),
-        "healthy": health.get("Status") == "healthy",
-        "health_status": health.get("Status", "none"),
-    }
-
-
-def _wait_for_healthy(dc, service: str, timeout: int = HEALTHY_TIMEOUT):
-    cid = _container_id(dc, service)
-    start = time.time()
-    while time.time() - start < timeout:
-        status = _container_status(cid)
-        if status["healthy"]:
-            return
-        if not status["running"] and time.time() - start > 10:
-            pytest.fail(
-                f"Container for {service} is not running (status={status['status']})"
-            )
-        time.sleep(POLL_INTERVAL)
-        cid = _container_id(dc, service)
-    pytest.fail(f"Container for {service} did not become healthy within {timeout}s")
+# Use a distinct port range so e2e can run alongside the smoke/health suites.
+E2E_ALT_PORTS = {"postgres": [25432], "redis": [26379], "nats": [24222, 28222]}
 
 
 @contextlib.contextmanager
@@ -235,7 +140,7 @@ def alt_compose_file():
     if not os.path.exists(compose_file_path):
         pytest.skip(f"{BASE_COMPOSE_FILE} not found")
     with tempfile.TemporaryDirectory() as tmpdir:
-        yield _merged_compose_with_alt_ports(compose_file_path, tmpdir)
+        yield _merged_compose_with_alt_ports(compose_file_path, tmpdir, alt_ports=E2E_ALT_PORTS)
 
 
 @pytest.fixture(scope="module")

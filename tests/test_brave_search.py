@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.helpers import make_mock_aiohttp_response, make_mock_aiohttp_session
+
 
 @pytest.fixture
 def skill_module(tmp_path):
@@ -41,10 +43,9 @@ async def test_brave_search_no_api_key(skill_module):
 @pytest.mark.asyncio
 async def test_brave_search_success(skill_module):
     """Happy path returns parsed results."""
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(
-        return_value={
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={
             "web": {
                 "results": [
                     {
@@ -56,15 +57,9 @@ async def test_brave_search_success(skill_module):
                     }
                 ]
             }
-        }
+        },
     )
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.get = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session = make_mock_aiohttp_session(method="get", response=mock_resp)
 
     with (
         patch.dict("os.environ", {"BRAVE_API_KEY": "test-key"}),
@@ -83,15 +78,8 @@ async def test_brave_search_success(skill_module):
 @pytest.mark.asyncio
 async def test_brave_search_rate_limit(skill_module):
     """429 returns rate limit error."""
-    mock_resp = AsyncMock()
-    mock_resp.status = 429
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.get = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_resp = make_mock_aiohttp_response(status=429)
+    mock_session = make_mock_aiohttp_session(method="get", response=mock_resp)
 
     with (
         patch.dict("os.environ", {"BRAVE_API_KEY": "test-key"}),
@@ -105,15 +93,8 @@ async def test_brave_search_rate_limit(skill_module):
 @pytest.mark.asyncio
 async def test_brave_search_401_invalid_key(skill_module):
     """401 returns invalid key error immediately (no retry)."""
-    mock_resp = AsyncMock()
-    mock_resp.status = 401
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.get = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_resp = make_mock_aiohttp_response(status=401)
+    mock_session = make_mock_aiohttp_session(method="get", response=mock_resp)
 
     with (
         patch.dict("os.environ", {"BRAVE_API_KEY": "bad-key"}),
@@ -128,16 +109,11 @@ async def test_brave_search_401_invalid_key(skill_module):
 @pytest.mark.asyncio
 async def test_brave_search_empty_results(skill_module):
     """Empty results from API returns friendly error."""
-    mock_resp = AsyncMock()
-    mock_resp.status = 200
-    mock_resp.json = AsyncMock(return_value={"web": {"results": []}})
-    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = AsyncMock()
-    mock_session.get = MagicMock(return_value=mock_resp)
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"web": {"results": []}},
+    )
+    mock_session = make_mock_aiohttp_session(method="get", response=mock_resp)
 
     with (
         patch.dict("os.environ", {"BRAVE_API_KEY": "test-key"}),

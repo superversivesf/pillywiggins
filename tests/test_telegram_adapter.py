@@ -26,6 +26,7 @@ if "telegram" not in sys.modules:
 
 from pillywiggins.adapters.telegram_adapter import TelegramAdapter, TimedOut
 from pillywiggins.messaging.unified import ChannelType
+from tests.helpers import make_mock_agent, make_mock_settings
 
 
 def _make_update(
@@ -52,25 +53,13 @@ def _make_update(
 
 
 def _make_adapter():
-    agent = MagicMock()
-    agent.agent_id = "puck"
-    agent.personality = MagicMock()
-    agent.personality.channel = "telegram"
+    agent = make_mock_agent(channel="telegram")
     agent.personality.bot_chat_limit = 3
-    agent.model_name = "qwen3.5:8b"
-    agent.handle_message = AsyncMock(return_value="response")
     agent.should_process_message = MagicMock(return_value=True)
     agent._get_history = MagicMock(return_value=[])
-    agent.compact_history = AsyncMock(return_value="Compacted")
-    agent.clear_history = AsyncMock()
     agent._skill_registry = MagicMock()
     agent._skill_registry.list_skills = MagicMock(return_value=[])
-    settings = MagicMock()
-    settings.llm_base_url = "http://localhost:11434"
-    settings.llm_api_key = ""
-    settings.llm_provider = "ollama"
-    settings.get_allowed_user_ids = MagicMock(return_value=set())
-    settings.allowed_user_ids = "all"
+    settings = make_mock_settings()
     adapter = TelegramAdapter(agent, "fake-token", settings)
     adapter._app = MagicMock()
     adapter._app.bot = MagicMock()

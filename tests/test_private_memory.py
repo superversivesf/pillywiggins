@@ -1,10 +1,10 @@
 from datetime import datetime, timezone
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from pillywiggins.memory.private import PrivateMemory
+from tests.helpers import make_pool_mock
 
 
 @pytest.fixture
@@ -14,21 +14,6 @@ def memory():
         agent_id="puck",
         embedding_dimension=3,  # short dimension for unit tests
     )
-
-
-def _make_pool_mock(acquire_return=None):
-    mock_pool = MagicMock()
-    mock_pool.close = AsyncMock()
-
-    if acquire_return is not None:
-
-        @asynccontextmanager
-        async def _acquire():
-            yield acquire_return
-
-        mock_pool.acquire = _acquire
-
-    return mock_pool
 
 
 @pytest.mark.asyncio
@@ -76,7 +61,7 @@ async def test_save_inserts_memory(memory):
     mock_conn.execute = AsyncMock()
     mock_conn.fetchrow = AsyncMock(return_value={"atttypmod": 3})
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -101,7 +86,7 @@ async def test_save_without_metadata(memory):
     mock_conn = AsyncMock()
     mock_conn.execute = AsyncMock()
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -147,7 +132,7 @@ async def test_search_returns_results(memory):
         ]
     )
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -168,7 +153,7 @@ async def test_search_empty_results(memory):
     mock_conn = AsyncMock()
     mock_conn.fetch = AsyncMock(return_value=[])
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -187,7 +172,7 @@ async def test_delete_removes_memory(memory):
     mock_conn = AsyncMock()
     mock_conn.execute = AsyncMock(return_value="DELETE 1")
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -206,7 +191,7 @@ async def test_delete_not_found(memory):
     mock_conn = AsyncMock()
     mock_conn.execute = AsyncMock(return_value="DELETE 0")
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -225,7 +210,7 @@ async def test_save_passes_embedding_as_vector_cast(memory):
     mock_conn = AsyncMock()
     mock_conn.execute = AsyncMock()
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -246,7 +231,7 @@ async def test_search_passes_embedding_as_vector_cast(memory):
     mock_conn = AsyncMock()
     mock_conn.fetch = AsyncMock(return_value=[])
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -324,7 +309,7 @@ async def test_save_rejects_wrong_dimension_embedding():
     mock_conn.execute = AsyncMock()
     mock_conn.fetchrow = AsyncMock(return_value={"atttypmod": 768})
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
     await mem.close()
 
 
@@ -344,7 +329,7 @@ async def test_save_accepts_correct_dimension_embedding():
     mock_conn.execute = AsyncMock()
     mock_conn.fetchrow = AsyncMock(return_value={"atttypmod": 768})
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await mem.connect()
@@ -371,7 +356,7 @@ async def test_search_rejects_wrong_dimension_embedding():
 
     mock_conn = AsyncMock()
     mock_conn.fetch = AsyncMock(return_value=[])
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await mem.connect()
@@ -397,7 +382,7 @@ async def test_search_accepts_correct_dimension_embedding():
 
     mock_conn = AsyncMock()
     mock_conn.fetch = AsyncMock(return_value=[])
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch("pillywiggins.memory.base.asyncpg.create_pool", new_callable=AsyncMock, return_value=mock_pool):
         await mem.connect()
@@ -456,7 +441,7 @@ async def test_search_sanitizes_injected_content(memory):
         }
     ])
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -493,7 +478,7 @@ async def test_search_passes_clean_content(memory):
         }
     ])
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -527,7 +512,7 @@ async def test_connect_migrates_dimension_mismatch():
     mock_conn.execute = AsyncMock()
     mock_conn.fetchrow = AsyncMock(return_value={"atttypmod": 768})
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -557,7 +542,7 @@ async def test_connect_skips_migration_when_matches():
     mock_conn.execute = AsyncMock()
     mock_conn.fetchrow = AsyncMock(return_value={"atttypmod": 768})
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",
@@ -585,7 +570,7 @@ async def test_connect_no_migration_when_column_missing():
     mock_conn.execute = AsyncMock()
     mock_conn.fetchrow = AsyncMock(return_value=None)
 
-    mock_pool = _make_pool_mock(acquire_return=mock_conn)
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
 
     with patch(
         "pillywiggins.memory.base.asyncpg.create_pool",

@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.helpers import make_mock_aiohttp_response, make_mock_aiohttp_session
+
 
 @pytest.fixture
 def skill_module(tmp_path):
@@ -85,16 +87,8 @@ class TestWebSearchMeta:
 class TestWebSearchRun:
     @pytest.mark.asyncio
     async def test_returns_results_on_success(self, skill_module):
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.json = AsyncMock(return_value=MOCK_SEARCH_RESPONSE)
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_resp = make_mock_aiohttp_response(status=200, json_data=MOCK_SEARCH_RESPONSE)
+        mock_session = make_mock_aiohttp_session(method="get", response=mock_resp)
 
         mock_timeout = MagicMock()
 
@@ -124,16 +118,8 @@ class TestWebSearchRun:
             ],
             "query": "test",
         }
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.json = AsyncMock(return_value=data_with_empty)
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_resp = make_mock_aiohttp_response(status=200, json_data=data_with_empty)
+        mock_session = make_mock_aiohttp_session(method="get", response=mock_resp)
 
         mock_timeout = MagicMock()
 
@@ -184,15 +170,8 @@ class TestWebSearchRun:
 
     @pytest.mark.asyncio
     async def test_non_200_status(self, skill_module):
-        mock_resp = AsyncMock()
-        mock_resp.status = 500
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_resp = make_mock_aiohttp_response(status=500)
+        mock_session = make_mock_aiohttp_session(method="get", response=mock_resp)
 
         mock_timeout = MagicMock()
 
@@ -211,11 +190,7 @@ class TestWebSearchRun:
 
     @pytest.mark.asyncio
     async def test_custom_categories_override_env(self, skill_module):
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.json = AsyncMock(return_value={"results": [], "query": "test"})
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
+        mock_resp = make_mock_aiohttp_response(status=200, json_data={"results": [], "query": "test"})
 
         call_args = {}
 
@@ -245,11 +220,7 @@ class TestWebSearchRun:
 
     @pytest.mark.asyncio
     async def test_custom_engines_passed(self, skill_module):
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.json = AsyncMock(return_value={"results": [], "query": "test"})
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
+        mock_resp = make_mock_aiohttp_response(status=200, json_data={"results": [], "query": "test"})
 
         call_args = {}
 
@@ -283,16 +254,8 @@ class TestWebSearchRun:
             {"title": f"Result {i}", "url": f"https://example.com/{i}", "content": f"desc {i}", "engine": "google"}
             for i in range(20)
         ]
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.json = AsyncMock(return_value={"results": lots, "query": "test"})
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        mock_session = AsyncMock()
-        mock_session.get = MagicMock(return_value=mock_resp)
-        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_resp = make_mock_aiohttp_response(status=200, json_data={"results": lots, "query": "test"})
+        mock_session = make_mock_aiohttp_session(method="get", response=mock_resp)
 
         mock_timeout = MagicMock()
 

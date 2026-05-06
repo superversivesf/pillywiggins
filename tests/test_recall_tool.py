@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pillywiggins.agents.brain import create_brain, recall_private_memory, save_to_private_memory
+from pillywiggins.agents.brain import create_brain, get_tool_names, recall_private_memory, save_to_private_memory
 from pillywiggins.agents.deps import AgentDeps
 
 
@@ -24,7 +24,7 @@ def test_create_brain_registers_recall_tool(monkeypatch):
         base_url="http://localhost:11434",
         api_key="",
     )
-    tool_names = [t.name for t in agent._function_toolset.tools.values()]
+    tool_names = get_tool_names(agent)
     assert "recall_private_memory" in tool_names
 
 
@@ -37,7 +37,7 @@ def test_create_brain_registers_save_tool(monkeypatch):
         base_url="http://localhost:11434",
         api_key="",
     )
-    tool_names = [t.name for t in agent._function_toolset.tools.values()]
+    tool_names = get_tool_names(agent)
     assert "save_to_private_memory" in tool_names
 
 
