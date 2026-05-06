@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable, Coroutine
-from functools import partial
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse

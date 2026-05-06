@@ -10,7 +10,6 @@ class Personality:
     description: str = ""
     system_prompt: str = ""
     traits: list[str] = field(default_factory=list)
-    scheduling: dict = field(default_factory=dict)
     schedules: list[dict] = field(default_factory=list)
     bot_chat_limit: int = 3
     timezone: str = "UTC"
@@ -31,8 +30,7 @@ class Personality:
         if self.system_prompt:
             parts.append(self.system_prompt)
         elif self.archetype:
-            if self.archetype:
-                parts.append(f"Archetype: {self.archetype}.")
+            parts.append(f"Archetype: {self.archetype}.")
             if self.tone:
                 parts.append(f"Tone: {self.tone}.")
             if self.style:
@@ -87,7 +85,6 @@ def load_personality(path: str) -> Personality:
         description=description,
         system_prompt=system_prompt,
         traits=data.get("traits", []),
-        scheduling=data.get("scheduling", {}),
         schedules=data.get("schedules", []),
         bot_chat_limit=int(limit),
         timezone=data.get("timezone", "UTC"),

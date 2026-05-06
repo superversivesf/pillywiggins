@@ -195,7 +195,6 @@ class TestSkillBroadcastCrossAgent:
             description="A mischievous test fairy",
             system_prompt="You are Puck.",
             traits=["playful"],
-            scheduling={"interval": 60},
         )
 
     @pytest.fixture

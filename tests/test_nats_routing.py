@@ -13,7 +13,6 @@ def personality():
         description="A mischievous test fairy",
         system_prompt="You are Puck.",
         traits=["playful"],
-        scheduling={"interval": 60},
     )
 
 
@@ -271,7 +270,6 @@ async def test_cross_agent_routing_preserves_original_metadata():
         description="A mischievous test fairy",
         system_prompt="You are Puck.",
         traits=["playful"],
-        scheduling={"interval": 60},
     )
 
     mock_nats_bus = AsyncMock()
@@ -384,7 +382,6 @@ async def test_cross_agent_routing_with_empty_metadata():
         description="A mischievous test fairy",
         system_prompt="You are Puck.",
         traits=["playful"],
-        scheduling={"interval": 60},
     )
 
     mock_nats_bus = AsyncMock()
@@ -449,7 +446,6 @@ async def test_cross_agent_routing_preserves_nested_metadata():
         description="A mischievous test fairy",
         system_prompt="You are Puck.",
         traits=["playful"],
-        scheduling={"interval": 60},
     )
 
     mock_nats_bus = AsyncMock()

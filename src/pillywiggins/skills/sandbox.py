@@ -14,11 +14,6 @@ logger = logging.getLogger(__name__)
 
 SAFE_ENV_VARS = {"PATH", "HOME", "USER", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE"}
 
-DENIED_ENV_PATTERNS = (
-    "DATABASE", "DB_", "SECRET", "TOKEN", "API_KEY", "PASSWORD",
-    "AUTH", "CREDENTIAL", "PRIVATE", "OLLAMA_API_KEY", "OPENAI_API_KEY",
-    "REDIS", "NATS", "POSTGRES", "PG_",
-)
 
 DEFAULT_TIMEOUT = 30
 
@@ -57,13 +52,6 @@ def restricted_env(permissions: dict[str, bool]) -> dict[str, str]:
 
     return env
 
-
-def _is_dangerous_env(key: str) -> bool:
-    upper = key.upper()
-    for pattern in DENIED_ENV_PATTERNS:
-        if upper.startswith(pattern) or upper == pattern:
-            return True
-    return False
 
 
 _WRAPPER_TEMPLATE = """\

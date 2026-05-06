@@ -113,8 +113,7 @@ def _extract_meta(code: str) -> dict:
             for target in node.targets:
                 if isinstance(target, ast.Name) and target.id == "SKILL_META":
                     try:
-                        compiled = compile(ast.Expression(node.value), "<meta>", "eval")
-                        return eval(compiled)
+                        return ast.literal_eval(node.value)
                     except Exception:
                         pass
     # AST didn't find a dict assignment; try comment-format fallback

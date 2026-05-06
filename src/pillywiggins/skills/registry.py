@@ -209,18 +209,6 @@ class SkillRegistry:
         except Exception:
             logger.warning("Failed to broadcast skill reload notification", exc_info=True)
 
-    def broadcast_reload(self) -> None:
-        """Synchronous facade to broadcast a reload notification.
-
-        Schedules :meth:`_notify_reload` on the running event loop if one is present.
-        """
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            logger.warning("No running event loop; cannot broadcast skill reload")
-            return
-        loop.create_task(self._notify_reload())
-
     def load_all(self) -> list[Skill]:
         self._skills.clear()
         self.load_errors.clear()
