@@ -35,7 +35,7 @@ class BaseAdapter(ABC):
 
     async def shutdown(self) -> None:
         """Gracefully shut down the adapter. Default no-op; override in subclasses."""
-        pass
+
 
     def _is_authorized(self, user_id) -> bool:
         if self._allow_all:

@@ -10,16 +10,18 @@ import pytest
 from pydantic_ai import RunContext
 
 from pillywiggins.agents.brain import (
+    build_skill,
+    test_skill_code as run_skill_test,
+    review_skill_code,
+    publish_skill_code,
+)
+from pillywiggins.agents.tools import (
     _make_skill_tool,
     _should_sandbox,
     _retry_counts,
     _get_retry_key,
     _check_and_increment_retries,
     _format_correction_prompt,
-    build_skill,
-    test_skill_code as run_skill_test,
-    review_skill_code,
-    publish_skill_code,
 )
 from pillywiggins.skills.registry import Skill, SkillRegistry
 from tests.helpers import make_ctx, make_skill
@@ -62,7 +64,7 @@ class TestShouldSandbox:
 class TestRunSandboxedSkill:
     @pytest.mark.asyncio
     async def test_skill_no_file_path_returns_error(self):
-        from pillywiggins.agents.brain import _run_sandboxed_skill
+        from pillywiggins.agents.tools import _run_sandboxed_skill
 
         skill = _make_skill(name="nofile")
         result = await _run_sandboxed_skill(skill, {}, "puck", "discord")
@@ -71,7 +73,7 @@ class TestRunSandboxedSkill:
     @pytest.mark.asyncio
     @patch("pillywiggins.skills.sandbox.run_sandboxed", new_callable=AsyncMock)
     async def test_sandbox_failure_returns_error(self, mock_run_sandboxed):
-        from pillywiggins.agents.brain import _run_sandboxed_skill
+        from pillywiggins.agents.tools import _run_sandboxed_skill
 
         mock_run_sandboxed.return_value = MagicMock(
             success=False, error="timeout exceeded", result=None
@@ -84,7 +86,7 @@ class TestRunSandboxedSkill:
     @pytest.mark.asyncio
     @patch("pillywiggins.skills.sandbox.run_sandboxed", new_callable=AsyncMock)
     async def test_sandbox_success_with_string_result(self, mock_run_sandboxed):
-        from pillywiggins.agents.brain import _run_sandboxed_skill
+        from pillywiggins.agents.tools import _run_sandboxed_skill
 
         mock_run_sandboxed.return_value = MagicMock(success=True, error=None, result="hello world")
         skill = _make_skill(name="str_skill", file_path=Path("/some/path/str_skill.py"))
@@ -95,7 +97,7 @@ class TestRunSandboxedSkill:
     @pytest.mark.asyncio
     @patch("pillywiggins.skills.sandbox.run_sandboxed", new_callable=AsyncMock)
     async def test_sandbox_success_with_dict_result(self, mock_run_sandboxed):
-        from pillywiggins.agents.brain import _run_sandboxed_skill
+        from pillywiggins.agents.tools import _run_sandboxed_skill
 
         mock_run_sandboxed.return_value = MagicMock(
             success=True, error=None, result={"key": "value"}

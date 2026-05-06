@@ -68,7 +68,7 @@ def personality():
         description="A mischievous test fairy",
         system_prompt="You are Puck, a mischievous fairy.",
         traits=["playful", "trickster"],
-        scheduling={"interval": 60},
+        schedules=[{"interval": 60}],
     )
 
 
@@ -82,7 +82,7 @@ def personality_file(personality, tmp_path):
         "description": personality.description,
         "system_prompt": personality.system_prompt,
         "traits": personality.traits,
-        "scheduling": personality.scheduling,
+        "schedules": personality.schedules,
     }
     path = tmp_path / "personality.yaml"
     path.write_text(yaml.dump(data))

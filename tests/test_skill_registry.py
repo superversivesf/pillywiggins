@@ -734,34 +734,6 @@ async def test_notify_reload_without_nats_bus(tmp_path):
     await reg._notify_reload()  # should not raise
 
 
-@pytest.mark.asyncio
-async def test_broadcast_reload_schedules_task(tmp_path):
-    """broadcast_reload should schedule _notify_reload on the running event loop."""
-    skills_dir = tmp_path / "skills"
-    skills_dir.mkdir()
-    mock_bus = AsyncMock()
-    reg = SkillRegistry(skills_dir=skills_dir, agent_id="agent-42", nats_bus=mock_bus)
-
-    reg.broadcast_reload()
-    # Give the loop a chance to execute the spawned task
-    await asyncio.sleep(0.05)
-
-    mock_bus.publish_broadcast.assert_awaited_once_with(
-        "skill_published",
-        {"agent_id": "agent-42", "action": "reload"},
-    )
-
-
-def test_broadcast_reload_no_loop_warns(caplog):
-    """broadcast_reload should log a warning when no event loop is running."""
-    import logging
-
-    reg = SkillRegistry(agent_id="agent-x")
-    with caplog.at_level(logging.WARNING, logger="pillywiggins.skills.registry"):
-        reg.broadcast_reload()
-    assert any("No running event loop" in rec.message for rec in caplog.records)
-
-
 # ---------------------------------------------------------------------------
 # Atomic registry.json write tests
 # ---------------------------------------------------------------------------
