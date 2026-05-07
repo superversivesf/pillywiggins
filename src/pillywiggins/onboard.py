@@ -1,5 +1,6 @@
 import logging
 import re
+import secrets
 import shutil
 import subprocess
 from pathlib import Path
@@ -66,13 +67,88 @@ def _host_url(url: str) -> str:
     return url.replace("host.docker.internal", "localhost")
 
 
+def _generate_secret() -> str:
+    return secrets.token_hex(16)
+
+
+def _ensure_gitignore() -> None:
+    gitignore = Path(".gitignore")
+    required = {".env", "agents.yaml", "docker-compose.yaml"}
+    if gitignore.exists():
+        content = gitignore.read_text()
+        existing = set(line.strip() for line in content.splitlines())
+        missing = required - existing
+    else:
+        missing = required
+        content = ""
+    if missing:
+        lines = content.splitlines()
+        if lines and lines[-1] != "":
+            lines.append("")
+        for item in sorted(missing):
+            lines.append(item)
+        gitignore.write_text("\n".join(lines) + "\n")
+        logger.info(f"Updated .gitignore with: {', '.join(sorted(missing))}")
+
+
+def _clean_puck_placeholders(agent_id: str) -> None:
+    """Rename or comment out stale PUCK_* placeholders in .env after the first agent is added."""
+    if not ENV_FILE.exists():
+        return
+    content = read_text(ENV_FILE)
+    lines = content.splitlines()
+    new_lines: list[str] = []
+    changed = False
+    agent_upper = agent_id.upper()
+    for line in lines:
+        stripped = line.strip()
+        # Rename PUCK_TELEGRAM_TOKEN -> <AGENT>_TELEGRAM_TOKEN
+        if stripped.startswith("PUCK_TELEGRAM_TOKEN=") and agent_upper != "PUCK":
+            new_key = f"{agent_upper}_TELEGRAM_TOKEN"
+            value = stripped.split("=", 1)[1] if "=" in stripped else ""
+            if value and not value.startswith("your_"):
+                new_lines.append(f"{new_key}={value}")
+            else:
+                new_lines.append(f"#{new_key}=")
+                new_lines.append(f"#   Fill in your real {new_key} value")
+            changed = True
+            continue
+        # Rename PUCK_DISCORD_TOKEN -> <AGENT>_DISCORD_TOKEN
+        if stripped.startswith("PUCK_DISCORD_TOKEN=") and agent_upper != "PUCK":
+            new_key = f"{agent_upper}_DISCORD_TOKEN"
+            value = stripped.split("=", 1)[1] if "=" in stripped else ""
+            if value and not value.startswith("your_"):
+                new_lines.append(f"{new_key}={value}")
+            else:
+                new_lines.append(f"#{new_key}=")
+                new_lines.append(f"#   Fill in your real {new_key} value")
+            changed = True
+            continue
+        new_lines.append(line)
+    if changed:
+        write_text(ENV_FILE, "\n".join(new_lines) + "\n")
+        logger.info("Renamed stale PUCK_* placeholders in .env")
+
+
 def ensure_config_files() -> None:
     if not AGENTS_YAML.exists() and AGENTS_YAML_EXAMPLE.exists():
         shutil.copy2(AGENTS_YAML_EXAMPLE, AGENTS_YAML)
     if not DOCKER_COMPOSE.exists() and DOCKER_COMPOSE_EXAMPLE.exists():
         shutil.copy2(DOCKER_COMPOSE_EXAMPLE, DOCKER_COMPOSE)
     if not ENV_FILE.exists() and ENV_EXAMPLE.exists():
-        shutil.copy2(ENV_EXAMPLE, ENV_FILE)
+        content = read_text(ENV_EXAMPLE)
+        # Generate real secrets
+        pg_password = _generate_secret()
+        searxng_secret = _generate_secret()
+        content = content.replace("PG_PASSWORD=changeme", f"PG_PASSWORD={pg_password}")
+        content = content.replace(
+            "DATABASE_URL=postgresql://pillywiggins:changeme@postgres:5432/pillywiggins",
+            f"DATABASE_URL=postgresql://pillywiggins:{pg_password}@postgres:5432/pillywiggins",
+        )
+        content = content.replace("SEARXNG_SECRET=", f"SEARXNG_SECRET={searxng_secret}")
+        write_text(ENV_FILE, content)
+        logger.info(f"Created {ENV_FILE} with generated secrets")
+    _ensure_gitignore()
 
 
 def load_yaml(path: Path) -> dict:
@@ -96,7 +172,6 @@ def write_text(path: Path, content: str) -> None:
 
 
 def _read_env_dict(path: Path) -> dict[str, str]:
-    """Read a .env file into a key-value dict (preserving comments)."""
     result: dict[str, str] = {}
     if not path.exists():
         return result
@@ -111,7 +186,6 @@ def _read_env_dict(path: Path) -> dict[str, str]:
 
 
 def _write_env_dict(path: Path, data: dict[str, str]) -> None:
-    """Write a key-value dict back to a .env file, preserving comments."""
     if not path.exists():
         path.write_text("")
     lines = path.read_text().splitlines()
@@ -132,7 +206,6 @@ def _write_env_dict(path: Path, data: dict[str, str]) -> None:
                 out_lines.append(line)
         else:
             out_lines.append(line)
-    # Append any new keys at the end
     for key, val in data.items():
         if key not in written_keys:
             out_lines.append(f"{key}={val}")
@@ -986,6 +1059,7 @@ async def _add_agent_flow() -> None:
         token_value=token,
         timezone=tz,
     )
+    _clean_puck_placeholders(agent_id)
 
     # 11. Docker up
     start = await questionary.confirm(
