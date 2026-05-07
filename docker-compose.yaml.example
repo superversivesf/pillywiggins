@@ -99,10 +99,11 @@ services:
   #   healthcheck:
   #     test:
   #     - CMD-SHELL
-  #     - ps aux | grep -v grep | grep pillywiggins || exit 1
+  #     - python -c 'import urllib.request; urllib.request.urlopen("http://localhost:8080/healthz");' || exit 1
   #     interval: 10s
   #     timeout: 5s
   #     retries: 3
+  #     start_period: 30s
   #   depends_on:
   #     postgres:
   #       condition: service_healthy
