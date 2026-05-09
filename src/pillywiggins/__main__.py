@@ -1,7 +1,10 @@
 import argparse
 import asyncio
+import fcntl
 import importlib
 import logging
+import os
+import sys
 from pathlib import Path
 
 from pillywiggins.agents.base import PillywigginAgent
@@ -34,6 +37,26 @@ def _load_adapter_class(channel: str):
         return getattr(mod, class_name)
     except AttributeError as exc:
         raise ImportError(f"Adapter class '{class_name}' not found in {module_path}") from exc
+
+
+def _acquire_agent_lock(agent_id: str) -> None:
+    """Acquire an exclusive fcntl lock for this agent_id.
+
+    If another process already holds the lock, log an error and exit.
+    The lock is automatically released when the process exits.
+    """
+    lock_path = f"/tmp/pillywiggins-{agent_id}.lock"
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        logger.error(
+            "Another instance of agent '%s' is already running. "
+            "Stop it first with: docker compose stop %s",
+            agent_id,
+            agent_id,
+        )
+        sys.exit(1)
 
 
 def main():
@@ -85,6 +108,8 @@ def main():
         agent_id = settings.agent_id
         channel = args.channel
         allowed_user_ids = settings.allowed_user_ids
+
+    _acquire_agent_lock(agent_id)
 
     cache = ConversationCache(redis_url=settings.redis_url)
     store = ConversationStore(

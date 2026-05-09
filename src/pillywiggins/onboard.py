@@ -708,6 +708,46 @@ def remove_agent_from_configs(agent_id: str) -> None:
     comment_token_in_env(agent_id)
 
 
+def _print_summary(
+    agent_id: str,
+    personality: dict | None,
+    channel: str,
+    model_name: str,
+    llm_provider: str,
+    llm_base_url: str,
+    token_env: str,
+    allowed_user_ids: str,
+    timezone: str,
+) -> None:
+    """Print a human-readable summary of the newly configured agent."""
+    print()
+    print("=" * 40)
+    print(f"Agent configured: {agent_id}")
+    print("=" * 40)
+    if personality:
+        pack = personality.get("pack", "default")
+        print(f"Personality:  {personality['name']} (from {pack})")
+    else:
+        print("Personality:  (blank / none)")
+    print(f"Channel:      {channel}")
+    print(f"Model:        {model_name}")
+    print(f"LLM Provider: {llm_provider}")
+    print(f"LLM Base URL: {llm_base_url}")
+    print()
+    print("Tokens added to .env:")
+    print(f"  - {token_env}")
+    print()
+    print(f"Allowed users: {allowed_user_ids}")
+    print(f"Timezone:      {timezone}")
+    print()
+    print("Next steps:")
+    print("  1. docker compose up -d postgres redis nats searxng")
+    print(f"  2. docker compose up -d {agent_id}")
+    print(f"  3. docker compose logs -f {agent_id}")
+    print("=" * 40)
+    print()
+
+
 async def _add_agent_flow() -> None:
     personalities = discover_personalities()
     if not personalities:
@@ -1060,6 +1100,18 @@ async def _add_agent_flow() -> None:
         timezone=tz,
     )
     _clean_puck_placeholders(agent_id)
+
+    _print_summary(
+        agent_id=agent_id,
+        personality=personality,
+        channel=channel,
+        model_name=chosen_model,
+        llm_provider=llm_provider,
+        llm_base_url=llm_base_url,
+        token_env=token_env,
+        allowed_user_ids=allowed_user_ids,
+        timezone=tz,
+    )
 
     # 11. Docker up
     start = await questionary.confirm(

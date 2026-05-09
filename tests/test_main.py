@@ -1,9 +1,11 @@
+import fcntl
 import importlib
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from pillywiggins.__main__ import _load_adapter_class, _run
+from pillywiggins.__main__ import _load_adapter_class, _run, _acquire_agent_lock
 
 
 def _make_mock_agent():
@@ -129,6 +131,7 @@ def test_main_parses_args():
         patch("pillywiggins.__main__.PrivateMemory") as mock_pm_cls,
         patch("pillywiggins.__main__.PillywigginAgent") as mock_agent_cls,
         patch("pillywiggins.__main__._load_adapter_class") as mock_load_adapter,
+        patch("pillywiggins.__main__._acquire_agent_lock") as mock_lock,
         patch("pillywiggins.__main__.asyncio") as mock_asyncio,
         patch("sys.argv", ["pillywiggins", "--channel", "telegram"]),
     ):
@@ -146,6 +149,7 @@ def test_main_parses_args():
     mock_agent_cls.assert_called_once()
     mock_adapter_cls.assert_called_once()
     mock_asyncio.run.assert_called_once()
+    mock_lock.assert_called_once()
 
 
 def test_main_with_agent_id_calls_get_agent_config():
@@ -166,6 +170,7 @@ def test_main_with_agent_id_calls_get_agent_config():
         patch("pillywiggins.__main__.PillywigginAgent") as mock_agent_cls,
         patch("pillywiggins.__main__._load_adapter_class") as mock_load_adapter,
         patch("pillywiggins.__main__.SkillRegistry") as mock_skill_cls,
+        patch("pillywiggins.__main__._acquire_agent_lock") as mock_lock,
         patch("pillywiggins.__main__.asyncio") as mock_asyncio,
         patch("sys.argv", ["pillywiggins", "--agent-id", "bramblethorn"]),
     ):
@@ -183,6 +188,7 @@ def test_main_with_agent_id_calls_get_agent_config():
 
     mock_get_cfg.assert_called_once_with("bramblethorn", path="agents.yaml")
     mock_apply_env.assert_called_once_with(mock_agent_cfg)
+    mock_lock.assert_called_once_with("bramblethorn")
 
 
 def test_main_agent_id_or_channel_required():
@@ -211,6 +217,7 @@ def test_main_agent_id_sets_channel_from_config():
         patch("pillywiggins.__main__.PillywigginAgent") as mock_agent_cls,
         patch("pillywiggins.__main__._load_adapter_class") as mock_load_adapter,
         patch("pillywiggins.__main__.SkillRegistry") as mock_skill_cls,
+        patch("pillywiggins.__main__._acquire_agent_lock") as mock_lock,
         patch("pillywiggins.__main__.asyncio") as mock_asyncio,
         patch("sys.argv", ["pillywiggins", "--agent-id", "bramblethorn"]),
     ):
@@ -235,6 +242,8 @@ def test_main_agent_id_sets_channel_from_config():
     if "agent_id" in (mock_agent_cls.call_args[1] or {}):
         assert mock_agent_cls.call_args[1]["agent_id"] == "bramblethorn"
 
+    mock_lock.assert_called_once_with("bramblethorn")
+
 
 def test_load_adapter_class_telegram():
     cls = _load_adapter_class("telegram")
@@ -256,6 +265,7 @@ def test_main_routes_telegram_via_dynamic_load():
         patch("pillywiggins.__main__.PrivateMemory") as mock_pm_cls,
         patch("pillywiggins.__main__.PillywigginAgent") as mock_agent_cls,
         patch("pillywiggins.__main__._load_adapter_class") as mock_load_adapter,
+        patch("pillywiggins.__main__._acquire_agent_lock") as mock_lock,
         patch("pillywiggins.__main__.asyncio") as mock_asyncio,
         patch("sys.argv", ["pillywiggins", "--channel", "telegram"]),
     ):
@@ -275,6 +285,7 @@ def test_main_routes_telegram_via_dynamic_load():
         token="fake-token",
         settings=mock_settings,
     )
+    mock_lock.assert_called_once()
 
 
 def test_main_raises_import_error_for_missing_adapter():
@@ -510,3 +521,68 @@ async def test_run_calls_shutdown_on_success():
         await _run(mock_adapter, mock_agent, mock_settings)
 
     mock_agent.shutdown.assert_called_once()
+
+
+def test_acquire_agent_lock_succeeds_when_free():
+    lock_path = "/tmp/pillywiggins-testagent.lock"
+    # Ensure no stale lock file
+    try:
+        os.remove(lock_path)
+    except FileNotFoundError:
+        pass
+    # Should not raise or exit
+    _acquire_agent_lock("testagent")
+    # Cleanup
+    try:
+        os.remove(lock_path)
+    except FileNotFoundError:
+        pass
+
+
+def test_acquire_agent_lock_fails_when_held():
+    lock_path = "/tmp/pillywiggins-heldagent.lock"
+    try:
+        os.remove(lock_path)
+    except FileNotFoundError:
+        pass
+
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)  # hold the lock
+
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            _acquire_agent_lock("heldagent")
+        assert exc_info.value.code == 1
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+        try:
+            os.remove(lock_path)
+        except FileNotFoundError:
+            pass
+
+
+def test_main_calls_acquire_lock():
+    with (
+        patch("pillywiggins.__main__.Settings") as mock_settings_cls,
+        patch("pillywiggins.__main__.load_personality") as mock_load,
+        patch("pillywiggins.__main__.ConversationCache") as mock_cache_cls,
+        patch("pillywiggins.__main__.PrivateMemory") as mock_pm_cls,
+        patch("pillywiggins.__main__.PillywigginAgent") as mock_agent_cls,
+        patch("pillywiggins.__main__._load_adapter_class") as mock_load_adapter,
+        patch("pillywiggins.__main__._acquire_agent_lock") as mock_lock,
+        patch("pillywiggins.__main__.asyncio") as mock_asyncio,
+        patch("sys.argv", ["pillywiggins", "--channel", "telegram"]),
+    ):
+        mock_settings = MagicMock()
+        mock_settings.telegram_bot_token = "fake-token"
+        mock_settings.agent_id = "my-agent"
+        mock_settings_cls.return_value = mock_settings
+        mock_adapter_cls = MagicMock()
+        mock_load_adapter.return_value = mock_adapter_cls
+
+        from pillywiggins.__main__ import main
+
+        main()
+
+    mock_lock.assert_called_once_with("my-agent")
