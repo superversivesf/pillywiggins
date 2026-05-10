@@ -1,4 +1,5 @@
 """Tests for email_adapter.py."""
+import asyncio
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -109,3 +110,236 @@ def test_is_authorized_specific(adapter):
     adapter._allowed_user_ids = {"user@example.com"}
     assert adapter._is_authorized("user@example.com") is True
     assert adapter._is_authorized("other@example.com") is False
+
+
+# ---------------------------------------------------------------------------
+# Async I/O tests
+# ---------------------------------------------------------------------------
+
+def _make_imap_msg(
+    from_="user@example.com",
+    to=None,
+    subject="Hello",
+    uid="uid-123",
+    text="Hello there",
+    html=None,
+    message_id="<abc@example.com>",
+    date="2024-01-01",
+):
+    msg = MagicMock()
+    msg.from_ = from_
+    msg.to = to or ["bot@example.com"]
+    msg.subject = subject
+    msg.uid = uid
+    msg.date = date
+    msg.text = text
+    msg.html = html
+    msg.headers = {"message-id": [message_id]}
+    return msg
+
+
+@pytest.mark.asyncio
+async def test_connect_smtp_success(adapter):
+    mock_client = AsyncMock()
+    aiosmtplib_mod = sys.modules["aiosmtplib"]
+    aiosmtplib_mod.SMTP.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    aiosmtplib_mod.SMTP.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    await adapter.connect()
+
+    aiosmtplib_mod.SMTP.assert_called_with(
+        hostname="smtp.example.com", port=587, use_tls=False
+    )
+    mock_client.starttls.assert_awaited_once()
+    mock_client.login.assert_awaited_once_with("bot@example.com", "secret")
+
+
+@pytest.mark.asyncio
+async def test_connect_smtp_failure_logs_warning(adapter, caplog):
+    mock_client = AsyncMock()
+    mock_client.starttls.side_effect = Exception("TLS failed")
+    aiosmtplib_mod = sys.modules["aiosmtplib"]
+    aiosmtplib_mod.SMTP.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    aiosmtplib_mod.SMTP.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    with caplog.at_level("WARNING", logger="pillywiggins.adapters.email_adapter"):
+        await adapter.connect()
+
+    assert "SMTP connection test failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_listen_polls_and_shuts_down(adapter):
+    adapter.poll_interval = 0.01
+    adapter._shutdown_event = asyncio.Event()
+    poll_calls = 0
+
+    async def mock_poll():
+        nonlocal poll_calls
+        poll_calls += 1
+        if poll_calls >= 2:
+            adapter._shutdown_event.set()
+
+    with patch.object(adapter, "_poll_inbox", new=mock_poll):
+        await adapter.listen()
+
+    assert poll_calls >= 2
+
+
+@pytest.mark.asyncio
+async def test_poll_inbox_fetches_and_handles_email(adapter):
+    mock_msg = _make_imap_msg()
+    mock_mailbox = MagicMock()
+    mock_mailbox.fetch.return_value = [mock_msg]
+    mock_login_ctx = MagicMock()
+    mock_login_ctx.__enter__ = MagicMock(return_value=mock_mailbox)
+    mock_login_ctx.__exit__ = MagicMock(return_value=False)
+    imap_tools_mod = sys.modules["imap_tools"]
+    imap_tools_mod.MailBox.return_value.login.return_value = mock_login_ctx
+
+    with patch.object(adapter, "_handle_email", new=AsyncMock()) as mock_handle:
+        await adapter._poll_inbox()
+        # Drain any background tasks created by asyncio.create_task
+        pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    imap_tools_mod.MailBox.assert_called_once_with("imap.example.com", port=993)
+    mock_handle.assert_awaited_once_with(mock_msg)
+
+
+@pytest.mark.asyncio
+async def test_handle_email_rejects_unauthorized(adapter):
+    adapter._allow_all = False
+    adapter._allowed_user_ids = set()
+    mock_msg = _make_imap_msg()
+
+    await adapter._handle_email(mock_msg)
+
+    adapter.agent.handle_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_email_dispatches_command(adapter):
+    adapter._allow_all = True
+    adapter.agent.should_process_message.return_value = True
+    adapter.dispatch_command = AsyncMock(return_value="Command output")
+    adapter._send_email = AsyncMock()
+
+    mock_msg = _make_imap_msg(text="!status")
+
+    await adapter._handle_email(mock_msg)
+
+    adapter.dispatch_command.assert_awaited_once_with("!status", "email:subj:Hello")
+    adapter._send_email.assert_awaited_once_with(
+        "user@example.com",
+        "Re: Hello",
+        "Command output",
+        in_reply_to="<abc@example.com>",
+    )
+    assert "subj:Hello" in adapter._thread_contexts
+
+
+@pytest.mark.asyncio
+async def test_handle_email_generates_reply(adapter):
+    adapter._allow_all = True
+    adapter.agent.should_process_message.return_value = True
+    adapter.agent.handle_message = AsyncMock(return_value="AI reply")
+    adapter._send_email = AsyncMock()
+
+    mock_msg = _make_imap_msg(text="How are you?")
+
+    await adapter._handle_email(mock_msg)
+
+    adapter.agent.handle_message.assert_awaited_once()
+    args, _ = adapter.agent.handle_message.call_args
+    unified = args[0]
+    assert unified.channel.value == "email"
+    assert unified.content == "How are you?"
+    adapter._send_email.assert_awaited_once_with(
+        "user@example.com",
+        "Re: Hello",
+        "AI reply",
+        in_reply_to="<abc@example.com>",
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_email_generates_reply_with_prior_context(adapter):
+    adapter._allow_all = True
+    adapter.agent.should_process_message.return_value = True
+    adapter.agent.handle_message = AsyncMock(return_value="AI reply")
+    adapter._send_email = AsyncMock()
+    adapter._thread_contexts["email:subj:Hello"] = [
+        {"sender": "a@example.com", "content": "Prior msg", "timestamp": "2024-01-01T00:00:00+00:00"}
+    ]
+
+    mock_msg = _make_imap_msg(text="Follow up")
+
+    await adapter._handle_email(mock_msg)
+
+    adapter.agent.handle_message.assert_awaited_once()
+    adapter._send_email.assert_awaited_once_with(
+        "user@example.com",
+        "Re: Hello",
+        "AI reply",
+        in_reply_to="<abc@example.com>",
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_email_agent_error_sends_failure_reply(adapter):
+    adapter._allow_all = True
+    adapter.agent.should_process_message.return_value = True
+    adapter.agent.handle_message = AsyncMock(side_effect=Exception("boom"))
+    adapter._send_email = AsyncMock()
+
+    mock_msg = _make_imap_msg(text="Crash me")
+
+    await adapter._handle_email(mock_msg)
+
+    adapter.agent.handle_message.assert_awaited_once()
+    adapter._send_email.assert_awaited_once_with(
+        "user@example.com",
+        "Re: Hello",
+        "Sorry, something went wrong processing your email.",
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_email_success(adapter):
+    mock_client = AsyncMock()
+    aiosmtplib_mod = sys.modules["aiosmtplib"]
+    aiosmtplib_mod.SMTP.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    aiosmtplib_mod.SMTP.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    await adapter._send_email(
+        "user@example.com",
+        "Re: Hello",
+        "Reply body",
+        in_reply_to="<abc@example.com>",
+    )
+
+    mock_client.starttls.assert_awaited_once()
+    mock_client.login.assert_awaited_once_with("bot@example.com", "secret")
+    mock_client.send_message.assert_awaited_once()
+    sent_msg = mock_client.send_message.call_args[0][0]
+    assert sent_msg["To"] == "user@example.com"
+    assert sent_msg["Subject"] == "Re: Hello"
+    assert sent_msg["In-Reply-To"] == "<abc@example.com>"
+    assert sent_msg["References"] == "<abc@example.com>"
+    assert "Reply body" in sent_msg.get_content()
+
+
+@pytest.mark.asyncio
+async def test_send_email_failure_logs(adapter, caplog):
+    mock_client = AsyncMock()
+    mock_client.send_message.side_effect = Exception("SMTP exploded")
+    aiosmtplib_mod = sys.modules["aiosmtplib"]
+    aiosmtplib_mod.SMTP.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    aiosmtplib_mod.SMTP.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    with caplog.at_level("ERROR", logger="pillywiggins.adapters.email_adapter"):
+        await adapter._send_email("user@example.com", "Subject", "Body")
+
+    assert "Failed to send email" in caplog.text

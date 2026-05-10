@@ -552,3 +552,58 @@ async def test_check_embedding_health_no_expected_dimension():
     assert result["healthy"] is True
     assert result["dimension"] == 3
     assert result["dimension_match"] is None  # not checked
+
+
+@pytest.mark.asyncio
+async def test_embed_texts_empty_embeddings_returns_none():
+    """When Ollama returns an empty embeddings list, that's an error -- return None."""
+    mock_resp = make_mock_aiohttp_response(
+        status=200,
+        json_data={"model": "nomic-embed-text", "embeddings": []},
+    )
+    mock_session = make_mock_aiohttp_session(method="post", response=mock_resp)
+
+    with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
+        result = await embed_texts(
+            ["hello"], "http://localhost:11434", "", "ollama", model="nomic-embed-text"
+        )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_embed_unparseable_json_returns_none_then_retries(caplog):
+    """When a response is not valid JSON, retry is attempted."""
+    from tests.helpers import make_mock_aiohttp_response, make_mock_aiohttp_session
+
+    bad_resp = make_mock_aiohttp_response(status=200, text_data="not json")
+    bad_resp.json = AsyncMock(side_effect=RuntimeError("unparseable"))  # simulate json() raising
+    good_resp = make_mock_aiohttp_response(
+        status=200, json_data={"model": "nomic-embed-text", "embeddings": [[0.1, 0.2, 0.3]]}
+    )
+    mock_session = make_mock_aiohttp_session(method="post", side_effect=[bad_resp, good_resp])
+
+    with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
+        with caplog.at_level("WARNING"):
+            result = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
+
+    assert result == [0.1, 0.2, 0.3]
+    assert mock_session.post.call_count == 2
+    assert "retrying" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_embed_network_timeout_retries_then_fails(caplog, monkeypatch):
+    """Network-level exception on every attempt should exhaust retries and return None."""
+    monkeypatch.setattr("pillywiggins.memory.embeddings._MAX_RETRIES", 2)
+    mock_session = make_mock_aiohttp_session(
+        method="post", side_effect=[asyncio.TimeoutError("timed out"), asyncio.TimeoutError("timed out")]
+    )
+
+    with patch("pillywiggins.memory.embeddings.aiohttp.ClientSession", return_value=mock_session):
+        with caplog.at_level("ERROR"):
+            result = await embed("hello", "http://localhost:11434", "", "ollama", model="nomic-embed-text")
+
+    assert result is None
+    assert mock_session.post.call_count == 2
+    assert "Error generating embedding" in caplog.text

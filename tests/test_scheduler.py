@@ -424,3 +424,45 @@ class TestStop:
         s = await _make_scheduler(tmp_path)
         await s.stop()
         await s.stop()
+
+
+class TestAddJobErrorPath:
+    async def test_add_job_not_started_returns_error(self, tmp_path):
+        s = AgentScheduler("redis://localhost:6379", "test", schedules_dir=str(tmp_path))
+        result = await s.add_job("test", "heartbeat", interval_seconds=10)
+        assert result["success"] is False
+        assert "scheduler not started" in result["error"]
+
+
+class TestJsonSchedulesErrorPath:
+    async def test_load_json_schedules_corrupted_file(self, tmp_path):
+        s = AgentScheduler("redis://localhost:6379", "test", schedules_dir=str(tmp_path))
+        json_path = tmp_path / "test_schedules.json"
+        json_path.write_text("not valid json", encoding="utf-8")
+        result = s._load_json_schedules()
+        assert result == []
+
+    async def test_load_json_schedules_file_missing(self, tmp_path):
+        s = AgentScheduler("redis://localhost:6379", "test", schedules_dir=str(tmp_path))
+        result = s._load_json_schedules()
+        assert result == []
+
+
+class TestBuiltinCustomErrorPaths:
+    async def test_builtin_custom_no_brain_attr_logs_error(self, caplog):
+        agent = _make_mock_agent()
+        agent._brain = None
+        with caplog.at_level("ERROR"):
+            await _builtin_custom(agent_id="testagent", args={"prompt": "hello"}, _agent_handler=agent)
+        assert "custom action failed" in caplog.text
+
+
+class TestSchedulerRemoveJobNonExistent:
+    async def test_remove_job_not_found_logs_warning(self, tmp_path, caplog):
+        s = await _make_scheduler(tmp_path)
+        try:
+            with caplog.at_level("WARNING", logger="pillywiggins.scheduling.scheduler"):
+                await s.remove_job("nonexistent_job")
+            assert "not found" in caplog.text.lower()
+        finally:
+            await s.stop()

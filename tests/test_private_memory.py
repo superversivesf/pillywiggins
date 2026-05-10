@@ -255,6 +255,60 @@ async def test_save_without_pool_logs_error(memory):
 
 
 @pytest.mark.asyncio
+async def test_save_handles_db_exception(memory):
+    """When execute raises an exception, save should catch it and return False."""
+    mock_conn = AsyncMock()
+    mock_conn.execute = AsyncMock(side_effect=RuntimeError("db error"))
+    mock_conn.fetchrow = AsyncMock(return_value={"atttypmod": 3})
+
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
+    memory._pool = mock_pool
+
+    with patch("pillywiggins.memory.private.logger") as mock_logger:
+        result = await memory.save("test memory", [0.1, 0.2, 0.3])
+
+    assert result is False
+    mock_logger.exception.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_search_handles_db_exception(memory):
+    """When fetch raises an exception, search should catch it and return []."""
+    mock_conn = AsyncMock()
+    mock_conn.fetch = AsyncMock(side_effect=RuntimeError("db error"))
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
+    memory._pool = mock_pool
+
+    with patch("pillywiggins.memory.private.logger") as mock_logger:
+        result = await memory.search([0.1, 0.2, 0.3], limit=5)
+
+    assert result == []
+    mock_logger.exception.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_delete_handles_db_exception():
+    """When delete raises an exception, it should catch it and return False."""
+    from pillywiggins.memory.private import PrivateMemory
+
+    mem = PrivateMemory(
+        database_url="postgresql://test:test@localhost:5432/testdb",
+        agent_id="puck",
+        embedding_dimension=3,
+    )
+    mock_conn = AsyncMock()
+    mock_conn.execute = AsyncMock(side_effect=RuntimeError("db error"))
+    mock_pool = make_pool_mock(acquire_return=mock_conn)
+    mem._pool = mock_pool
+
+    with patch("pillywiggins.memory.base.logger") as mock_logger:
+        result = await mem.delete("abc-123")
+
+    assert result is False
+    mock_logger.exception.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_search_without_pool_returns_empty(memory):
     memory._pool = None
     results = await memory.search([0.1])

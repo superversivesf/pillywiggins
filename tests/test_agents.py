@@ -1003,6 +1003,93 @@ def test_should_process_message_human_resets_counter(agent):
     assert agent.should_process_message(bot_msg_3) is True
 
 
+@pytest.mark.asyncio
+async def test_start_scheduler_catches_exception_and_sets_none(personality, caplog):
+    """When scheduler.start() raises, agent should set _scheduler=None and log a warning."""
+    with (
+        patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()),
+        patch("pillywiggins.agents.base.AgentScheduler") as mock_sched_cls,
+    ):
+        mock_scheduler = AsyncMock()
+        mock_scheduler.start = AsyncMock(side_effect=RuntimeError("scheduler boom"))
+        mock_sched_cls.return_value = mock_scheduler
+
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        agent._settings.scheduler_enabled = True
+        agent._settings.redis_url = "redis://localhost:6379"
+        agent.personality.schedules = [{"name": "hb", "action": "heartbeat", "interval_seconds": 60}]
+        with caplog.at_level("WARNING", logger="pillywiggins.agents.base"):
+            await agent._start_scheduler()
+        assert agent._scheduler is None
+        assert "Failed to start scheduler" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_start_scheduler_skips_when_disabled(personality):
+    """When scheduler_enabled is False, _start_scheduler should be a no-op."""
+    agent = PillywigginAgent(
+        agent_id="puck",
+        personality=personality,
+        model_name="qwen3.5:8b",
+        provider="ollama",
+        base_url="http://localhost:11434",
+        api_key="",
+    )
+    agent._settings.scheduler_enabled = False
+    await agent._start_scheduler()
+    assert agent._scheduler is None
+
+@pytest.mark.asyncio
+async def test_start_scheduler_catches_exception_and_sets_none(personality, caplog):
+    """When scheduler.start() raises, agent should set _scheduler=None and log a warning."""
+    with (
+        patch("pillywiggins.agents.base.create_brain", return_value=MagicMock()),
+        patch("pillywiggins.agents.base.AgentScheduler") as mock_sched_cls,
+    ):
+        mock_scheduler = AsyncMock()
+        mock_scheduler.start = AsyncMock(side_effect=RuntimeError("scheduler boom"))
+        mock_sched_cls.return_value = mock_scheduler
+
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+        agent._settings.scheduler_enabled = True
+        agent._settings.redis_url = "redis://localhost:6379"
+        agent.personality.schedules = [{"name": "hb", "action": "heartbeat", "interval_seconds": 60}]
+        with caplog.at_level("WARNING", logger="pillywiggins.agents.base"):
+            await agent._start_scheduler()
+        assert agent._scheduler is None
+        assert "Failed to start scheduler" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_start_scheduler_skips_when_disabled(personality):
+    """When scheduler_enabled is False, _start_scheduler should be a no-op."""
+    agent = PillywigginAgent(
+        agent_id="puck",
+        personality=personality,
+        model_name="qwen3.5:8b",
+        provider="ollama",
+        base_url="http://localhost:11434",
+        api_key="",
+    )
+    agent._settings.scheduler_enabled = False
+    await agent._start_scheduler()
+    assert agent._scheduler is None
+
+
 def test_should_process_message_addressed_bypasses_limit(agent):
     from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
     agent.personality.bot_chat_limit = 0

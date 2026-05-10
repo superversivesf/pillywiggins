@@ -97,6 +97,133 @@ def test_is_authorized_all(adapter):
     assert adapter._is_authorized("U123") is True
 
 
+@pytest.mark.asyncio
+async def test_listen_not_connected_raises(adapter):
+    with pytest.raises(RuntimeError, match="not connected"):
+        await adapter.listen()
+
+
+@pytest.mark.asyncio
+async def test_listen_starts_handler_and_shuts_down(adapter):
+    adapter._app = MagicMock()
+    adapter._shutdown_event.set()
+    with patch("pillywiggins.adapters.slack_adapter.AsyncSocketModeHandler") as MockHandler:
+        mock_handler = AsyncMock()
+        MockHandler.return_value = mock_handler
+        await adapter.listen()
+        MockHandler.assert_called_once_with(adapter._app, adapter.bot_token)
+        mock_handler.start_async.assert_awaited_once()
+        mock_handler.close_async.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_bot_user_id_caches(adapter):
+    mock_client = AsyncMock()
+    mock_client.auth_test.return_value = {"user_id": "UBOT123"}
+    result = await adapter._get_bot_user_id(mock_client)
+    assert result == "UBOT123"
+    mock_client.auth_test.assert_awaited_once()
+    # Second call uses cache
+    mock_client.auth_test.reset_mock()
+    result2 = await adapter._get_bot_user_id(mock_client)
+    assert result2 == "UBOT123"
+    mock_client.auth_test.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_on_message_skips_bot_own_message(adapter):
+    adapter._allow_all = True
+    mock_client = AsyncMock()
+    mock_client.auth_test.return_value = {"user_id": "UBOT"}
+    say = AsyncMock()
+    body = {"event": {"user": "UBOT", "text": "hi", "channel": "C1", "ts": "123"}}
+    await adapter._on_message(body, say, mock_client)
+    say.assert_not_awaited()
+    adapter.agent.handle_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_on_message_skips_unauthorized_user(adapter):
+    adapter._allow_all = False
+    adapter._allowed_user_ids = {"U999"}
+    mock_client = AsyncMock()
+    mock_client.auth_test.return_value = {"user_id": "UBOT"}
+    say = AsyncMock()
+    body = {"event": {"user": "U123", "text": "hi", "channel": "C1", "ts": "123"}}
+    await adapter._on_message(body, say, mock_client)
+    say.assert_not_awaited()
+    adapter.agent.handle_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_on_message_handles_normal_message(adapter):
+    adapter._allow_all = True
+    adapter.agent.should_process_message.return_value = True
+    adapter.agent.handle_message = AsyncMock(return_value="Reply text")
+    mock_client = AsyncMock()
+    mock_client.auth_test.return_value = {"user_id": "UBOT"}
+    say = AsyncMock()
+    body = {
+        "event": {
+            "user": "U123",
+            "text": "hello",
+            "channel": "C1",
+            "ts": "123.45",
+            "thread_ts": "123.00",
+            "channel_type": "channel",
+            "bot_id": None,
+        }
+    }
+    await adapter._on_message(body, say, mock_client)
+    adapter.agent.handle_message.assert_awaited_once()
+    args, _ = adapter.agent.handle_message.call_args
+    msg = args[0]
+    assert msg.channel_user_id == "U123"
+    assert msg.content == "hello"
+    assert msg.metadata["thread_ts"] == "123.00"
+    assert msg.metadata["is_group"] is True
+    say.assert_awaited_once_with("Reply text")
+
+
+@pytest.mark.asyncio
+async def test_on_message_dispatches_command(adapter):
+    adapter._allow_all = True
+    adapter.agent.should_process_message.return_value = True
+    say = AsyncMock()
+    mock_client = AsyncMock()
+    mock_client.auth_test.return_value = {"user_id": "UBOT"}
+    body = {"event": {"user": "U123", "text": "!help", "channel": "C1", "ts": "123"}}
+    await adapter._on_message(body, say, mock_client)
+    adapter.agent.handle_message.assert_not_called()
+    say.assert_awaited_once_with(adapter.HELP_TEXT)
+
+
+@pytest.mark.asyncio
+async def test_on_message_agent_error(adapter):
+    adapter._allow_all = True
+    adapter.agent.should_process_message.return_value = True
+    adapter.agent.handle_message = AsyncMock(side_effect=Exception("boom"))
+    mock_client = AsyncMock()
+    mock_client.auth_test.return_value = {"user_id": "UBOT"}
+    say = AsyncMock()
+    body = {"event": {"user": "U123", "text": "hello", "channel": "C1", "ts": "123"}}
+    await adapter._on_message(body, say, mock_client)
+    say.assert_awaited_once_with("Sorry, something went wrong processing your message.")
+
+
+@pytest.mark.asyncio
+async def test_send_failure_logs_exception(adapter):
+    mock_client = AsyncMock()
+    mock_client.chat_postMessage = AsyncMock(side_effect=Exception("network down"))
+    adapter._web_client = mock_client
+    await adapter.send("C123", "Hello!", {"thread_ts": "1234.56"})
+    mock_client.chat_postMessage.assert_awaited_once_with(
+        channel="C123",
+        text="Hello!",
+        thread_ts="1234.56",
+    )
+
+
 def test_is_authorized_specific_user(adapter):
     """Authorized user should pass."""
     adapter._allow_all = False
