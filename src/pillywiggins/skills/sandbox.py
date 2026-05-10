@@ -58,17 +58,20 @@ _WRAPPER_TEMPLATE = """\
 import asyncio
 import json
 import sys
+import traceback
 
 {skill_code}
 
-def _safe_str(exc):
-    try:
-        return str(exc)
-    except Exception:
-        try:
-            return repr(exc)
-        except Exception:
-            return "Unknown error occurred."
+def _format_error(exc):
+    tb = traceback.format_exc()
+    msg = str(exc)
+    if isinstance(exc, RuntimeError) and "no current event loop" in msg:
+        return (
+            "Event loop error: asyncio.get_event_loop() is not available in the test sandbox. "
+            "Use asyncio.get_running_loop() or avoid calling the event loop directly."
+            "\\n\\nOriginal traceback:\\n" + tb
+        )
+    return tb
 
 async def _main():
     try:
@@ -76,7 +79,7 @@ async def _main():
         _result = await run(**_args)
         print(json.dumps({{"success": True, "result": _result}}))
     except Exception as _e:
-        print(json.dumps({{"success": False, "error": _safe_str(_e)}}))
+        print(json.dumps({{"success": False, "error": _format_error(_e)}}))
 
 if __name__ == "__main__":
     asyncio.run(_main())
@@ -87,6 +90,7 @@ _TEST_DRIVEN_WRAPPER = """\
 import asyncio
 import json
 import sys
+import traceback
 
 {skill_code}
 
@@ -97,23 +101,25 @@ def run(*args, **kwargs):
         return asyncio.run(result)
     return result
 
-def _safe_str(exc):
-    try:
-        return str(exc)
-    except Exception:
-        try:
-            return repr(exc)
-        except Exception:
-            return "Unknown error occurred."
+def _format_error(exc):
+    tb = traceback.format_exc()
+    msg = str(exc)
+    if isinstance(exc, RuntimeError) and "no current event loop" in msg:
+        return (
+            "Event loop error: asyncio.get_event_loop() is not available in the test sandbox. "
+            "Use asyncio.get_running_loop() or avoid calling the event loop directly."
+            "\\n\\nOriginal traceback:\\n" + tb
+        )
+    return tb
 
 if __name__ == "__main__":
     errors = []
     try:
         exec({test_code!r})
     except AssertionError as e:
-        errors.append("Assertion failed: " + str(e))
+        errors.append("Assertion failed: " + _format_error(e))
     except Exception as e:
-        errors.append("Test error: " + str(e))
+        errors.append("Test error: " + _format_error(e))
 
     if errors:
         print(json.dumps({{"success": False, "error": "\\n".join(errors)}}))
@@ -239,9 +245,12 @@ async def run_test_driven(
         ))
 
     if not parsed.get("success", False):
+        err = parsed.get("error", "Unknown test error")
+        if stderr and stderr.strip():
+            err += f"\n\n[stderr]: {stderr.strip()}"
         return _sanitize_sandbox_result(SandboxResult(
             success=False,
-            error=parsed.get("error", "Unknown test error"),
+            error=err,
             execution_time_ms=elapsed,
         ))
 
@@ -309,9 +318,12 @@ async def run_sandboxed(
         ))
 
     if not parsed.get("success", False):
+        err = parsed.get("error", "Unknown skill error")
+        if stderr and stderr.strip():
+            err += f"\n\n[stderr]: {stderr.strip()}"
         return _sanitize_sandbox_result(SandboxResult(
             success=False,
-            error=parsed.get("error", "Unknown skill error"),
+            error=err,
             execution_time_ms=elapsed,
         ))
 

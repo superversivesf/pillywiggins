@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from pillywiggins.skills.sandbox import SandboxResult, restricted_env, run_sandboxed
+from pillywiggins.skills.sandbox import SandboxResult, restricted_env, run_sandboxed, run_test_driven
 
 
 class TestRestrictedEnv:
@@ -164,16 +164,108 @@ class TestRunSandboxed:
         assert result.success is True
         assert result.result == args
 
-    async def test_execution_time_recorded(self):
-        code = "async def run(**kwargs):\n    return {'ok': True}"
+    async def test_skill_using_get_event_loop(self):
+        code = """\
+import asyncio
+async def run(**kwargs):
+    loop = asyncio.get_event_loop()
+    return {'has_loop': loop is not None}
+"""
         result = await run_sandboxed(code, {}, {})
-        assert result.execution_time_ms > 0
+        assert result.success is True
+        assert result.result == {"has_loop": True}
 
-    async def test_safe_env_vars_available(self):
+    async def test_skill_using_get_running_loop(self):
+        code = """\
+import asyncio
+async def run(**kwargs):
+    loop = asyncio.get_running_loop()
+    return {'has_loop': loop is not None}
+"""
+        result = await run_sandboxed(code, {}, {})
+        assert result.success is True
+        assert result.result == {"has_loop": True}
         code = "import os\nasync def run(**kwargs):\n    return {'has_path': 'PATH' in os.environ, 'has_home': 'HOME' in os.environ}"
         result = await run_sandboxed(code, {}, {})
         assert result.success is True
         assert result.result["has_path"] is True
+
+    async def test_error_includes_traceback(self):
+        code = "async def run(**kwargs):\n    raise ValueError('boom')"
+        result = await run_sandboxed(code, {}, {})
+        assert result.success is False
+        assert result.error is not None
+        assert "boom" in result.error
+        assert "Traceback" in result.error
+        assert "ValueError" in result.error
+
+    async def test_stderr_included_on_success_false(self):
+        code = "import sys\nasync def run(**kwargs):\n    print('warn!', file=sys.stderr)\n    raise RuntimeError('fail')"
+        result = await run_sandboxed(code, {}, {})
+        assert result.success is False
+        assert "fail" in result.error
+        assert "[stderr]:" in result.error
+        assert "warn!" in result.error
+
+    async def test_stderr_not_appended_when_empty(self):
+        code = "async def run(**kwargs):\n    raise RuntimeError('no stderr')"
+        result = await run_sandboxed(code, {}, {})
+        assert result.success is False
+        assert "[stderr]:" not in result.error
+        assert "no stderr" in result.error
+
+    async def test_known_event_loop_error_rewritten(self):
+        code = "async def run(**kwargs):\n    raise RuntimeError('There is no current event loop')"
+        result = await run_sandboxed(code, {}, {})
+        assert result.success is False
+        assert "Event loop error:" in result.error
+        assert "asyncio.get_event_loop() is not available" in result.error
+        assert "Use asyncio.get_running_loop()" in result.error
+        assert "Original traceback:" in result.error
+
+
+class TestRunTestDriven:
+    async def test_test_driven_includes_traceback(self, monkeypatch):
+        monkeypatch.setattr(
+            "pillywiggins.skills.sandbox._sanitize_sandbox_result", lambda r: r
+        )
+        code = "async def run(**kwargs):\n    raise ValueError('boom')"
+        test_code = "result = run()\nassert result is not None"
+        result = await run_test_driven(code, test_code, {})
+        assert result.success is False
+        assert "Test error:" in result.error
+        assert "Traceback" in result.error
+        assert "ValueError" in result.error
+        assert "boom" in result.error
+
+    async def test_test_driven_assertion_includes_traceback(self, monkeypatch):
+        monkeypatch.setattr(
+            "pillywiggins.skills.sandbox._sanitize_sandbox_result", lambda r: r
+        )
+        code = "async def run(**kwargs):\n    return 1"
+        test_code = "result = run()\nassert result == 2"
+        result = await run_test_driven(code, test_code, {})
+        assert result.success is False
+        assert "Assertion failed:" in result.error
+        assert "assert result == 2" in result.error
+
+    async def test_test_driven_stderr_included(self, monkeypatch):
+        monkeypatch.setattr(
+            "pillywiggins.skills.sandbox._sanitize_sandbox_result", lambda r: r
+        )
+        code = "import sys\nasync def run(**kwargs):\n    print('warn!', file=sys.stderr)\n    return 1"
+        test_code = "result = run()\nassert result == 2"
+        result = await run_test_driven(code, test_code, {})
+        assert result.success is False
+        assert "[stderr]:" in result.error
+        assert "warn!" in result.error
+
+    async def test_test_driven_success(self):
+        code = "async def run(**kwargs):\n    return {'ok': True}"
+        test_code = "result = run()\nassert result['ok'] is True"
+        result = await run_test_driven(code, test_code, {})
+        assert result.success is True
+        assert result.result == "All tests passed"
 
 
 class TestSandboxResult:
