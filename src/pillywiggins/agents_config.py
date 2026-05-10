@@ -71,7 +71,8 @@ def apply_agent_env(agent_config: AgentConfig) -> None:
         if key not in os.environ:
             os.environ[key] = expanded
     if agent_config.allowed_user_ids:
-        if "ALLOWED_USER_IDS" not in os.environ:
+        existing = os.environ.get("ALLOWED_USER_IDS", "")
+        if "ALLOWED_USER_IDS" not in os.environ or not existing.strip() or existing.strip().lower() == "changeme":
             os.environ["ALLOWED_USER_IDS"] = agent_config.allowed_user_ids
     if agent_config.timezone:
         if "TIMEZONE" not in os.environ:
