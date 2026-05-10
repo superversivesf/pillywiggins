@@ -92,11 +92,26 @@ def _ensure_gitignore() -> None:
 
 
 def _clean_puck_placeholders(agent_id: str) -> None:
-    """Rename or comment out stale PUCK_* placeholders in .env after the first agent is added."""
+    """Rename or comment out stale PUCK_* placeholders in .env after the first agent is added.
+
+    Only renames PUCK_* tokens if there is no existing 'puck' agent in agents.yaml.
+    If puck is already configured, leave PUCK_* tokens alone."""
     if not ENV_FILE.exists():
         return
+
+    # Check if puck is already a configured agent
+    try:
+        agents = load_yaml(AGENTS_YAML)
+    except (FileNotFoundError, TypeError):
+        agents = {"agents": []}
+    agent_ids = {a.get("id", "").lower() for a in agents.get("agents", [])}
+    if "puck" in agent_ids:
+        return  # Puck is configured — don't touch PUCK_* tokens
+
     content = read_text(ENV_FILE)
     lines = content.splitlines()
+    # Check if target tokens already exist
+    existing_keys = {l.split("=", 1)[0] for l in lines if "=" in l}
     new_lines: list[str] = []
     changed = False
     agent_upper = agent_id.upper()
@@ -105,23 +120,32 @@ def _clean_puck_placeholders(agent_id: str) -> None:
         # Rename PUCK_TELEGRAM_TOKEN -> <AGENT>_TELEGRAM_TOKEN
         if stripped.startswith("PUCK_TELEGRAM_TOKEN=") and agent_upper != "PUCK":
             new_key = f"{agent_upper}_TELEGRAM_TOKEN"
-            value = stripped.split("=", 1)[1] if "=" in stripped else ""
-            if value and not value.startswith("your_"):
-                new_lines.append(f"{new_key}={value}")
+            if new_key in existing_keys:
+                # Target agent already has a token — comment out stale PUCK token
+                new_lines.append(f"# {stripped}")
+                new_lines.append(f"#   PUCK was renamed; {new_key} already exists above")
             else:
-                new_lines.append(f"#{new_key}=")
-                new_lines.append(f"#   Fill in your real {new_key} value")
+                value = stripped.split("=", 1)[1] if "=" in stripped else ""
+                if value and not value.startswith("your_"):
+                    new_lines.append(f"{new_key}={value}")
+                else:
+                    new_lines.append(f"#{new_key}=")
+                    new_lines.append(f"#   Fill in your real {new_key} value")
             changed = True
             continue
         # Rename PUCK_DISCORD_TOKEN -> <AGENT>_DISCORD_TOKEN
         if stripped.startswith("PUCK_DISCORD_TOKEN=") and agent_upper != "PUCK":
             new_key = f"{agent_upper}_DISCORD_TOKEN"
-            value = stripped.split("=", 1)[1] if "=" in stripped else ""
-            if value and not value.startswith("your_"):
-                new_lines.append(f"{new_key}={value}")
+            if new_key in existing_keys:
+                new_lines.append(f"# {stripped}")
+                new_lines.append(f"#   PUCK was renamed; {new_key} already exists above")
             else:
-                new_lines.append(f"#{new_key}=")
-                new_lines.append(f"#   Fill in your real {new_key} value")
+                value = stripped.split("=", 1)[1] if "=" in stripped else ""
+                if value and not value.startswith("your_"):
+                    new_lines.append(f"{new_key}={value}")
+                else:
+                    new_lines.append(f"#{new_key}=")
+                    new_lines.append(f"#   Fill in your real {new_key} value")
             changed = True
             continue
         new_lines.append(line)
