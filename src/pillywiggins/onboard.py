@@ -91,69 +91,6 @@ def _ensure_gitignore() -> None:
         logger.info(f"Updated .gitignore with: {', '.join(sorted(missing))}")
 
 
-def _clean_puck_placeholders(agent_id: str) -> None:
-    """Rename or comment out stale PUCK_* placeholders in .env after the first agent is added.
-
-    Only renames PUCK_* tokens if there is no existing 'puck' agent in agents.yaml.
-    If puck is already configured, leave PUCK_* tokens alone."""
-    if not ENV_FILE.exists():
-        return
-
-    # Check if puck is already a configured agent
-    try:
-        agents = load_yaml(AGENTS_YAML)
-    except (FileNotFoundError, TypeError):
-        agents = {"agents": []}
-    agent_ids = {a.get("id", "").lower() for a in agents.get("agents", [])}
-    if "puck" in agent_ids:
-        return  # Puck is configured — don't touch PUCK_* tokens
-
-    content = read_text(ENV_FILE)
-    lines = content.splitlines()
-    # Check if target tokens already exist
-    existing_keys = {l.split("=", 1)[0] for l in lines if "=" in l}
-    new_lines: list[str] = []
-    changed = False
-    agent_upper = agent_id.upper()
-    for line in lines:
-        stripped = line.strip()
-        # Rename PUCK_TELEGRAM_TOKEN -> <AGENT>_TELEGRAM_TOKEN
-        if stripped.startswith("PUCK_TELEGRAM_TOKEN=") and agent_upper != "PUCK":
-            new_key = f"{agent_upper}_TELEGRAM_TOKEN"
-            if new_key in existing_keys:
-                # Target agent already has a token — comment out stale PUCK token
-                new_lines.append(f"# {stripped}")
-                new_lines.append(f"#   PUCK was renamed; {new_key} already exists above")
-            else:
-                value = stripped.split("=", 1)[1] if "=" in stripped else ""
-                if value and not value.startswith("your_"):
-                    new_lines.append(f"{new_key}={value}")
-                else:
-                    new_lines.append(f"#{new_key}=")
-                    new_lines.append(f"#   Fill in your real {new_key} value")
-            changed = True
-            continue
-        # Rename PUCK_DISCORD_TOKEN -> <AGENT>_DISCORD_TOKEN
-        if stripped.startswith("PUCK_DISCORD_TOKEN=") and agent_upper != "PUCK":
-            new_key = f"{agent_upper}_DISCORD_TOKEN"
-            if new_key in existing_keys:
-                new_lines.append(f"# {stripped}")
-                new_lines.append(f"#   PUCK was renamed; {new_key} already exists above")
-            else:
-                value = stripped.split("=", 1)[1] if "=" in stripped else ""
-                if value and not value.startswith("your_"):
-                    new_lines.append(f"{new_key}={value}")
-                else:
-                    new_lines.append(f"#{new_key}=")
-                    new_lines.append(f"#   Fill in your real {new_key} value")
-            changed = True
-            continue
-        new_lines.append(line)
-    if changed:
-        write_text(ENV_FILE, "\n".join(new_lines) + "\n")
-        logger.info("Renamed stale PUCK_* placeholders in .env")
-
-
 def ensure_config_files() -> None:
     if not AGENTS_YAML.exists() and AGENTS_YAML_EXAMPLE.exists():
         shutil.copy2(AGENTS_YAML_EXAMPLE, AGENTS_YAML)
@@ -535,7 +472,7 @@ def add_token_to_env(agent_id: str, token_value: str, env_path: Path = ENV_FILE,
         lines = content.split("\n")
         new_lines = []
         for line in lines:
-            stripped = line.strip().lstrip("#")
+            stripped = line.lstrip("#").strip()
             if stripped.startswith(f"{token_env}="):
                 new_lines.append(token_line)
             else:
@@ -1123,7 +1060,6 @@ async def _add_agent_flow() -> None:
         token_value=token,
         timezone=tz,
     )
-    _clean_puck_placeholders(agent_id)
 
     _print_summary(
         agent_id=agent_id,
