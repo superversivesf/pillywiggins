@@ -64,8 +64,9 @@ class PgVectorMemoryBase:
         row = await conn.fetchrow(
             """SELECT atttypmod
                FROM pg_attribute
-               WHERE attrelid = %s::regclass
-               AND attname = 'embedding'""" % self._table_name
+               WHERE attrelid = $1::regclass
+               AND attname = 'embedding'""",
+            self._table_name,
         )
         if row is None:
             # Table or column doesn't exist yet; nothing to migrate.

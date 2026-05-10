@@ -256,8 +256,13 @@ class PillywigginAgent:
                 for s in self.personality.schedules:
                     name = s.get("name", "unnamed")
                     schedules[name] = s
-            scheduler = AgentScheduler(settings.redis_url, self.agent_id, channel=self.personality.channel, agent_handler=self)
+            scheduler = AgentScheduler(
+                settings.redis_url, self.agent_id,
+                channel=self.personality.channel,
+                agent_handler=self,
+            )
             await scheduler.start(yaml_schedules=schedules)
+            scheduler.register_agent_handler(self)
             self._scheduler = scheduler
             self._register_scheduler_handlers()
             logger.info("Scheduler started for %s", self.agent_id)

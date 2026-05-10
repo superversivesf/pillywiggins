@@ -15,6 +15,10 @@ from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
 
 logger = logging.getLogger(__name__)
 
+# Module-level registry so scheduled jobs can look up their agent handler
+# without pickling it into RedisJobStore kwargs.
+AGENT_HANDLERS: dict[str, Any] = {}
+
 CRON_FIELDS = ["minute", "hour", "day", "month", "day_of_week"]
 
 
@@ -27,7 +31,7 @@ async def _builtin_memory_review(**kwargs: Any) -> None:
     agent_id = kwargs.get("agent_id", "unknown")
     args = kwargs.get("args", {})
     logger.info("memory review for %s", agent_id)
-    handler = kwargs.get("_agent_handler")
+    handler = AGENT_HANDLERS.get(agent_id) or kwargs.get("_agent_handler")
     if handler is None:
         logger.warning("memory_review: no agent handler for %s", agent_id)
         return
@@ -42,7 +46,7 @@ async def _builtin_memory_review(**kwargs: Any) -> None:
 async def _builtin_skill_reload(**kwargs: Any) -> None:
     agent_id = kwargs.get("agent_id", "unknown")
     logger.info("skill reload for %s", agent_id)
-    handler = kwargs.get("_agent_handler")
+    handler = AGENT_HANDLERS.get(agent_id) or kwargs.get("_agent_handler")
     if handler is None:
         logger.warning("skill_reload: no agent handler for %s", agent_id)
         return
@@ -60,8 +64,8 @@ async def _builtin_skill_reload(**kwargs: Any) -> None:
 async def _builtin_custom(**kwargs: Any) -> None:
     agent_id = kwargs.get("agent_id", "unknown")
     args = kwargs.get("args", {})
-    logger.info("custom action for %s: %s", agent_id, args)
-    handler = kwargs.get("_agent_handler")
+    logger.info("custom action for %s", agent_id)
+    handler = AGENT_HANDLERS.get(agent_id) or kwargs.get("_agent_handler")
     if handler is None:
         logger.warning("custom: no agent handler for %s", agent_id)
         return
@@ -144,6 +148,11 @@ class AgentScheduler:
 
     def register_handler(self, action: str, handler: Callable[..., Coroutine]) -> None:
         self._action_handlers[action] = handler
+
+    def register_agent_handler(self, agent_handler: Any) -> None:
+        """Register the agent instance so builtins can look it up by agent_id."""
+        if agent_handler is not None:
+            AGENT_HANDLERS[self._agent_id] = agent_handler
 
     def _get_handler(self, action: str) -> Callable[..., Coroutine]:
         if action in self._action_handlers:
@@ -281,9 +290,10 @@ class AgentScheduler:
         action = job.get("action", "custom")
         job_id = _make_job_id(self._agent_id, name)
         handler = self._get_handler(action)
-        kwargs = {"action": action, "agent_id": self._agent_id}
-        if self._agent_handler is not None:
-            kwargs["_agent_handler"] = self._agent_handler
+        kwargs: dict[str, Any] = {"action": action, "agent_id": self._agent_id}
+        # NOTE: we do NOT pass _agent_handler here — builtins look it up via
+        # AGENT_HANDLERS[agent_id] to avoid pickling asyncio.Lock etc. into
+        # RedisJobStore. See register_agent_handler().
         if "args" in job:
             kwargs["args"] = job["args"]
 
