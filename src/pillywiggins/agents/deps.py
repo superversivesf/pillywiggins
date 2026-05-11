@@ -31,3 +31,8 @@ class AgentDeps:
     conversation_info: Callable[[], dict[str, int]] = field(default=lambda: {"message_count": 0, "estimated_tokens": 0})
     logger: AgentLogger | None = field(default=None)
     settings: Settings | None = field(default=None)
+    embedding_model: str = field(default="")
+    llm_base_url: str = field(default="")
+    llm_api_key: str = field(default="")
+    llm_provider: str = field(default="")
+    embedding_dimension: int = field(default=0)

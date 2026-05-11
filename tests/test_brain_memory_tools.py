@@ -26,9 +26,7 @@ class TestRecallPrivateMemoryEdgeCases:
 
     @pytest.mark.asyncio
     @patch("pillywiggins.memory.embeddings.embed")
-    @patch("pillywiggins.config.Settings")
-    async def test_returns_message_when_embedding_is_none(self, mock_settings_cls, mock_embed):
-        mock_settings_cls.return_value = MagicMock()
+    async def test_returns_message_when_embedding_is_none(self, mock_embed):
         mock_embed.return_value = None
         memory = MagicMock()
         ctx = _make_ctx(private_memory=memory)
@@ -38,9 +36,7 @@ class TestRecallPrivateMemoryEdgeCases:
 
     @pytest.mark.asyncio
     @patch("pillywiggins.memory.embeddings.embed")
-    @patch("pillywiggins.config.Settings")
-    async def test_returns_not_found_when_search_empty(self, mock_settings_cls, mock_embed):
-        mock_settings_cls.return_value = MagicMock()
+    async def test_returns_not_found_when_search_empty(self, mock_embed):
         mock_embed.return_value = [0.1, 0.2, 0.3]
         memory = MagicMock()
         memory.search = AsyncMock(return_value=[])
@@ -50,9 +46,7 @@ class TestRecallPrivateMemoryEdgeCases:
 
     @pytest.mark.asyncio
     @patch("pillywiggins.memory.embeddings.embed")
-    @patch("pillywiggins.config.Settings")
-    async def test_returns_formatted_results_when_found(self, mock_settings_cls, mock_embed):
-        mock_settings_cls.return_value = MagicMock()
+    async def test_returns_formatted_results_when_found(self, mock_embed):
         mock_embed.return_value = [0.1, 0.2, 0.3]
         memory = MagicMock()
         memory.search = AsyncMock(
@@ -70,18 +64,18 @@ class TestRecallPrivateMemoryEdgeCases:
 
     @pytest.mark.asyncio
     @patch("pillywiggins.memory.embeddings.embed")
-    @patch("pillywiggins.config.Settings")
-    async def test_search_uses_embedding_from_settings(self, mock_settings_cls, mock_embed):
-        mock_settings = MagicMock()
-        mock_settings.llm_base_url = "http://custom:11434"
-        mock_settings.llm_api_key = "key"
-        mock_settings.llm_provider = "ollama"
-        mock_settings.embedding_model = "nomic-embed-text"
-        mock_settings_cls.return_value = mock_settings
+    async def test_search_uses_embedding_from_deps(self, mock_embed):
         mock_embed.return_value = [0.5]
         memory = MagicMock()
         memory.search = AsyncMock(return_value=[])
-        ctx = _make_ctx(private_memory=memory)
+        ctx = _make_ctx(
+            private_memory=memory,
+            embedding_model="nomic-embed-text",
+            llm_base_url="http://custom:11434",
+            llm_api_key="key",
+            llm_provider="ollama",
+            embedding_dimension=768,
+        )
         await recall_private_memory(ctx, "test")
         mock_embed.assert_awaited_once_with(
             "test",
@@ -89,7 +83,7 @@ class TestRecallPrivateMemoryEdgeCases:
             api_key="key",
             provider="ollama",
             model="nomic-embed-text",
-            expected_dimension=mock_settings.embedding_dimension,
+            expected_dimension=768,
         )
 
 
@@ -102,9 +96,7 @@ class TestSaveToPrivateMemoryEdgeCases:
 
     @pytest.mark.asyncio
     @patch("pillywiggins.memory.embeddings.embed")
-    @patch("pillywiggins.config.Settings")
-    async def test_returns_error_when_embedding_is_none(self, mock_settings_cls, mock_embed):
-        mock_settings_cls.return_value = MagicMock()
+    async def test_returns_error_when_embedding_is_none(self, mock_embed):
         mock_embed.return_value = None
         memory = MagicMock()
         ctx = _make_ctx(private_memory=memory)
@@ -114,9 +106,7 @@ class TestSaveToPrivateMemoryEdgeCases:
 
     @pytest.mark.asyncio
     @patch("pillywiggins.memory.embeddings.embed")
-    @patch("pillywiggins.config.Settings")
-    async def test_saves_content_with_embedding(self, mock_settings_cls, mock_embed):
-        mock_settings_cls.return_value = MagicMock()
+    async def test_saves_content_with_embedding(self, mock_embed):
         mock_embed.return_value = [0.1, 0.2, 0.3]
         memory = MagicMock()
         memory.save = AsyncMock()
@@ -127,9 +117,7 @@ class TestSaveToPrivateMemoryEdgeCases:
 
     @pytest.mark.asyncio
     @patch("pillywiggins.memory.embeddings.embed")
-    @patch("pillywiggins.config.Settings")
-    async def test_confirmation_includes_content(self, mock_settings_cls, mock_embed):
-        mock_settings_cls.return_value = MagicMock()
+    async def test_confirmation_includes_content(self, mock_embed):
         mock_embed.return_value = [0.5]
         memory = MagicMock()
         memory.save = AsyncMock()
@@ -148,9 +136,7 @@ class TestQueryCouncilMemory:
 
     @pytest.mark.asyncio
     @patch("pillywiggins.memory.embeddings.embed")
-    @patch("pillywiggins.config.Settings")
-    async def test_returns_not_found_when_search_empty(self, mock_settings_cls, mock_embed):
-        mock_settings_cls.return_value = MagicMock()
+    async def test_returns_not_found_when_search_empty(self, mock_embed):
         mock_embed.return_value = [0.1, 0.2, 0.3]
         council = MagicMock()
         council.search = AsyncMock(return_value=[])
@@ -160,9 +146,7 @@ class TestQueryCouncilMemory:
 
     @pytest.mark.asyncio
     @patch("pillywiggins.memory.embeddings.embed")
-    @patch("pillywiggins.config.Settings")
-    async def test_returns_formatted_results_when_found(self, mock_settings_cls, mock_embed):
-        mock_settings_cls.return_value = MagicMock()
+    async def test_returns_formatted_results_when_found(self, mock_embed):
         mock_embed.return_value = [0.1, 0.2, 0.3]
         council = MagicMock()
         council.search = AsyncMock(
@@ -186,9 +170,7 @@ class TestQueryCouncilMemory:
 
     @pytest.mark.asyncio
     @patch("pillywiggins.memory.embeddings.embed")
-    @patch("pillywiggins.config.Settings")
-    async def test_returns_message_when_embedding_is_none(self, mock_settings_cls, mock_embed):
-        mock_settings_cls.return_value = MagicMock()
+    async def test_returns_message_when_embedding_is_none(self, mock_embed):
         mock_embed.return_value = None
         council = MagicMock()
         ctx = _make_ctx(council_memory=council)
@@ -206,9 +188,7 @@ class TestShareToCouncil:
 
     @pytest.mark.asyncio
     @patch("pillywiggins.memory.embeddings.embed")
-    @patch("pillywiggins.config.Settings")
-    async def test_returns_error_when_embedding_is_none(self, mock_settings_cls, mock_embed):
-        mock_settings_cls.return_value = MagicMock()
+    async def test_returns_error_when_embedding_is_none(self, mock_embed):
         mock_embed.return_value = None
         council = MagicMock()
         ctx = _make_ctx(council_memory=council)
@@ -218,9 +198,7 @@ class TestShareToCouncil:
 
     @pytest.mark.asyncio
     @patch("pillywiggins.memory.embeddings.embed")
-    @patch("pillywiggins.config.Settings")
-    async def test_writes_entry_with_parsed_tags(self, mock_settings_cls, mock_embed):
-        mock_settings_cls.return_value = MagicMock()
+    async def test_writes_entry_with_parsed_tags(self, mock_embed):
         mock_embed.return_value = [0.1, 0.2, 0.3]
         council = MagicMock()
         council.write_entry = AsyncMock(
@@ -240,9 +218,7 @@ class TestShareToCouncil:
 
     @pytest.mark.asyncio
     @patch("pillywiggins.memory.embeddings.embed")
-    @patch("pillywiggins.config.Settings")
-    async def test_writes_entry_with_empty_tags(self, mock_settings_cls, mock_embed):
-        mock_settings_cls.return_value = MagicMock()
+    async def test_writes_entry_with_empty_tags(self, mock_embed):
         mock_embed.return_value = [0.1, 0.2, 0.3]
         council = MagicMock()
         council.write_entry = AsyncMock(
@@ -260,9 +236,7 @@ class TestShareToCouncil:
 
     @pytest.mark.asyncio
     @patch("pillywiggins.memory.embeddings.embed")
-    @patch("pillywiggins.config.Settings")
-    async def test_publishes_via_nats_bus(self, mock_settings_cls, mock_embed):
-        mock_settings_cls.return_value = MagicMock()
+    async def test_publishes_via_nats_bus(self, mock_embed):
         mock_embed.return_value = [0.1, 0.2, 0.3]
         council = MagicMock()
         council.write_entry = AsyncMock(
@@ -279,9 +253,7 @@ class TestShareToCouncil:
 
     @pytest.mark.asyncio
     @patch("pillywiggins.memory.embeddings.embed")
-    @patch("pillywiggins.config.Settings")
-    async def test_returns_error_on_write_failure(self, mock_settings_cls, mock_embed):
-        mock_settings_cls.return_value = MagicMock()
+    async def test_returns_error_on_write_failure(self, mock_embed):
         mock_embed.return_value = [0.1, 0.2, 0.3]
         council = MagicMock()
         council.write_entry = AsyncMock(
@@ -293,9 +265,7 @@ class TestShareToCouncil:
 
     @pytest.mark.asyncio
     @patch("pillywiggins.memory.embeddings.embed")
-    @patch("pillywiggins.config.Settings")
-    async def test_nats_publish_failure_does_not_crash(self, mock_settings_cls, mock_embed):
-        mock_settings_cls.return_value = MagicMock()
+    async def test_nats_publish_failure_does_not_crash(self, mock_embed):
         mock_embed.return_value = [0.1, 0.2, 0.3]
         council = MagicMock()
         council.write_entry = AsyncMock(
@@ -311,9 +281,7 @@ class TestShareToCouncil:
 class TestSanitizerIntegrationMemory:
     @pytest.mark.asyncio
     @patch("pillywiggins.memory.embeddings.embed")
-    @patch("pillywiggins.config.Settings")
-    async def test_recall_private_memory_sanitized(self, mock_settings_cls, mock_embed):
-        mock_settings_cls.return_value = MagicMock()
+    async def test_recall_private_memory_sanitized(self, mock_embed):
         mock_embed.return_value = [0.1, 0.2, 0.3]
         memory = MagicMock()
         memory.search = AsyncMock(

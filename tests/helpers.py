@@ -57,6 +57,11 @@ def make_ctx(
     conversation_info=None,
     logger=None,
     settings=None,
+    embedding_model="",
+    llm_base_url="",
+    llm_api_key="",
+    llm_provider="",
+    embedding_dimension=0,
 ):
     """Create a mock RunContext[AgentDeps] with sensible defaults.
 
@@ -78,6 +83,11 @@ def make_ctx(
         conversation_info=conversation_info or (lambda: {"message_count": 0, "estimated_tokens": 0}),
         logger=logger,
         settings=settings,
+        embedding_model=embedding_model,
+        llm_base_url=llm_base_url,
+        llm_api_key=llm_api_key,
+        llm_provider=llm_provider,
+        embedding_dimension=embedding_dimension,
     )
     return ctx
 

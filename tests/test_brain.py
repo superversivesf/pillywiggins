@@ -416,6 +416,201 @@ class TestGetCurentTimeToolRegistered:
         assert "get_conversation_info" in tool_names
 
 
+# ---------------------------------------------------------------------------
+# Embedding config through AgentDeps
+# ---------------------------------------------------------------------------
+
+
+def test_agent_deps_has_embedding_fields():
+    """AgentDeps must expose resolved embedding config so tools don't call Settings()."""
+    deps = AgentDeps(
+        agent_id="puck",
+        channel="telegram",
+        embedding_model="nomic-embed-text",
+        llm_base_url="http://ollama:11434/v1",
+        llm_api_key="",
+        llm_provider="ollama",
+        embedding_dimension=768,
+    )
+    assert deps.embedding_model == "nomic-embed-text"
+    assert deps.llm_base_url == "http://ollama:11434/v1"
+    assert deps.llm_api_key == ""
+    assert deps.llm_provider == "ollama"
+    assert deps.embedding_dimension == 768
+
+
+class TestEmbeddingDepsUsedByTools:
+    def test_recall_private_memory_uses_deps_embedding_config(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from pillywiggins.agents.tools import recall_private_memory
+        from pillywiggins.agents.deps import AgentDeps
+
+        mock_memory = MagicMock()
+        mock_memory.search = AsyncMock(return_value=[])
+        deps = AgentDeps(
+            agent_id="puck",
+            channel="telegram",
+            private_memory=mock_memory,
+            embedding_model="my-model",
+            llm_base_url="http://my-ollama:11434/v1",
+            llm_api_key="my-key",
+            llm_provider="openai",
+            embedding_dimension=512,
+        )
+        ctx = MagicMock()
+        ctx.deps = deps
+
+        embed_calls = []
+
+        async def fake_embed(text, *, base_url, api_key, provider, model, expected_dimension):
+            embed_calls.append({
+                "base_url": base_url,
+                "api_key": api_key,
+                "provider": provider,
+                "model": model,
+                "expected_dimension": expected_dimension,
+            })
+            return [0.1] * 512
+
+        with patch("pillywiggins.agents.tools._embed_text", side_effect=fake_embed):
+            import asyncio
+            result = asyncio.get_event_loop().run_until_complete(recall_private_memory(ctx, "test"))
+
+        assert len(embed_calls) == 1
+        call = embed_calls[0]
+        assert call["model"] == "my-model"
+        assert call["base_url"] == "http://my-ollama:11434/v1"
+        assert call["api_key"] == "my-key"
+        assert call["provider"] == "openai"
+        assert call["expected_dimension"] == 512
+
+    def test_save_to_private_memory_uses_deps_embedding_config(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from pillywiggins.agents.tools import save_to_private_memory
+        from pillywiggins.agents.deps import AgentDeps
+
+        mock_memory = MagicMock()
+        mock_memory.save = AsyncMock(return_value=True)
+        deps = AgentDeps(
+            agent_id="puck",
+            channel="telegram",
+            private_memory=mock_memory,
+            embedding_model="nomic-embed-text",
+            llm_base_url="http://ollama:11434/v1",
+            llm_api_key="",
+            llm_provider="ollama",
+            embedding_dimension=768,
+        )
+        ctx = MagicMock()
+        ctx.deps = deps
+
+        embed_calls = []
+
+        async def fake_embed(text, *, base_url, api_key, provider, model, expected_dimension):
+            embed_calls.append({
+                "model": model,
+                "base_url": base_url,
+                "provider": provider,
+                "expected_dimension": expected_dimension,
+            })
+            return [0.1] * 768
+
+        with patch("pillywiggins.agents.tools._embed_text", side_effect=fake_embed):
+            import asyncio
+            result = asyncio.get_event_loop().run_until_complete(save_to_private_memory(ctx, "hello"))
+
+        assert len(embed_calls) == 1
+        call = embed_calls[0]
+        assert call["model"] == "nomic-embed-text"
+        assert call["provider"] == "ollama"
+        assert call["expected_dimension"] == 768
+
+    def test_query_council_memory_uses_deps_embedding_config(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from pillywiggins.agents.tools import query_council_memory
+        from pillywiggins.agents.deps import AgentDeps
+
+        mock_council = MagicMock()
+        mock_council.search = AsyncMock(return_value=[])
+        deps = AgentDeps(
+            agent_id="puck",
+            channel="telegram",
+            council_memory=mock_council,
+            embedding_model="c-model",
+            llm_base_url="http://c-ollama:11434/v1",
+            llm_api_key="c-key",
+            llm_provider="openai",
+            embedding_dimension=1536,
+        )
+        ctx = MagicMock()
+        ctx.deps = deps
+
+        embed_calls = []
+
+        async def fake_embed(text, *, base_url, api_key, provider, model, expected_dimension):
+            embed_calls.append({
+                "model": model,
+                "base_url": base_url,
+                "api_key": api_key,
+                "provider": provider,
+                "expected_dimension": expected_dimension,
+            })
+            return [0.1] * 1536
+
+        with patch("pillywiggins.agents.tools._embed_text", side_effect=fake_embed):
+            import asyncio
+            result = asyncio.get_event_loop().run_until_complete(query_council_memory(ctx, "q"))
+
+        assert len(embed_calls) == 1
+        call = embed_calls[0]
+        assert call["model"] == "c-model"
+        assert call["base_url"] == "http://c-ollama:11434/v1"
+        assert call["api_key"] == "c-key"
+        assert call["provider"] == "openai"
+        assert call["expected_dimension"] == 1536
+
+    def test_share_to_council_uses_deps_embedding_config(self, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from pillywiggins.agents.tools import share_to_council
+        from pillywiggins.agents.deps import AgentDeps
+
+        mock_council = MagicMock()
+        mock_council.write_entry = AsyncMock(return_value={"success": True})
+        deps = AgentDeps(
+            agent_id="puck",
+            channel="telegram",
+            council_memory=mock_council,
+            embedding_model="s-model",
+            llm_base_url="http://s-ollama:11434/v1",
+            llm_api_key="s-key",
+            llm_provider="ollama",
+            embedding_dimension=384,
+        )
+        ctx = MagicMock()
+        ctx.deps = deps
+
+        embed_calls = []
+
+        async def fake_embed(text, *, base_url, api_key, provider, model, expected_dimension):
+            embed_calls.append({
+                "model": model,
+                "base_url": base_url,
+                "api_key": api_key,
+                "provider": provider,
+                "expected_dimension": expected_dimension,
+            })
+            return [0.1] * 384
+
+        with patch("pillywiggins.agents.tools._embed_text", side_effect=fake_embed):
+            import asyncio
+            result = asyncio.get_event_loop().run_until_complete(share_to_council(ctx, "insight"))
+
+        assert len(embed_calls) == 1
+        call = embed_calls[0]
+        assert call["model"] == "s-model"
+        assert call["expected_dimension"] == 384
+
+
 class TestSanitizerIntegration:
     def test_system_prompt_includes_security_rules(self, monkeypatch):
         agent = create_brain(

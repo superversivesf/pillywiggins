@@ -349,6 +349,11 @@ class PillywigginAgent:
                     scheduler=self._scheduler,
                     conversation_key=conversation_key,
                     settings=self._settings,
+                    embedding_model=self._settings.embedding_model,
+                    llm_base_url=self._settings.llm_base_url,
+                    llm_api_key=self._settings.llm_api_key,
+                    llm_provider=self._settings.llm_provider,
+                    embedding_dimension=self._settings.embedding_dimension,
                 ),
             )
             message_text = result.output
@@ -464,6 +469,11 @@ class PillywigginAgent:
             nats_bus=self._nats_bus,
             scheduler=self._scheduler,
             settings=self._settings,
+            embedding_model=self._settings.embedding_model,
+            llm_base_url=self._settings.llm_base_url,
+            llm_api_key=self._settings.llm_api_key,
+            llm_provider=self._settings.llm_provider,
+            embedding_dimension=self._settings.embedding_dimension,
         )
         result = await self._brain.run(
             "",
@@ -640,6 +650,11 @@ class PillywigginAgent:
                 conversation_info=_get_conversation_info,
                 logger=agent_logger,
                 settings=self._settings,
+                embedding_model=self._settings.embedding_model,
+                llm_base_url=self._settings.llm_base_url,
+                llm_api_key=self._settings.llm_api_key,
+                llm_provider=self._settings.llm_provider,
+                embedding_dimension=self._settings.embedding_dimension,
             )
 
             total_start = time.perf_counter()

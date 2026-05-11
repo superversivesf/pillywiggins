@@ -99,6 +99,11 @@ async def _builtin_custom(**kwargs: Any) -> None:
                     nats_bus=handler._nats_bus,
                     scheduler=handler._scheduler,
                     settings=handler._settings,
+                    embedding_model=handler._settings.embedding_model,
+                    llm_base_url=handler._settings.llm_base_url,
+                    llm_api_key=handler._settings.llm_api_key,
+                    llm_provider=handler._settings.llm_provider,
+                    embedding_dimension=handler._settings.embedding_dimension,
                 ),
             )
             logger.info("custom prompt executed for %s: %s", agent_id, getattr(result, "output", result))

@@ -48,6 +48,11 @@ def test_init_with_all_fields():
         nats_bus=mock_nats,
         scheduler=mock_scheduler,
         logger=mock_logger,
+        embedding_model="nomic-embed-text",
+        llm_base_url="http://ollama:11434/v1",
+        llm_api_key="",
+        llm_provider="ollama",
+        embedding_dimension=768,
     )
 
     assert deps.agent_id == "puck"
@@ -58,6 +63,11 @@ def test_init_with_all_fields():
     assert deps.nats_bus is mock_nats
     assert deps.scheduler is mock_scheduler
     assert deps.logger is mock_logger
+    assert deps.embedding_model == "nomic-embed-text"
+    assert deps.llm_base_url == "http://ollama:11434/v1"
+    assert deps.llm_api_key == ""
+    assert deps.llm_provider == "ollama"
+    assert deps.embedding_dimension == 768
 
 
 def test_optional_fields_are_properly_typed():
