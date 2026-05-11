@@ -15,6 +15,40 @@ from pillywiggins.skills.sandbox import SandboxResult, run_sandboxed, run_test_d
 logger = logging.getLogger(__name__)
 
 
+PROGRESS_MESSAGES = {
+    "drafting": "Drafting skill...",
+    "testing": "Testing skill...",
+    "reviewing": "Reviewing skill...",
+    "publishing": "Publishing skill...",
+}
+
+
+def get_progress_message(stage: str) -> str:
+    """Return a user-facing progress message for a builder stage."""
+    return PROGRESS_MESSAGES.get(stage, f"Working on {stage}...")
+
+
+def format_correction_prompt(stage: str, errors: list[str], remaining: int) -> str:
+    """Build a structured correction prompt for the LLM when schema validation fails.
+
+    Args:
+        stage: The builder stage that failed (e.g. 'build_skill').
+        errors: List of schema validation error strings.
+        remaining: Number of retry attempts remaining.
+
+    Returns:
+        A formatted string explaining the errors and inviting a retry.
+    """
+    lines = ["Skill validation failed. Corrections needed:"]
+    for i, err in enumerate(errors, 1):
+        lines.append(f"{i}. Schema error: {err}")
+    lines.append("")
+    lines.append(
+        f"Fix these issues and call {stage} again. You have {remaining} retries remaining."
+    )
+    return "\n".join(lines)
+
+
 class DraftStatus(enum.Enum):
     DRAFT = "draft"
     TESTED = "tested"

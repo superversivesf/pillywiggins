@@ -57,20 +57,25 @@ def _format_current_time(tz_name: str) -> str:
     return now.strftime("%A, %B %d, %Y at %I:%M %p %Z")
 
 
-async def _embed_text(text: str, settings: "Settings | None" = None) -> list[float] | None:
-    """Generate an embedding for the given text using configured settings."""
-    from pillywiggins.config import Settings
+async def _embed_text(
+    text: str,
+    *,
+    base_url: str = "",
+    api_key: str = "",
+    provider: str = "",
+    model: str = "",
+    expected_dimension: int = 0,
+) -> list[float] | None:
+    """Generate an embedding for the given text using the provided config."""
     from pillywiggins.memory.embeddings import embed
 
-    if settings is None:
-        settings = Settings()
     return await embed(
         text,
-        base_url=settings.llm_base_url,
-        api_key=settings.llm_api_key,
-        provider=settings.llm_provider,
-        model=settings.embedding_model,
-        expected_dimension=settings.embedding_dimension,
+        base_url=base_url,
+        api_key=api_key,
+        provider=provider,
+        model=model,
+        expected_dimension=expected_dimension if expected_dimension > 0 else None,
     )
 
 
@@ -183,7 +188,14 @@ async def query_council_memory(ctx: RunContext[AgentDeps], query: str) -> str:
     if ctx.deps.council_memory is None:
         return "Council memory is not available."
 
-    query_embedding = await _embed_text(query, settings=ctx.deps.settings)
+    query_embedding = await _embed_text(
+        query,
+        base_url=ctx.deps.llm_base_url,
+        api_key=ctx.deps.llm_api_key,
+        provider=ctx.deps.llm_provider,
+        model=ctx.deps.embedding_model,
+        expected_dimension=ctx.deps.embedding_dimension,
+    )
     if query_embedding is None:
         return "Council memory could not generate embedding for search."
     results = await ctx.deps.council_memory.search(query_embedding, limit=5)
@@ -214,7 +226,14 @@ async def share_to_council(
     if ctx.deps.council_memory is None:
         return "Council memory is not available."
 
-    embedding = await _embed_text(content, settings=ctx.deps.settings)
+    embedding = await _embed_text(
+        content,
+        base_url=ctx.deps.llm_base_url,
+        api_key=ctx.deps.llm_api_key,
+        provider=ctx.deps.llm_provider,
+        model=ctx.deps.embedding_model,
+        expected_dimension=ctx.deps.embedding_dimension,
+    )
     if embedding is None:
         return "Council memory could not generate embedding."
     parsed_tags = [t.strip() for t in tags.split(",") if t.strip()] if tags else []
@@ -248,7 +267,14 @@ async def recall_private_memory(ctx: RunContext[AgentDeps], query: str) -> str:
     if ctx.deps.private_memory is None:
         return "Private memory is not available."
 
-    query_embedding = await _embed_text(query, settings=ctx.deps.settings)
+    query_embedding = await _embed_text(
+        query,
+        base_url=ctx.deps.llm_base_url,
+        api_key=ctx.deps.llm_api_key,
+        provider=ctx.deps.llm_provider,
+        model=ctx.deps.embedding_model,
+        expected_dimension=ctx.deps.embedding_dimension,
+    )
     if query_embedding is None:
         return "Private memory could not generate embedding for search."
     results = await ctx.deps.private_memory.search(query_embedding, limit=5)
@@ -275,7 +301,14 @@ async def save_to_private_memory(ctx: RunContext[AgentDeps], content: str) -> st
     if ctx.deps.private_memory is None:
         return "Private memory is not available."
 
-    embedding = await _embed_text(content, settings=ctx.deps.settings)
+    embedding = await _embed_text(
+        content,
+        base_url=ctx.deps.llm_base_url,
+        api_key=ctx.deps.llm_api_key,
+        provider=ctx.deps.llm_provider,
+        model=ctx.deps.embedding_model,
+        expected_dimension=ctx.deps.embedding_dimension,
+    )
     if embedding is None:
         return "Private memory could not generate embedding."
     saved = await ctx.deps.private_memory.save(content, embedding)
@@ -344,16 +377,18 @@ async def build_skill(ctx: RunContext[AgentDeps], name: str, code: str) -> str:
     Returns:
         Draft info including name and meta, or a validation error / retry message.
     """
-    from pillywiggins.skills.builder import draft_skill, DraftStatus
+    from pillywiggins.skills.builder import draft_skill, DraftStatus, get_progress_message
 
     allowed, message = _check_and_increment_retries(ctx, "build_skill")
     if not allowed:
         return message
 
+    progress = get_progress_message("drafting")
+
     try:
         draft = draft_skill(name, code)
     except Exception as e:
-        return f"Skill generation failed: {type(e).__name__}: {e}. Please fix and try again."
+        return progress + "\n" + f"Skill generation failed: {type(e).__name__}: {e}. Please fix and try again."
 
     if draft.status == DraftStatus.ERROR:
         error_msg = draft.test_results[0].get("error") if draft.test_results else "Unknown error"
@@ -362,10 +397,11 @@ async def build_skill(ctx: RunContext[AgentDeps], name: str, code: str) -> str:
             key = _get_retry_key(ctx, "build_skill")
             count = _retry_counts.get(key, 0)
             remaining = max(0, 2 - count + 1)  # current call is already counted
-            return _format_correction_prompt("build_skill", schema_errors, remaining)
-        return f"Skill generation failed: {error_msg}. Please fix and try again."
+            return progress + "\n" + _format_correction_prompt("build_skill", schema_errors, remaining)
+        return progress + "\n" + f"Skill generation failed: {error_msg}. Please fix and try again."
 
     lines = []
+    lines.append(progress)
     lines.append(f"Draft created: {draft.name}")
     lines.append(f"Status: {draft.status.value}")
     lines.append(f"Description: {draft.meta.get('description', '(none)')}")
@@ -402,11 +438,14 @@ async def test_skill_code(
     """
     draft, test_cases, error = await _draft_and_test(name, code, test_cases_json, "test_skill_code", ctx)
     if error:
-        return error
+        from pillywiggins.skills.builder import get_progress_message
+        return get_progress_message("testing") + "\n" + error
 
+    from pillywiggins.skills.builder import get_progress_message
     passed_count = sum(1 for r in draft.test_results if r["passed"])
     total_count = len(draft.test_results)
     lines = []
+    lines.append(get_progress_message("testing"))
     lines.append(f"Test results for '{name}': {passed_count}/{total_count} passed")
     lines.append("")
 
@@ -444,13 +483,13 @@ async def review_skill_code(
     Returns:
         Formatted review output with code, test results, and an approval request, or a retry / correction message.
     """
-    from pillywiggins.skills.builder import review_skill
+    from pillywiggins.skills.builder import review_skill, get_progress_message
 
     draft, test_cases, error = await _draft_and_test(name, code, test_cases_json, "review_skill_code", ctx)
     if error:
-        return error
+        return get_progress_message("reviewing") + "\n" + error
 
-    return sanitize_or_default(review_skill(draft), default="[Content blocked due to security policy]")
+    return sanitize_or_default(get_progress_message("reviewing") + "\n" + review_skill(draft), default="[Content blocked due to security policy]")
 
 
 async def publish_skill_code(
@@ -474,11 +513,11 @@ async def publish_skill_code(
     Returns:
         Publication confirmation or an error/rejection / retry message.
     """
-    from pillywiggins.skills.builder import publish_skill
+    from pillywiggins.skills.builder import publish_skill, get_progress_message
 
     draft, test_cases, error = await _draft_and_test(name, code, test_cases_json, "publish_skill_code", ctx)
     if error:
-        return error
+        return get_progress_message("publishing") + "\n" + error
 
     settings = ctx.deps.settings
     skills_dir = settings.skills_dir if settings is not None else "/app/skills"
@@ -489,7 +528,7 @@ async def publish_skill_code(
         registry=ctx.deps.skill_registry,
         nats_bus=ctx.deps.nats_bus,
     )
-    return sanitize_or_default(result, default="[Content blocked due to security policy]")
+    return sanitize_or_default(get_progress_message("publishing") + "\n" + result, default="[Content blocked due to security policy]")
 
 
 async def schedule_task(
