@@ -4,7 +4,7 @@ import pytest
 
 from pillywiggins.agents.base import PillywigginAgent
 from pillywiggins.agents.personality import Personality
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart, ToolCallPart
 
 
 @pytest.fixture
@@ -1088,6 +1088,172 @@ async def test_start_scheduler_skips_when_disabled(personality):
     agent._settings.scheduler_enabled = False
     await agent._start_scheduler()
     assert agent._scheduler is None
+
+
+@pytest.mark.asyncio
+async def test_handle_message_parses_tool_calls(personality):
+    """Assert that handle_message() invokes the correct tool when the LLM outputs a tool call."""
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai import RunContext
+    from pillywiggins.agents.brain import create_brain
+    from pillywiggins.agents.deps import AgentDeps
+    from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
+
+    async def test_tool(ctx: RunContext[AgentDeps]) -> str:
+        return "tool executed: test_tool"
+
+    model = TestModel(call_tools=["test_tool"])
+    with (
+        patch("pillywiggins.agents.base.create_brain") as mock_create,
+        patch("pillywiggins.agents.brain.OpenAIProvider"),
+        patch("pillywiggins.agents.brain.OpenAIChatModel", side_effect=lambda **kw: model),
+    ):
+        mock_create.return_value = create_brain(
+            "qwen3.5:8b", "ollama", "http://localhost:11434", ""
+        )
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+    agent._brain.tool(test_tool, name="test_tool")
+
+    msg = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="123",
+        content="Run test_tool",
+        conversation_key="456",
+    )
+    result = await agent.handle_message(msg)
+    assert "tool executed" in result
+    history = agent.get_history("456")
+    tool_calls = [
+        p
+        for m in history
+        for p in getattr(m, "parts", [])
+        if isinstance(p, ToolCallPart)
+    ]
+    assert any(p.tool_name == "test_tool" for p in tool_calls)
+
+
+@pytest.mark.asyncio
+async def test_handle_message_parses_text_reply(personality):
+    """Assert that handle_message() returns text content when the LLM replies with plain text."""
+    from pydantic_ai.models.test import TestModel
+    from pillywiggins.agents.brain import create_brain
+    from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
+
+    model = TestModel(call_tools=[], custom_output_text="Here is your text reply.")
+    with (
+        patch("pillywiggins.agents.base.create_brain") as mock_create,
+        patch("pillywiggins.agents.brain.OpenAIProvider"),
+        patch("pillywiggins.agents.brain.OpenAIChatModel", side_effect=lambda **kw: model),
+    ):
+        mock_create.return_value = create_brain(
+            "qwen3.5:8b", "ollama", "http://localhost:11434", ""
+        )
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+
+    msg = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="123",
+        content="Say hello",
+        conversation_key="456",
+    )
+    result = await agent.handle_message(msg)
+    assert result == "Here is your text reply."
+    history = agent.get_history("456")
+    assert any(
+        isinstance(p, TextPart)
+        for m in history
+        for p in getattr(m, "parts", [])
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_message_tool_failure_propagates_error(personality):
+    """Assert that when a tool raises inside the brain, the exception propagates through handle_message()."""
+    from pydantic_ai.models.test import TestModel
+    from pydantic_ai import RunContext
+    from pillywiggins.agents.brain import create_brain
+    from pillywiggins.agents.deps import AgentDeps
+    from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
+
+    async def failing_tool(ctx: RunContext[AgentDeps]) -> str:
+        raise RuntimeError("simulated tool failure")
+
+    model = TestModel(call_tools=["failing_tool"])
+    with (
+        patch("pillywiggins.agents.base.create_brain") as mock_create,
+        patch("pillywiggins.agents.brain.OpenAIProvider"),
+        patch("pillywiggins.agents.brain.OpenAIChatModel", side_effect=lambda **kw: model),
+    ):
+        mock_create.return_value = create_brain(
+            "qwen3.5:8b", "ollama", "http://localhost:11434", ""
+        )
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+    agent._brain.tool(failing_tool, name="failing_tool")
+
+    msg = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="123",
+        content="Trigger failure",
+        conversation_key="456",
+    )
+    with pytest.raises(RuntimeError, match="simulated tool failure"):
+        await agent.handle_message(msg)
+
+
+@pytest.mark.asyncio
+async def test_handle_message_no_tool_match_returns_text(personality):
+    """Assert that when the LLM produces no tool calls, a fallback text reply is returned."""
+    from pydantic_ai.models.test import TestModel
+    from pillywiggins.agents.brain import create_brain
+    from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
+
+    model = TestModel(call_tools=[], custom_output_text="No tools matched, here is text.")
+    with (
+        patch("pillywiggins.agents.base.create_brain") as mock_create,
+        patch("pillywiggins.agents.brain.OpenAIProvider"),
+        patch("pillywiggins.agents.brain.OpenAIChatModel", side_effect=lambda **kw: model),
+    ):
+        mock_create.return_value = create_brain(
+            "qwen3.5:8b", "ollama", "http://localhost:11434", ""
+        )
+        agent = PillywigginAgent(
+            agent_id="puck",
+            personality=personality,
+            model_name="qwen3.5:8b",
+            provider="ollama",
+            base_url="http://localhost:11434",
+            api_key="",
+        )
+
+    msg = UnifiedMessage(
+        channel=ChannelType.TELEGRAM,
+        channel_user_id="123",
+        content="Something random",
+        conversation_key="456",
+    )
+    result = await agent.handle_message(msg)
+    assert result == "No tools matched, here is text."
 
 
 def test_should_process_message_addressed_bypasses_limit(agent):

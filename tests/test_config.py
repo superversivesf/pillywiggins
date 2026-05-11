@@ -2,7 +2,10 @@ import os
 from pathlib import Path
 
 import pytest
+import yaml
+from pydantic import ValidationError
 
+from pillywiggins.agents_config import load_agents_config
 from pillywiggins.config import Settings
 
 
@@ -266,3 +269,89 @@ def test_env_example_telegram_token_is_placeholder():
             assert value != "", "PUCK_TELEGRAM_TOKEN should not be empty in env.example"
             return
     pytest.fail("PUCK_TELEGRAM_TOKEN not found in env.example")
+
+
+# ---------------------------------------------------------------------------
+# Branch coverage: validation error branches
+# ---------------------------------------------------------------------------
+
+
+def test_settings_validation_error_on_invalid_int_env(monkeypatch):
+    """Pydantic should raise ValidationError when an int field gets a non-int."""
+    monkeypatch.setenv("COMPACT_KEEP_MESSAGES", "not_a_number")
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_settings_validation_error_on_invalid_float_env(monkeypatch):
+    """Pydantic should raise ValidationError when a float field gets non-float."""
+    monkeypatch.setenv("NATS_CONNECT_TIMEOUT", "abc")
+    with pytest.raises(ValidationError):
+        Settings()
+
+
+def test_settings_missing_pg_password_falls_back_to_default(monkeypatch):
+    """When PG_PASSWORD env var is absent, the default 'changeme' is used."""
+    monkeypatch.delenv("PG_PASSWORD", raising=False)
+    s = Settings()
+    assert s.pg_password == "changeme"
+
+
+def test_settings_missing_database_url_falls_back_to_default(monkeypatch):
+    """When DATABASE_URL env var is absent, the default is used."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    s = Settings()
+    assert "postgres:5432/pillywiggins" in s.database_url
+
+
+def test_get_allowed_user_ids_malformed_non_numeric_raises():
+    """Non-numeric user IDs should raise ValueError (malformed input branch)."""
+    s = Settings(allowed_user_ids="alice,42")
+    with pytest.raises(ValueError, match="invalid literal"):
+        s.get_allowed_user_ids()
+
+
+def test_get_allowed_user_ids_empty_string_returns_empty():
+    """Empty string should return empty set (not crash)."""
+    s = Settings(allowed_user_ids="")
+    assert s.get_allowed_user_ids() == set()
+
+
+def test_get_allowed_user_ids_whitespace_returns_empty():
+    """Whitespace-only string should return empty set."""
+    s = Settings(allowed_user_ids="   ")
+    assert s.get_allowed_user_ids() == set()
+
+
+def test_load_agents_config_invalid_yaml_raises(tmp_path):
+    """Invalid YAML in agents.yaml should propagate yaml.YAMLError."""
+    path = tmp_path / "agents.yaml"
+    path.write_text("{ invalid: yaml :::: [")
+    with pytest.raises(yaml.YAMLError):
+        load_agents_config(str(path))
+
+
+def test_resolve_embedding_config_handles_malformed_url(monkeypatch, caplog):
+    """Malformed llm_base_url should not crash resolve_embedding_config."""
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr(
+        "pillywiggins.embeddings.resolver.discover_ollama_embedding_model",
+        AsyncMock(return_value=None),
+    )
+    s = Settings(llm_base_url="not-a-valid-url://://broken", embedding_model="auto")
+    with caplog.at_level("WARNING", logger="pillywiggins.config"):
+        s.resolve_embedding_config()
+    assert s.embedding_model == ""
+
+
+def test_settings_empty_telegram_token_is_accepted():
+    """Empty telegram_bot_token should be accepted as a valid default."""
+    s = Settings(telegram_bot_token="")
+    assert s.telegram_bot_token == ""
+
+
+def test_settings_empty_discord_token_is_accepted():
+    """Empty discord_bot_token should be accepted as a valid default."""
+    s = Settings(discord_bot_token="")
+    assert s.discord_bot_token == ""

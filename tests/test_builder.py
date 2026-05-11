@@ -1015,6 +1015,47 @@ class TestPublishSkill:
         assert "published successfully" in result
 
 
+class TestPublishSkillRollback:
+    """Tests for the publish failure path when registry.register_skill returns None (deployment failure)."""
+
+    async def test_publish_registry_failure_returns_error_and_skips_broadcast(self):
+        """When registry.register_skill returns None, publish_skill reports failure and does not broadcast."""
+        draft = SkillDraft(
+            name="bad_skill",
+            code=VALID_SKILL_CODE,
+            status=DraftStatus.TESTED,
+            meta={"name": "bad_skill"},
+            test_results=[{"passed": True}],
+        )
+        registry = MagicMock()
+        registry.register_skill.return_value = None
+        registry.load_errors = ["Compilation failed"]
+        nats_bus = AsyncMock()
+
+        result = await publish_skill(draft, approved=True, skills_dir="/tmp", registry=registry, nats_bus=nats_bus)
+
+        assert "could not be loaded" in result
+        nats_bus.publish_broadcast.assert_not_called()
+
+    async def test_publish_registry_failure_without_load_errors(self):
+        """registry.register_skill returns None but load_errors is empty — still returns a clean error."""
+        draft = SkillDraft(
+            name="bad_skill",
+            code=VALID_SKILL_CODE,
+            status=DraftStatus.TESTED,
+            meta={"name": "bad_skill"},
+            test_results=[{"passed": True}],
+        )
+        registry = MagicMock()
+        registry.register_skill.return_value = None
+        registry.load_errors = []
+
+        result = await publish_skill(draft, approved=True, skills_dir="/tmp", registry=registry)
+
+        assert "could not be loaded" in result
+        assert "Registry error" not in result
+
+
 class TestEscapedSkillCode:
     """Reproduce model-quality escaping issues in build_skill tool-call arguments.
 

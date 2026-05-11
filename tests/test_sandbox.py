@@ -103,6 +103,24 @@ class TestRunSandboxed:
         assert result.timed_out is True
         assert "timed out" in result.error.lower()
 
+    async def test_sigkill_escalation(self):
+        """A subprocess that ignores SIGTERM must still be killed via SIGKILL after timeout."""
+        code = (
+            "import signal\n"
+            "import time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "async def run(**kwargs):\n"
+            "    time.sleep(60)\n"
+            "    return {'done': True}\n"
+        )
+        result = await run_sandboxed(code, {}, {}, timeout=2)
+        assert result.success is False
+        assert result.timed_out is True
+        assert "timed out" in result.error.lower()
+        # Process must have been terminated within the timeout window
+        assert result.execution_time_ms >= 2000
+        assert result.execution_time_ms < 5000
+
     async def test_error_handling(self):
         code = "async def run(**kwargs):\n    raise ValueError('boom')"
         result = await run_sandboxed(code, {}, {})

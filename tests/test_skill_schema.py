@@ -248,11 +248,15 @@ class Helper:
 
 
 class TestSchemaConstants:
-    def test_required_meta_keys(self):
-        assert REQUIRED_META_KEYS == {"name", "description", "parameters", "permissions"}
-
-    def test_valid_permissions_keys(self):
-        assert VALID_PERMISSIONS_KEYS == {"network", "subprocess", "file_write"}
+    @pytest.mark.parametrize(
+        "name,expected",
+        [
+            pytest.param("REQUIRED_META_KEYS", {"name", "description", "parameters", "permissions"}, id="required_meta_keys"),
+            pytest.param("VALID_PERMISSIONS_KEYS", {"network", "subprocess", "file_write"}, id="valid_permissions_keys"),
+        ],
+    )
+    def test_schema_constants(self, name, expected):
+        assert globals()[name] == expected
 
     def test_dangerous_patterns_is_dict(self):
         assert isinstance(DANGEROUS_PATTERNS, dict)
@@ -294,31 +298,40 @@ class TestValidSkillCode:
 
 
 class TestStructuralErrors:
-    def test_missing_skill_meta(self):
-        ok, errors = validate_skill_code(CODE_MISSING_META)
+    @pytest.mark.parametrize(
+        "code,checker",
+        [
+            pytest.param(
+                CODE_MISSING_META,
+                lambda errors: any("SKILL_META" in e for e in errors),
+                id="missing_skill_meta",
+            ),
+            pytest.param(
+                CODE_MISSING_RUN,
+                lambda errors: any("run()" in e and "async" in e for e in errors),
+                id="missing_run_function",
+            ),
+            pytest.param(
+                CODE_SYNC_RUN,
+                lambda errors: any("async" in e for e in errors),
+                id="sync_run_rejected",
+            ),
+            pytest.param(
+                CODE_SYNTAX_ERROR,
+                lambda errors: any("Syntax error" in e for e in errors),
+                id="syntax_error",
+            ),
+            pytest.param(
+                CODE_NESTED_RUN,
+                lambda errors: any("async def run()" in e for e in errors),
+                id="nested_run_not_found",
+            ),
+        ],
+    )
+    def test_structural_errors(self, code, checker):
+        ok, errors = validate_skill_code(code)
         assert ok is False
-        assert any("SKILL_META" in e for e in errors)
-
-    def test_missing_run_function(self):
-        ok, errors = validate_skill_code(CODE_MISSING_RUN)
-        assert ok is False
-        assert any("run()" in e and "async" in e for e in errors)
-
-    def test_sync_run_rejected(self):
-        ok, errors = validate_skill_code(CODE_SYNC_RUN)
-        assert ok is False
-        assert any("async" in e for e in errors)
-
-    def test_syntax_error(self):
-        ok, errors = validate_skill_code(CODE_SYNTAX_ERROR)
-        assert ok is False
-        assert any("Syntax error" in e for e in errors)
-
-    def test_nested_run_not_found(self):
-        """run() inside a class does NOT satisfy top-level requirement."""
-        ok, errors = validate_skill_code(CODE_NESTED_RUN)
-        assert ok is False
-        assert any("async def run()" in e for e in errors)
+        assert checker(errors)
 
 
 # ---------------------------------------------------------------------------
@@ -327,32 +340,47 @@ class TestStructuralErrors:
 
 
 class TestPermissionsValidation:
-    def test_list_permissions_rejected(self):
-        ok, errors = validate_skill_code(CODE_LIST_PERMISSIONS)
+    @pytest.mark.parametrize(
+        "code,checker",
+        [
+            pytest.param(
+                CODE_LIST_PERMISSIONS,
+                lambda errors: (
+                    (err := next(e for e in errors if "permissions" in e.lower()))
+                    and "dict" in err.lower()
+                    and "list" in err.lower()
+                    and "{" in err
+                ),
+                id="list_permissions",
+            ),
+            pytest.param(
+                CODE_STR_PERMISSIONS,
+                lambda errors: (
+                    (err := next(e for e in errors if "permissions" in e.lower()))
+                    and "dict" in err.lower()
+                    and "str" in err.lower()
+                ),
+                id="string_permissions",
+            ),
+            pytest.param(
+                CODE_UNKNOWN_PERMISSION_KEY,
+                lambda errors: (
+                    any("magic" in e for e in errors)
+                    and any("Invalid permission key" in e for e in errors)
+                ),
+                id="unknown_key",
+            ),
+            pytest.param(
+                CODE_MISSING_REQUIRED_META_KEYS,
+                lambda errors: any("permissions" in e.lower() for e in errors),
+                id="missing_permissions",
+            ),
+        ],
+    )
+    def test_permissions(self, code, checker):
+        ok, errors = validate_skill_code(code)
         assert ok is False
-        err = next(e for e in errors if "permissions" in e.lower())
-        assert "dict" in err.lower()
-        assert "list" in err.lower()
-        # Should include a concrete example
-        assert "{" in err
-
-    def test_string_permissions_rejected(self):
-        ok, errors = validate_skill_code(CODE_STR_PERMISSIONS)
-        assert ok is False
-        err = next(e for e in errors if "permissions" in e.lower())
-        assert "dict" in err.lower()
-        assert "str" in err.lower()
-
-    def test_unknown_permission_key_rejected(self):
-        ok, errors = validate_skill_code(CODE_UNKNOWN_PERMISSION_KEY)
-        assert ok is False
-        assert any("magic" in e for e in errors)
-        assert any("Invalid permission key" in e for e in errors)
-
-    def test_missing_permissions_rejected(self):
-        ok, errors = validate_skill_code(CODE_MISSING_REQUIRED_META_KEYS)
-        assert ok is False
-        assert any("permissions" in e.lower() for e in errors)
+        assert checker(errors)
 
 
 # ---------------------------------------------------------------------------
@@ -361,30 +389,20 @@ class TestPermissionsValidation:
 
 
 class TestDangerousPatterns:
-    def test_eval_blocked(self):
-        ok, errors = validate_skill_code(CODE_WITH_EVAL)
+    @pytest.mark.parametrize(
+        "code,keyword",
+        [
+            pytest.param(CODE_WITH_EVAL, "eval", id="eval"),
+            pytest.param(CODE_WITH_EXEC, "exec", id="exec"),
+            pytest.param(CODE_WITH_OS_SYSTEM, "os.system", id="os_system"),
+            pytest.param(CODE_WITH_SUBPROCESS_POPEN, "subprocess.Popen", id="subprocess_popen"),
+            pytest.param(CODE_WITH_IMPORT, "__import__", id="import"),
+        ],
+    )
+    def test_dangerous_patterns_blocked(self, code, keyword):
+        ok, errors = validate_skill_code(code)
         assert ok is False
-        assert any("eval" in e for e in errors)
-
-    def test_exec_blocked(self):
-        ok, errors = validate_skill_code(CODE_WITH_EXEC)
-        assert ok is False
-        assert any("exec" in e for e in errors)
-
-    def test_os_system_blocked(self):
-        ok, errors = validate_skill_code(CODE_WITH_OS_SYSTEM)
-        assert ok is False
-        assert any("os.system" in e for e in errors)
-
-    def test_subprocess_popen_blocked(self):
-        ok, errors = validate_skill_code(CODE_WITH_SUBPROCESS_POPEN)
-        assert ok is False
-        assert any("subprocess.Popen" in e for e in errors)
-
-    def test_import_blocked(self):
-        ok, errors = validate_skill_code(CODE_WITH_IMPORT)
-        assert ok is False
-        assert any("__import__" in e for e in errors)
+        assert any(keyword in e for e in errors)
 
     def test_subprocess_still_blocked_without_permission(self):
         ok, errors = validate_skill_code(
@@ -488,24 +506,38 @@ def run(x):
 
 
 class TestErrorMessageUsability:
-    def test_list_permissions_message_is_actionable(self):
-        ok, errors = validate_skill_code(CODE_LIST_PERMISSIONS)
+    @pytest.mark.parametrize(
+        "code,checker",
+        [
+            pytest.param(
+                CODE_LIST_PERMISSIONS,
+                lambda errors: (
+                    (err := next(e for e in errors if "list" in e.lower()))
+                    and "Use {" in err
+                    and "instead" in err.lower()
+                ),
+                id="list_permissions",
+            ),
+            pytest.param(
+                CODE_UNKNOWN_PERMISSION_KEY,
+                lambda errors: (
+                    (err := next(e for e in errors if "Invalid permission key" in e))
+                    and "network" in err
+                    and "subprocess" in err
+                    and "file_write" in err
+                ),
+                id="unknown_key",
+            ),
+            pytest.param(
+                CODE_MISSING_REQUIRED_META_KEYS,
+                lambda errors: "Expected keys" in next(
+                    e for e in errors if "permissions" in e.lower()
+                ),
+                id="missing_permissions",
+            ),
+        ],
+    )
+    def test_actionable_messages(self, code, checker):
+        ok, errors = validate_skill_code(code)
         assert ok is False
-        err = next(e for e in errors if "list" in e.lower())
-        assert "Use {" in err
-        assert "instead" in err.lower()
-
-    def test_unknown_key_message_suggests_valid_keys(self):
-        ok, errors = validate_skill_code(CODE_UNKNOWN_PERMISSION_KEY)
-        assert ok is False
-        err = next(e for e in errors if "Invalid permission key" in e)
-        assert "network" in err
-        assert "subprocess" in err
-        assert "file_write" in err
-
-    def test_missing_permissions_message_is_actionable(self):
-        ok, errors = validate_skill_code(CODE_MISSING_REQUIRED_META_KEYS)
-        assert ok is False
-        err = next(e for e in errors if "permissions" in e.lower())
-        # When permissions key is entirely missing, the error lists required keys.
-        assert "Expected keys" in err
+        assert checker(errors)

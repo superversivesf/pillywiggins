@@ -19,89 +19,107 @@ def test_validate_skill_code_accepts_valid_boilerplate():
     assert error == ""
 
 
-def test_validate_skill_code_rejects_missing_meta():
-    code = """
+# ---------------------------------------------------------------------------
+# Parametrized rejection tests
+# ---------------------------------------------------------------------------
+
+REJECTION_CASES = [
+    pytest.param(
+        "missing_meta",
+        """
 async def run():
     pass
-"""
-    valid, error = validate_skill_code(code)
-    assert valid is False
-    assert "skill_meta" in error.lower()
-
-
-def test_validate_skill_code_rejects_missing_run():
-    code = """
+""",
+        "skill_meta",
+        id="missing_meta",
+    ),
+    pytest.param(
+        "missing_run",
+        """
 SKILL_META = {
     "name": "bad",
     "description": "no run",
     "version": "1.0",
 }
-"""
-    valid, error = validate_skill_code(code)
-    assert valid is False
-    assert "run" in error.lower()
-
-
-def test_validate_skill_code_rejects_sync_run():
-    code = """
+""",
+        "run",
+        id="missing_run",
+    ),
+    pytest.param(
+        "sync_run",
+        """
 SKILL_META = {"name": "sync_run", "description": "bad", "version": "1.0"}
 def run():
     pass
-"""
-    valid, error = validate_skill_code(code)
-    assert valid is False
-    assert "async" in error.lower()
-
-
-def test_validate_skill_code_rejects_run_without_kwargs():
-    code = """
+""",
+        "async",
+        id="sync_run",
+    ),
+    pytest.param(
+        "run_without_kwargs",
+        """
 SKILL_META = {"name": "no_kwargs", "description": "bad", "version": "1.0"}
 async def run():
     pass
-"""
-    valid, error = validate_skill_code(code)
-    assert valid is False
-    assert "kwargs" in error.lower()
-
-
-def test_validate_skill_code_rejects_syntax_error():
-    code = "this is not valid python"
-    valid, error = validate_skill_code(code)
-    assert valid is False
-    assert "syntax" in error.lower()
-
-
-def test_validate_skill_code_checks_permissions_exist():
-    code = generate_skill_boilerplate(name="perm_check", description="Checking permissions")
-    valid, error = validate_skill_code(code)
-    assert valid is True
-    assert "SKILL_META" in code
-    assert "permissions" in code
-
-
-def test_validate_skill_code_checks_logger_exists():
-    code = generate_skill_boilerplate(name="log_check", description="Checking logger")
-    valid, error = validate_skill_code(code)
-    assert valid is True
-    assert "logging.getLogger" in code
-
-
-def test_validate_skill_code_checks_try_except_in_run():
-    code = generate_skill_boilerplate(name="except_check", description="Checking try/except")
-    valid, error = validate_skill_code(code)
-    assert valid is True
-    assert "try:" in code and "except" in code
-
-
-def test_validate_skill_code_rejects_run_without_try_except():
-    code = """
+""",
+        "kwargs",
+        id="run_without_kwargs",
+    ),
+    pytest.param(
+        "syntax_error",
+        "this is not valid python",
+        "syntax",
+        id="syntax_error",
+    ),
+    pytest.param(
+        "run_without_try_except",
+        """
 SKILL_META = {"name": "no_except", "description": "bad", "version": "1.0"}
 async def run(**kwargs):
     return 42
-"""
+""",
+        "try/except",
+        id="run_without_try_except",
+    ),
+]
+
+
+@pytest.mark.parametrize("test_name,code,should_contain", REJECTION_CASES)
+def test_validate_skill_code_rejections(test_name, code, should_contain):
     valid, error = validate_skill_code(code)
     assert valid is False
-    assert "try/except" in error.lower()
+    assert should_contain in error.lower()
+
+
+# ---------------------------------------------------------------------------
+# Parametrized boilerplate structural checks
+# ---------------------------------------------------------------------------
+
+STRUCTURAL_CASES = [
+    pytest.param(
+        "perm_check",
+        lambda c: "permissions" in c,
+        id="permissions",
+    ),
+    pytest.param(
+        "log_check",
+        lambda c: "logging.getLogger" in c,
+        id="logger",
+    ),
+    pytest.param(
+        "except_check",
+        lambda c: "try:" in c and "except" in c,
+        id="try_except",
+    ),
+]
+
+
+@pytest.mark.parametrize("name,check", STRUCTURAL_CASES)
+def test_validate_skill_code_boilerplate_structure(name, check):
+    code = generate_skill_boilerplate(name=name, description="Checking structure", author="warmfire")
+    valid, error = validate_skill_code(code)
+    assert valid is True
+    assert check(code)
 
 
 def test_generate_skill_boilerplate_substitutes_fields():
