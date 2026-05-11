@@ -559,25 +559,97 @@ async def run(name: str = "world") -> dict:
     assert result == {"greeting": "Hello, Puck!"}
 
 
-def test_list_skills_returns_copy(tmp_path):
+def test_load_all_loads_comment_inline_dict_skill(tmp_path):
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()
-    skill_code = '''
-SKILL_META = {"name": "test", "description": "test", "version": "1.0", "parameters": {}, "permissions": {"network": False, "subprocess": False, "file_write": False}}
+    skill_code = """\
+# SKILL_META = {"name": "inline_hello", "description": "Inline comment hello", "version": "1.0", "parameters": {}, "permissions": {"network": false, "subprocess": false, "file_write": false}}
+
 async def run():
-    return "ok"
-'''
-    (skills_dir / "test.py").write_text(skill_code)
+    return "Hello!"
+"""
+    (skills_dir / "inline_hello.py").write_text(skill_code)
     reg = SkillRegistry(skills_dir=skills_dir)
-    reg.load_all()
+    skills = reg.load_all()
 
-    skills1 = reg.list_skills()
-    skills2 = reg.list_skills()
-    assert skills1 == skills2
-    assert skills1 is not skills2
+    assert len(skills) == 1
+    assert skills[0].name == "inline_hello"
+    assert skills[0].description == "Inline comment hello"
 
 
-def test_load_skill_file_spec_none(tmp_path):
+def test_load_all_comment_inline_dict_single_quotes(tmp_path):
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    skill_code = """\
+# SKILL_META = {'name': 'inline_single', 'description': 'Single quotes', 'version': '1.0', 'parameters': {}, 'permissions': {'network': false, 'subprocess': false, 'file_write': false}}
+
+async def run():
+    return "Hello!"
+"""
+    (skills_dir / "inline_single.py").write_text(skill_code)
+    reg = SkillRegistry(skills_dir=skills_dir)
+    skills = reg.load_all()
+
+    assert len(skills) == 1
+    assert skills[0].name == "inline_single"
+    assert skills[0].description == "Single quotes"
+
+
+def test_load_all_comment_inline_dict_malformed_skipped(tmp_path, caplog):
+    import logging
+
+    skills_dir = tmp_path / "skills"
+    skills_dir.mkdir()
+    skill_code = """\
+# SKILL_META = {not valid json or python dict}
+
+async def run():
+    return "Hello!"
+"""
+    (skills_dir / "malformed_inline.py").write_text(skill_code)
+    reg = SkillRegistry(skills_dir=skills_dir)
+    with caplog.at_level(logging.WARNING, logger="pillywiggins.skills.registry"):
+        skills = reg.load_all()
+
+    assert skills == []
+    assert any("has no SKILL_META" in rec.message for rec in caplog.records)
+
+
+def test_extract_meta_from_comments_inline_dict(registry):
+    code = '# SKILL_META = {"name": "foo", "description": "bar", "version": "1.0"}\n'
+    meta = registry._extract_meta_from_comments(code)
+    assert meta == {"name": "foo", "description": "bar", "version": "1.0"}
+
+
+def test_extract_meta_from_comments_block_format(registry):
+    code = """\
+# SKILL_META
+# name: "block_foo"
+# description: "Block bar"
+# version: "1.0"
+"""
+    meta = registry._extract_meta_from_comments(code)
+    assert meta == {"name": "block_foo", "description": "Block bar", "version": "1.0"}
+
+
+def test_extract_meta_from_comments_inline_single_quotes(registry):
+    code = "# SKILL_META = {'name': 'foo', 'description': 'bar'}\n"
+    meta = registry._extract_meta_from_comments(code)
+    assert meta == {"name": "foo", "description": "bar"}
+
+
+def test_extract_meta_from_comments_malformed_inline_returns_empty(registry):
+    code = "# SKILL_META = {not valid}\n"
+    meta = registry._extract_meta_from_comments(code)
+    assert meta == {}
+
+
+def test_extract_meta_from_comments_empty_comments(registry):
+    meta = registry._extract_meta_from_comments("")
+    assert meta == {}
+
+
+def test_list_skills_returns_copy(tmp_path):
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()
     (skills_dir / "empty_module.py").write_text("")

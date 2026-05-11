@@ -309,10 +309,16 @@ class SkillRegistry:
         self._write_registry_json(registry)
 
     def _extract_meta_from_comments(self, code: str) -> dict[str, Any]:
-        """Parse comment-format SKILL_META block into a dict.
+        """Parse comment-format SKILL_META into a dict.
 
-        Lines starting with ``# SKILL_META``, ``# name:``, ``# description:``,
-        etc.  Values are parsed as JSON when possible; otherwise kept as plain
+        Handles two formats:
+        1. Inline dict: ``# SKILL_META = {"name": "foo", ...}``
+        2. Block format:
+           ``# SKILL_META``
+           ``# name: "foo"``
+           ``# description: "bar"``
+
+        Values are parsed as JSON when possible; otherwise kept as plain
         strings.
         """
         meta: dict[str, Any] = {}
@@ -324,6 +330,20 @@ class SkillRegistry:
                     break
                 continue
             comment_text = stripped[1:].strip()
+            # Inline dict format: # SKILL_META = {...}
+            if comment_text.startswith("SKILL_META") and "=" in comment_text:
+                dict_part = comment_text.split("=", 1)[1].strip()
+                if dict_part.startswith("{") and dict_part.endswith("}"):
+                    try:
+                        # Normalize Python single-quoted dicts to JSON double-quoted
+                        normalized = dict_part.replace("'", '"')
+                        parsed = json.loads(normalized)
+                        if isinstance(parsed, dict):
+                            meta.update(parsed)
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                continue
+            # Block format: # SKILL_META header starts a key:value block
             if comment_text.startswith("SKILL_META"):
                 in_block = True
                 continue
