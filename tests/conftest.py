@@ -16,6 +16,10 @@ from pillywiggins.config import Settings
 
 def pytest_collection_modifyitems(config, items):
     for item in items:
+        # Exclude functions imported from src/ that pytest mis-collects as tests
+        if item.nodeid.endswith("::test_skill_code"):
+            item.add_marker(pytest.mark.skip(reason="Not a test, function from src/pillywiggins/agents/tools.py"))
+            continue
         if not any(marker in item.keywords for marker in ("integration", "smoke")):
             item.add_marker(pytest.mark.unit)
 
@@ -95,8 +99,8 @@ def settings(tmp_path):
         agent_id="puck",
         channel="telegram",
         personality_file=str(tmp_path / "telegram.yaml"),
-        database_url="postgresql://pillywiggins:changeme@localhost:5432/pillywiggins_test",
-        pg_password="changeme",
+        database_url="postgresql://pillywiggins:testpass@localhost:5432/pillywiggins_test",
+        pg_password="testpass",
         redis_url="redis://localhost:6379/0",
         nats_url="nats://localhost:4222",
         llm_provider="ollama",
@@ -141,3 +145,16 @@ async def aiohttp_client():
 
     for client in clients:
         await client.close()
+
+
+# ---------------------------------------------------------------------------
+# Autouse: provide valid DATABASE_URL / PG_PASSWORD for all tests.
+# Security tests (e.g. test_config_security.py) use monkeypatch.delenv()
+# to clear these and test the empty/'changeme' rejection paths.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _set_db_env(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://pillywiggins:testpass@postgres:5432/pillywiggins_test")
+    monkeypatch.setenv("PG_PASSWORD", "testpass")

@@ -126,18 +126,30 @@ async def test_run_connects_private_memory():
 def test_main_parses_args():
     with (
         patch("pillywiggins.__main__.Settings") as mock_settings_cls,
+        patch("pillywiggins.__main__.get_agent_config") as mock_get_cfg,
+        patch("pillywiggins.__main__.apply_agent_env") as mock_apply_env,
         patch("pillywiggins.__main__.load_personality") as mock_load,
         patch("pillywiggins.__main__.ConversationCache") as mock_cache_cls,
         patch("pillywiggins.__main__.PrivateMemory") as mock_pm_cls,
         patch("pillywiggins.__main__.PillywigginAgent") as mock_agent_cls,
         patch("pillywiggins.__main__._load_adapter_class") as mock_load_adapter,
+        patch("pillywiggins.__main__.SkillRegistry") as mock_skill_cls,
         patch("pillywiggins.__main__._acquire_agent_lock") as mock_lock,
         patch("pillywiggins.__main__.asyncio") as mock_asyncio,
-        patch("sys.argv", ["pillywiggins", "--channel", "telegram"]),
+        patch("pillywiggins.__main__._check_agents_config_directory") as mock_check_dir,
+        patch("sys.argv", ["pillywiggins", "--agent-id", "test-agent"]),
     ):
         mock_settings = MagicMock()
         mock_settings.telegram_bot_token = "fake-token"
+        mock_settings.agents_config_path = "agents.yaml"
         mock_settings_cls.return_value = mock_settings
+        mock_agent_cfg = MagicMock()
+        mock_agent_cfg.id = "test-agent"
+        mock_agent_cfg.personality = "/config/test.yaml"
+        mock_agent_cfg.channel = "telegram"
+        mock_agent_cfg.allowed_user_ids = "all"
+        mock_agent_cfg.environment = {}
+        mock_get_cfg.return_value = mock_agent_cfg
         mock_adapter_cls = MagicMock()
         mock_load_adapter.return_value = mock_adapter_cls
 
@@ -145,11 +157,11 @@ def test_main_parses_args():
 
         main()
 
-    mock_settings_cls.assert_called_once()
+    mock_settings_cls.assert_called()
     mock_agent_cls.assert_called_once()
     mock_adapter_cls.assert_called_once()
     mock_asyncio.run.assert_called_once()
-    mock_lock.assert_called_once()
+    mock_lock.assert_called_once_with("test-agent")
 
 
 def test_main_with_agent_id_calls_get_agent_config():
@@ -191,7 +203,8 @@ def test_main_with_agent_id_calls_get_agent_config():
     mock_lock.assert_called_once_with("bramblethorn")
 
 
-def test_main_agent_id_or_channel_required():
+def test_main_agent_id_required():
+    """main() exits with error when --agent-id is not given."""
     with patch("sys.argv", ["pillywiggins"]):
         from pillywiggins.__main__ import main
 
@@ -260,18 +273,30 @@ def test_load_adapter_class_raises_for_missing_adapter():
 def test_main_routes_telegram_via_dynamic_load():
     with (
         patch("pillywiggins.__main__.Settings") as mock_settings_cls,
+        patch("pillywiggins.__main__.get_agent_config") as mock_get_cfg,
+        patch("pillywiggins.__main__.apply_agent_env") as mock_apply_env,
         patch("pillywiggins.__main__.load_personality") as mock_load,
         patch("pillywiggins.__main__.ConversationCache") as mock_cache_cls,
         patch("pillywiggins.__main__.PrivateMemory") as mock_pm_cls,
         patch("pillywiggins.__main__.PillywigginAgent") as mock_agent_cls,
         patch("pillywiggins.__main__._load_adapter_class") as mock_load_adapter,
+        patch("pillywiggins.__main__.SkillRegistry") as mock_skill_cls,
         patch("pillywiggins.__main__._acquire_agent_lock") as mock_lock,
         patch("pillywiggins.__main__.asyncio") as mock_asyncio,
-        patch("sys.argv", ["pillywiggins", "--channel", "telegram"]),
+        patch("pillywiggins.__main__._check_agents_config_directory") as mock_check_dir,
+        patch("sys.argv", ["pillywiggins", "--agent-id", "test-agent"]),
     ):
         mock_settings = MagicMock()
         mock_settings.telegram_bot_token = "fake-token"
+        mock_settings.agents_config_path = "agents.yaml"
         mock_settings_cls.return_value = mock_settings
+        mock_agent_cfg = MagicMock()
+        mock_agent_cfg.id = "test-agent"
+        mock_agent_cfg.personality = "/config/test.yaml"
+        mock_agent_cfg.channel = "telegram"
+        mock_agent_cfg.allowed_user_ids = "all"
+        mock_agent_cfg.environment = {}
+        mock_get_cfg.return_value = mock_agent_cfg
         mock_adapter_cls = MagicMock()
         mock_load_adapter.return_value = mock_adapter_cls
 
@@ -291,16 +316,28 @@ def test_main_routes_telegram_via_dynamic_load():
 def test_main_raises_import_error_for_missing_adapter():
     with (
         patch("pillywiggins.__main__.Settings") as mock_settings_cls,
+        patch("pillywiggins.__main__.get_agent_config") as mock_get_cfg,
+        patch("pillywiggins.__main__.apply_agent_env") as mock_apply_env,
         patch("pillywiggins.__main__.load_personality") as mock_load,
         patch("pillywiggins.__main__.ConversationCache") as mock_cache_cls,
         patch("pillywiggins.__main__.PrivateMemory") as mock_pm_cls,
         patch("pillywiggins.__main__.PillywigginAgent") as mock_agent_cls,
         patch("pillywiggins.__main__._load_adapter_class") as mock_load_adapter,
-        patch("sys.argv", ["pillywiggins", "--channel", "discord"]),
+        patch("pillywiggins.__main__.SkillRegistry") as mock_skill_cls,
+        patch("pillywiggins.__main__._check_agents_config_directory") as mock_check_dir,
+        patch("sys.argv", ["pillywiggins", "--agent-id", "discord-agent"]),
     ):
         mock_settings = MagicMock()
         mock_settings.telegram_bot_token = "fake-token"
+        mock_settings.agents_config_path = "agents.yaml"
         mock_settings_cls.return_value = mock_settings
+        mock_agent_cfg = MagicMock()
+        mock_agent_cfg.id = "discord-agent"
+        mock_agent_cfg.personality = "/config/discord.yaml"
+        mock_agent_cfg.channel = "discord"
+        mock_agent_cfg.allowed_user_ids = "all"
+        mock_agent_cfg.environment = {}
+        mock_get_cfg.return_value = mock_agent_cfg
         mock_load_adapter.side_effect = ImportError("No module named 'discord_adapter'")
 
         from pillywiggins.__main__ import main
@@ -404,15 +441,8 @@ async def test_run_cleans_up_adapter_disconnect():
     mock_agent._cache.close.assert_called_once()
 
 
-def test_main_rejects_invalid_channel():
-    with patch("sys.argv", ["pillywiggins", "--channel", "irc"]):
-        from pillywiggins.__main__ import main
-
-        with pytest.raises(SystemExit):
-            main()
-
-
-def test_main_requires_channel_arg():
+def test_main_missing_agent_id_exits():
+    """main() exits with error when --agent-id is not provided."""
     with patch("sys.argv", ["pillywiggins"]):
         from pillywiggins.__main__ import main
 
@@ -565,19 +595,30 @@ def test_acquire_agent_lock_fails_when_held():
 def test_main_calls_acquire_lock():
     with (
         patch("pillywiggins.__main__.Settings") as mock_settings_cls,
+        patch("pillywiggins.__main__.get_agent_config") as mock_get_cfg,
+        patch("pillywiggins.__main__.apply_agent_env") as mock_apply_env,
         patch("pillywiggins.__main__.load_personality") as mock_load,
         patch("pillywiggins.__main__.ConversationCache") as mock_cache_cls,
         patch("pillywiggins.__main__.PrivateMemory") as mock_pm_cls,
         patch("pillywiggins.__main__.PillywigginAgent") as mock_agent_cls,
         patch("pillywiggins.__main__._load_adapter_class") as mock_load_adapter,
+        patch("pillywiggins.__main__.SkillRegistry") as mock_skill_cls,
         patch("pillywiggins.__main__._acquire_agent_lock") as mock_lock,
+        patch("pillywiggins.__main__._check_agents_config_directory") as mock_check_dir,
         patch("pillywiggins.__main__.asyncio") as mock_asyncio,
-        patch("sys.argv", ["pillywiggins", "--channel", "telegram"]),
+        patch("sys.argv", ["pillywiggins", "--agent-id", "my-agent"]),
     ):
         mock_settings = MagicMock()
         mock_settings.telegram_bot_token = "fake-token"
-        mock_settings.agent_id = "my-agent"
+        mock_settings.agents_config_path = "agents.yaml"
         mock_settings_cls.return_value = mock_settings
+        mock_agent_cfg = MagicMock()
+        mock_agent_cfg.id = "my-agent"
+        mock_agent_cfg.personality = "/config/my-agent.yaml"
+        mock_agent_cfg.channel = "telegram"
+        mock_agent_cfg.allowed_user_ids = "all"
+        mock_agent_cfg.environment = {}
+        mock_get_cfg.return_value = mock_agent_cfg
         mock_adapter_cls = MagicMock()
         mock_load_adapter.return_value = mock_adapter_cls
 

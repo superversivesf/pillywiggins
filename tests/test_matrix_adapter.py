@@ -263,3 +263,36 @@ def test_is_authorized_specific(adapter):
     adapter._allowed_user_ids = {"@user:example.com"}
     assert adapter._is_authorized("@user:example.com") is True
     assert adapter._is_authorized("@other:example.com") is False
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: string user ID auth for Matrix IDs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("uid,expected", [
+    ("@alice:matrix.org", True),
+    ("@bob:matrix.org", True),
+    ("@charlie:matrix.org", False),
+    ("@user:example.com", True),
+    ("@admin:other.com", False),
+])
+def test_is_authorized_matrix_string_ids(adapter, uid, expected):
+    """Matrix user IDs like @user:matrix.org must work as string auth."""
+    adapter._allow_all = False
+    adapter._allowed_user_ids = {"@alice:matrix.org", "@bob:matrix.org", "@user:example.com"}
+    assert adapter._is_authorized(uid) is expected
+
+
+def test_is_authorized_matrix_mixed_ids(adapter):
+    """Matrix IDs mixed with other string IDs should all work."""
+    adapter._allow_all = False
+    adapter._allowed_user_ids = {
+        "@bot:server.com",
+        "user@email.com",
+        "@admin:matrix.org",
+    }
+    assert adapter._is_authorized("@bot:server.com") is True
+    assert adapter._is_authorized("user@email.com") is True
+    assert adapter._is_authorized("@admin:matrix.org") is True
+    assert adapter._is_authorized("@stranger:evil.com") is False

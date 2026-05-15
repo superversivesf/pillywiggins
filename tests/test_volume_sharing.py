@@ -7,7 +7,7 @@ These tests verify:
 2. A Docker-free simulation using a temporary directory proves that two
    independent ``SkillRegistry`` instances (modelling two agents) can read and
    write the same skill files through the shared directory.
-3. File permission expectations match the current Dockerfile (root user).
+3. File permission expectations match the current Dockerfile (non-root appuser).
 """
 
 import json
@@ -90,19 +90,28 @@ def test_compose_declares_skills_volume_or_bind_mount():
 # Dockerfile user / permission documentation
 # ---------------------------------------------------------------------------
 
-def test_dockerfile_runs_as_root():
-    """Documents that the Dockerfile lacks a USER directive.
+def test_dockerfile_runs_as_non_root():
+    """Verifies that the Dockerfile uses a non-root USER directive.
 
-    If a non-root user is introduced later this test should be updated to
-    assert the expected UID/GID and verify the shared volume is writable
-    by that user.
+    The Dockerfile must create and switch to a non-root user (appuser)
+    so that containers do not run as root.  Shared volume files will
+    be owned by that user.
     """
     assert DOCKERFILE_PATH.exists(), "Dockerfile should exist"
     content = DOCKERFILE_PATH.read_text()
-    assert "USER" not in content, (
-        "Dockerfile does not define a USER directive, so containers run as root. "
-        "Shared volume files will be created with root ownership. "
-        "Update this test if you switch to a non-root runtime user."
+    import re
+    # Must contain a USER directive
+    user_match = re.search(r"^USER\s+(.+)$", content, re.MULTILINE)
+    assert user_match is not None, (
+        "Dockerfile must contain a USER directive (non-root user). "
+        "Add 'USER appuser' after creating the appuser account."
+    )
+    user = user_match.group(1).strip().strip('"').strip("'")
+    assert user.lower() != "root", f"USER must not be 'root', got {user!r}"
+    assert user != "0", f"USER must not be uid 0, got {user!r}"
+    assert "useradd" in content.lower() or "adduser" in content.lower() or "addgroup" in content.lower(), (
+        "Dockerfile should create a non-root user (e.g. 'RUN useradd -m appuser') "
+        "before the USER directive."
     )
 
 

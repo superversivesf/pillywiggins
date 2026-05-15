@@ -59,17 +59,34 @@ def _acquire_agent_lock(agent_id: str) -> None:
         sys.exit(1)
 
 
+def _check_agents_config_directory(path: str) -> None:
+    """Exit with a clear error if *path* is a directory (not a file or
+    symlink-to-file).
+
+    Docker Compose bind mounts create a directory at ``./agents.yaml``
+    when the configured host file does not exist, which produces an
+    ``IsADirectoryError`` later when :func:`load_agents_config` tries
+    to open it.  This guard catches that situation at startup and
+    prints an actionable fix.
+    """
+    p = Path(path)
+    if p.is_dir():
+        print(
+            f"ERROR: {path} is a directory, not a file.\n"
+            f"Docker Compose bind mounts create a directory if the file "
+            f"does not exist.\n"
+            f"Fix:  cp agents.yaml.example {path}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Pillywiggins Agent")
     subparsers = parser.add_subparsers(dest="command")
 
     subparsers.add_parser("onboard", help="Interactive onboarding wizard")
 
-    parser.add_argument(
-        "--channel",
-        required=False,
-        choices=["telegram", "discord", "slack", "matrix", "email"],
-    )
     parser.add_argument(
         "--agent-id",
         required=False,
@@ -83,6 +100,9 @@ def main():
         asyncio.run(onboard())
         return
 
+    if not args.agent_id:
+        parser.error("--agent-id is required")
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
@@ -92,22 +112,16 @@ def main():
     settings = Settings()
     settings.resolve_embedding_config()
 
-    if args.agent_id:
-        agent_cfg = get_agent_config(args.agent_id, path=settings.agents_config_path)
-        apply_agent_env(agent_cfg)
-        settings = Settings()
-        settings.resolve_embedding_config()
-        personality = load_personality(agent_cfg.personality)
-        agent_id = agent_cfg.id
-        channel = agent_cfg.channel
-        allowed_user_ids = agent_cfg.allowed_user_ids
-    else:
-        if not args.channel:
-            parser.error("either --agent-id or --channel is required")
-        personality = load_personality(settings.personality_file)
-        agent_id = settings.agent_id
-        channel = args.channel
-        allowed_user_ids = settings.allowed_user_ids
+    _check_agents_config_directory(settings.agents_config_path)
+
+    agent_cfg = get_agent_config(args.agent_id, path=settings.agents_config_path)
+    apply_agent_env(agent_cfg)
+    settings = Settings()
+    settings.resolve_embedding_config()
+    personality = load_personality(agent_cfg.personality)
+    agent_id = agent_cfg.id
+    channel = agent_cfg.channel
+    allowed_user_ids = agent_cfg.allowed_user_ids
 
     _acquire_agent_lock(agent_id)
 

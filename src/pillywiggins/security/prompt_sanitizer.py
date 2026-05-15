@@ -7,6 +7,7 @@ injection, system prompt leakage attempts, etc.
 
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,27 @@ SYSTEM_LEAK_PATTERNS = [
     (r"\bshow me your (instructions?|rules?|prompt|system prompt)", 25),
 ]
 
+# Zero-width characters used to obfuscate keywords in prompt injection attacks.
+ZERO_WIDTH_CHARS = {
+    "\u200b",  # ZERO WIDTH SPACE
+    "\u200c",  # ZERO WIDTH NON-JOINER
+    "\u200d",  # ZERO WIDTH JOINER
+    "\ufeff",  # ZERO WIDTH NO-BREAK SPACE (BOM)
+}
+
+
+def _normalize(text: str) -> str:
+    """Strip zero-width characters and apply NFKC Unicode normalization.
+
+    This normalizes homoglyph attacks (e.g., Cyrillic 'е' for ASCII 'e'),
+    fullwidth characters (e.g., 'ｊ' for 'j'), and zero-width obfuscation.
+
+    Returns a lowercase, normalized string.
+    """
+    for char in ZERO_WIDTH_CHARS:
+        text = text.replace(char, "")
+    return unicodedata.normalize("NFKC", text).lower()
+
 
 class PromptInjectionError(Exception):
     """Raised when prompt injection is detected above the threshold."""
@@ -142,47 +164,47 @@ class PromptSanitizer:
         if not text or not isinstance(text, str):
             return SanitizationResult(text=text or "", score=0, matched_patterns=[], safe=True)
 
-        text_lower = text.lower()
+        text_normalized = _normalize(text)
         score = 0
         matched = []
 
         # 1. Jailbreak keyword patterns
         for keyword, weight in JAILBREAK_PATTERNS.items():
-            if keyword.lower() in text_lower:
+            if keyword.lower() in text_normalized:
                 score += weight
                 matched.append(f"jailbreak_keyword: {keyword}")
 
         # 2. Delimiter injection
         for pattern, weight in DELIMITER_PATTERNS:
-            if re.search(pattern, text, re.IGNORECASE):
+            if re.search(pattern, text_normalized, re.IGNORECASE):
                 score += weight
                 matched.append(f"delimiter_injection: {pattern}")
 
         # 3. Role-play triggers
         for pattern, weight in ROLEPLAY_PATTERNS:
-            if re.search(pattern, text, re.IGNORECASE):
+            if re.search(pattern, text_normalized, re.IGNORECASE):
                 score += weight
                 matched.append(f"roleplay_trigger: {pattern}")
 
         # 4. System prompt leakage
         for pattern, weight in SYSTEM_LEAK_PATTERNS:
-            if re.search(pattern, text, re.IGNORECASE):
+            if re.search(pattern, text_normalized, re.IGNORECASE):
                 score += weight
                 matched.append(f"system_leak: {pattern}")
 
         # 5. Structural checks
         # Multiple newlines with instruction-like text = possible delimiter injection
-        lines = text.splitlines()
+        lines = text_normalized.splitlines()
         instruction_like_lines = sum(
             1 for line in lines
-            if any(kw in line.lower() for kw in ["instruction", "system", "prompt", "command"])
+            if any(kw in line for kw in ["instruction", "system", "prompt", "command"])
         )
         if instruction_like_lines >= 3:
             score += 15
             matched.append("structural: multiple_instruction_lines")
 
         # Excessive repetition of override words
-        override_count = sum(text_lower.count(kw) for kw in ["ignore", "disregard", "forget"])
+        override_count = sum(text_normalized.count(kw) for kw in ["ignore", "disregard", "forget"])
         if override_count >= 3:
             score += 20
             matched.append("structural: excessive_override_words")

@@ -229,3 +229,79 @@ def test_is_authorized_specific_user(adapter):
     adapter._allow_all = False
     adapter._allowed_user_ids = {"U123"}
     assert adapter._is_authorized("U123") is True
+
+
+def test_is_authorized_string_user_id():
+    """_is_authorized should work with non-numeric string user IDs."""
+    agent = MagicMock()
+    agent.personality = MagicMock()
+    agent.personality.bot_chat_limit = 3
+    agent.agent_id = "test-agent"
+    settings = MagicMock()
+    settings.allowed_user_ids = "U07ABCD1234,W018XY9999"
+    settings.get_allowed_user_ids.return_value = {"U07ABCD1234", "W018XY9999"}
+    adapter = SlackAdapter(agent=agent, bot_token="xoxb-test-token", settings=settings)
+    assert adapter._is_authorized("U07ABCD1234") is True
+    assert adapter._is_authorized("W018XY9999") is True
+    assert adapter._is_authorized("U999UNKNOWN") is False
+
+
+def test_is_authorized_mixed_numeric_and_string_ids():
+    """_is_authorized should work with mixed int/string IDs (all treated as strings)."""
+    agent = MagicMock()
+    agent.personality = MagicMock()
+    agent.personality.bot_chat_limit = 3
+    agent.agent_id = "test-agent"
+    settings = MagicMock()
+    settings.allowed_user_ids = "42,U07ABCD1234,100"
+    settings.get_allowed_user_ids.return_value = {"42", "U07ABCD1234", "100"}
+    adapter = SlackAdapter(agent=agent, bot_token="xoxb-test-token", settings=settings)
+    # String comparison means "42" matches "42"
+    assert adapter._is_authorized("42") is True
+    assert adapter._is_authorized("U07ABCD1234") is True
+    assert adapter._is_authorized("100") is True
+    # int 42 passed as argument gets str()-ed by BaseAdapter, so it should match
+    assert adapter._is_authorized(42) is True
+
+
+def test_connect_logs_masked_token(adapter, caplog):
+    """connect() should not log the full token prefix."""
+    import logging
+    slack_mock = sys.modules["slack_bolt"]
+    web_mock = sys.modules["slack_sdk.web.async_client"]
+    slack_mock.AsyncApp.return_value = MagicMock()
+    web_mock.AsyncWebClient.return_value = MagicMock()
+
+    import asyncio
+    with caplog.at_level(logging.INFO, logger="pillywiggins.adapters.slack_adapter"):
+        asyncio.run(adapter.connect())
+
+    log_text = caplog.text
+    # The raw token should never appear in logs (even partially beyond the mask)
+    assert "xoxb-test-token" not in log_text
+    # Should indicate masked/token info in a safe way
+    assert "token" in log_text.lower()
+
+
+def test_mask_token_helper():
+    """The _mask_token helper should redact all but first/last few chars."""
+    from pillywiggins.adapters.slack_adapter import SlackAdapter
+
+    # Short token - should be fully masked or show very little
+    result_short = SlackAdapter._mask_token("abc")
+    assert "abc" not in result_short
+
+    # Typical Slack bot token
+    result = SlackAdapter._mask_token("xoxb-1234567890-abcdef1234567890abcdef")
+    assert "xoxb-1234567890" not in result  # middle should be hidden
+    assert result.startswith("xoxb-")  # prefix preserved
+    assert "****" in result  # masked portion
+    assert result.endswith("cdef")  # last few chars preserved
+
+    # Empty token
+    result_empty = SlackAdapter._mask_token("")
+    assert result_empty == ""
+
+    # None token
+    result_none = SlackAdapter._mask_token(None)
+    assert result_none == ""

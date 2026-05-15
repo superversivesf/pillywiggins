@@ -48,10 +48,15 @@ async def test_start_council_memory_failure_does_not_crash(agent, personality):
         mock_mem.connect = AsyncMock(side_effect=ConnectionError("db down"))
         mock_cls.return_value = mock_mem
 
-        # Mock scheduler so we don't need redis
-        with patch("pillywiggins.agents.base.AgentScheduler") as mock_sched:
-            mock_sched.return_value.start = AsyncMock()
-            await agent.start()
+        with patch("pillywiggins.agents.base.NatsBus") as mock_nats:
+            mock_bus = AsyncMock()
+            mock_bus.connect_or_log = AsyncMock(return_value=False)
+            mock_nats.return_value = mock_bus
+
+            # Mock scheduler so we don't need redis
+            with patch("pillywiggins.agents.base.AgentScheduler") as mock_sched:
+                mock_sched.return_value.start = AsyncMock()
+                await agent.start()
 
     assert not agent.has_council_memory
 
@@ -79,9 +84,13 @@ async def test_start_scheduler_failure_does_not_crash(agent, personality):
     with patch("pillywiggins.agents.base.CouncilMemory") as mock_cls:
         mock_mem = AsyncMock()
         mock_cls.return_value = mock_mem
-        with patch("pillywiggins.agents.base.AgentScheduler") as mock_sched:
-            mock_sched.return_value.start = AsyncMock(side_effect=RuntimeError("redis down"))
-            await agent.start()
+        with patch("pillywiggins.agents.base.NatsBus") as mock_nats:
+            mock_bus = AsyncMock()
+            mock_bus.connect_or_log = AsyncMock(return_value=False)
+            mock_nats.return_value = mock_bus
+            with patch("pillywiggins.agents.base.AgentScheduler") as mock_sched:
+                mock_sched.return_value.start = AsyncMock(side_effect=RuntimeError("redis down"))
+                await agent.start()
 
     assert agent._scheduler is None
 

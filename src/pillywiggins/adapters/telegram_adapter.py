@@ -105,20 +105,37 @@ class TelegramAdapter(BaseAdapter):
         is_group = update.message.chat.type in ("group", "supergroup")
         return str(update.message.from_user.id) if is_group else str(chat_id)
 
+    async def _guard(self, update: Update) -> bool:
+        """Return True if the message should be processed (not self, authorized)."""
+        if self._app and self._app.bot and update.message.from_user.id == self._app.bot.id:
+            return False
+        if not self._is_authorized(update.message.from_user.id):
+            await update.message.reply_text("You are not authorized to use this bot.")
+            return False
+        return True
+
     async def _cmd_help(self, update: Update, context) -> None:
+        if not await self._guard(update):
+            return
         await update.message.reply_text(HELP_TEXT, parse_mode="Markdown")
 
     async def _cmd_status(self, update: Update, context) -> None:
+        if not await self._guard(update):
+            return
         response = await self.dispatch_command("/status", self._conversation_key(update))
         if response:
             await update.message.reply_text(response, parse_mode="Markdown")
 
     async def _cmd_models(self, update: Update, context) -> None:
+        if not await self._guard(update):
+            return
         response = await self.dispatch_command("/models", self._conversation_key(update))
         if response:
             await update.message.reply_text(response, parse_mode="Markdown")
 
     async def _cmd_model(self, update: Update, context) -> None:
+        if not await self._guard(update):
+            return
         args_text = " ".join(context.args) if context.args else ""
         cmd = "/model" if not args_text else f"/model {args_text}"
         response = await self.dispatch_command(cmd, self._conversation_key(update))
@@ -126,16 +143,22 @@ class TelegramAdapter(BaseAdapter):
             await update.message.reply_text(response, parse_mode="Markdown")
 
     async def _cmd_reset(self, update: Update, context) -> None:
+        if not await self._guard(update):
+            return
         response = await self.dispatch_command("/reset", self._conversation_key(update))
         if response:
             await update.message.reply_text(response)
 
     async def _cmd_compact(self, update: Update, context) -> None:
+        if not await self._guard(update):
+            return
         response = await self.dispatch_command("/compact", self._conversation_key(update))
         if response:
             await update.message.reply_text(response)
 
     async def _cmd_skills(self, update: Update, context) -> None:
+        if not await self._guard(update):
+            return
         response = await self.dispatch_command("/skills", self._conversation_key(update))
         if response:
             await update.message.reply_text(response, parse_mode="Markdown")
@@ -150,6 +173,8 @@ class TelegramAdapter(BaseAdapter):
 
     async def _on_message(self, update: Update, context) -> None:
         if not update.message or not update.message.text:
+            return
+        if self._app and self._app.bot and update.message.from_user.id == self._app.bot.id:
             return
         if not self._is_authorized(update.message.from_user.id):
             await update.message.reply_text("You are not authorized to use this bot.")

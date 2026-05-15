@@ -252,7 +252,7 @@ async def share_to_council(
             )
         except Exception:
             pass
-    return f"Shared to council: {content}"
+    return sanitize_or_default(f"Shared to council: {content}", default="[Content blocked due to security policy]")
 
 
 async def recall_private_memory(ctx: RunContext[AgentDeps], query: str) -> str:
@@ -314,7 +314,7 @@ async def save_to_private_memory(ctx: RunContext[AgentDeps], content: str) -> st
     saved = await ctx.deps.private_memory.save(content, embedding)
     if not saved:
         return "Private memory failed to save. This can happen when the database is unreachable or the embedding dimension is mis-configured (check EMBEDDING_DIMENSION)."
-    return f"Remembered: {content}"
+    return sanitize_or_default(f"Remembered: {content}", default="[Content blocked due to security policy]")
 
 
 async def test_driven_skill(
@@ -587,8 +587,8 @@ async def schedule_task(
     )
 
     if result.get("success"):
-        return f"Scheduled task '{name}' (action: {action})"
-    return f"Failed to schedule task '{name}': {result.get('error', 'unknown error')}"
+        return sanitize_or_default(f"Scheduled task '{name}' (action: {action})", default="[Content blocked due to security policy]")
+    return sanitize_or_default(f"Failed to schedule task '{name}': {result.get('error', 'unknown error')}", default="[Content blocked due to security policy]")
 
 
 async def unschedule_task(ctx: RunContext[AgentDeps], name: str) -> str:
@@ -605,8 +605,8 @@ async def unschedule_task(ctx: RunContext[AgentDeps], name: str) -> str:
 
     removed = await ctx.deps.scheduler.remove_job(name)
     if removed:
-        return f"Unscheduled task '{name}'"
-    return f"Scheduler task '{name}' is not found."
+        return sanitize_or_default(f"Unscheduled task '{name}'", default="[Content blocked due to security policy]")
+    return sanitize_or_default(f"Scheduler task '{name}' is not found.", default="[Content blocked due to security policy]")
 
 
 async def list_scheduled_tasks(ctx: RunContext[AgentDeps]) -> str:

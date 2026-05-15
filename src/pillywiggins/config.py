@@ -1,14 +1,18 @@
 import asyncio
+import logging
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
-    agent_id: str = "puck"
+    agent_id: str = ""
     channel: str = "telegram"
-    personality_file: str = "/config/fey_court/puck.yaml"
-    database_url: str = "postgresql://pillywiggins:changeme@postgres:5432/pillywiggins"
-    pg_password: str = "changeme"
+    personality_file: str = ""
+    database_url: str = ""
+    pg_password: str = ""
     redis_url: str = "redis://redis:6379/0"
     nats_url: str = "nats://nats:4222"
     nats_connect_timeout: float = 5.0
@@ -25,6 +29,7 @@ class Settings(BaseSettings):
     compact_truncate_message_chars: int = 2000
     allowed_user_ids: str = ""
     skills_dir: str = "/app/skills"
+    sandbox_all: bool = True
     sandbox_skills: str = ""
     scheduler_enabled: bool = True
     searxng_url: str = "http://searxng:8080"
@@ -35,26 +40,67 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
+    # ------------------------------------------------------------------
+    # Security validators: refuse empty or 'changeme' DB credentials
+    # ------------------------------------------------------------------
+
+    @field_validator("database_url")
+    @classmethod
+    def validate_database_url(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError(
+                "DATABASE_URL must be explicitly set in .env — "
+                "no default value is provided."
+            )
+        if "changeme" in v.lower():
+            raise ValueError(
+                "DATABASE_URL must not contain 'changeme' — "
+                "set a real password in .env."
+            )
+        return v
+
+    @field_validator("pg_password")
+    @classmethod
+    def validate_pg_password(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError(
+                "PG_PASSWORD must be explicitly set in .env — "
+                "no default value is provided."
+            )
+        if "changeme" in v.lower():
+            raise ValueError(
+                "PG_PASSWORD must not be 'changeme' — "
+                "set a real password in .env."
+            )
+        return v
+
     def get_searxng_categories(self) -> list[str]:
         if not self.searxng_categories or self.searxng_categories.strip().lower() == "all":
             return []
         return [c.strip() for c in self.searxng_categories.split(",") if c.strip()]
 
     def should_sandbox_all(self) -> bool:
-        val = self.sandbox_skills.strip().lower() if self.sandbox_skills else ""
-        return val in ("true", "1", "yes", "all")
+        """Return True if all skills should be sandboxed (default: True)."""
+        return self.sandbox_all
 
     def get_sandbox_skill_names(self) -> set[str]:
-        if not self.sandbox_skills or not self.sandbox_skills.strip():
-            return set()
+        """Return the set of specific skill names to sandbox.
+
+        When sandbox_all is True, returns an empty set (all skills
+        are sandboxed, so no individual listing is needed).
+        When sandbox_all is False, returns the comma-separated skills
+        from sandbox_skills as a set of trimmed strings.
+        """
         if self.should_sandbox_all():
+            return set()
+        if not self.sandbox_skills or not self.sandbox_skills.strip():
             return set()
         return {s.strip() for s in self.sandbox_skills.split(",") if s.strip()}
 
-    def get_allowed_user_ids(self) -> set[int]:
+    def get_allowed_user_ids(self) -> set[str]:
         if not self.allowed_user_ids or self.allowed_user_ids.strip().lower() == "all":
             return set()
-        return {int(uid.strip()) for uid in self.allowed_user_ids.split(",") if uid.strip()}
+        return {uid.strip() for uid in self.allowed_user_ids.split(",") if uid.strip()}
 
     def resolve_embedding_config(self) -> None:
         """Discover the best available embedding model and update settings in-place.
@@ -136,5 +182,15 @@ class Settings(BaseSettings):
             )
 
 
-# Top-level settings instance used by legacy imports.
-settings = Settings()
+# Top-level settings singleton — constructed lazily so config.py can
+# be imported without a valid .env file (e.g. during testing).
+# Raises ValidationError on first call if DATABASE_URL / PG_PASSWORD
+# not explicitly set in .env.
+_settings: Settings | None = None
+
+
+def get_settings() -> Settings:
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings

@@ -646,3 +646,143 @@ async def test_conversation_store_rls_real_postgres(postgresql_proc):
     assert len(rows) == 0
 
     await pool.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore::ResourceWarning")
+async def test_conversation_store_class_rls_integration(postgresql_proc):
+    """Integration test: ConversationStore.save/load with RLS isolation.
+
+    Creates two ConversationStore instances with different agent_ids,
+    saves different conversations, and verifies each agent can only
+    access its own data through the store's public API.
+    """
+    host = postgresql_proc.host
+    port = postgresql_proc.port
+    user = postgresql_proc.user
+    admin_dsn = f"postgresql://{user}@{host}:{port}/postgres"
+
+    import asyncpg
+
+    # Set up schema as admin
+    admin_pool = await asyncpg.create_pool(admin_dsn, min_size=1, max_size=2)
+    async with admin_pool.acquire() as conn:
+        await conn.execute(SCHEMA_SQL)
+    await admin_pool.close()
+
+    # Build DSNs pointing at the test database
+    puck_dsn = f"postgresql://testagent@{host}:{port}/postgres"
+    oberon_dsn = f"postgresql://testagent@{host}:{port}/postgres"
+
+    from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart
+
+    from pillywiggins.memory.store import ConversationStore
+
+    # Create two ConversationStore instances with different agent_ids
+    puck_store = ConversationStore(puck_dsn, agent_id="puck", channel="discord")
+    oberon_store = ConversationStore(oberon_dsn, agent_id="oberon", channel="discord")
+
+    # Connect both
+    await puck_store.connect()
+    await oberon_store.connect()
+
+    # Build distinguishable messages for each agent
+    puck_msgs: list = [
+        ModelRequest(parts=[TextPart("puck's thought")]),
+        ModelResponse(parts=[TextPart("puck's reply")]),
+    ]
+    oberon_msgs: list = [
+        ModelRequest(parts=[TextPart("oberon's thought")]),
+        ModelResponse(parts=[TextPart("oberon's reply")]),
+    ]
+
+    # Save each agent's conversation
+    await puck_store.save("general", puck_msgs)
+    await oberon_store.save("general", oberon_msgs)
+
+    # Puck loads their own conversation — should succeed
+    puck_loaded = await puck_store.load("general")
+    assert puck_loaded is not None, "Puck should be able to load own conversation"
+    assert len(puck_loaded) == 2
+    puck_texts = [
+        str(p.parts[0]) if hasattr(p.parts[0], "content") else str(p.parts[0])
+        for p in puck_loaded
+    ]
+    assert "puck's thought" in puck_texts, f"Got: {puck_texts}"
+
+    # Oberon loads their own conversation — should succeed
+    oberon_loaded = await oberon_store.load("general")
+    assert oberon_loaded is not None, "Oberon should be able to load own conversation"
+    assert len(oberon_loaded) == 2
+    oberon_texts = [
+        str(p.parts[0]) if hasattr(p.parts[0], "content") else str(p.parts[0])
+        for p in oberon_loaded
+    ]
+    assert "oberon's thought" in oberon_texts, f"Got: {oberon_texts}"
+
+    # RLS: Puck tries to load oberon's key — should get nothing back
+    puck_sees_oberon = await puck_store.load("oberon-only")
+    assert puck_sees_oberon is None, (
+        f"RLS violation: puck saw oberon's data: {puck_sees_oberon}"
+    )
+
+    # RLS: Oberon tries to load using puck's key — should get nothing
+    oberon_sees_puck = await oberon_store.load("puck-only")
+    assert oberon_sees_puck is None, (
+        f"RLS violation: oberon saw puck's data: {oberon_sees_puck}"
+    )
+
+    # Clean up
+    await puck_store.close()
+    await oberon_store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore::ResourceWarning")
+async def test_conversation_store_cross_agent_save_isolation(postgresql_proc):
+    """Each agent writes to the same key; RLS ensures they can't read each other's data."""
+    host = postgresql_proc.host
+    port = postgresql_proc.port
+    user = postgresql_proc.user
+    admin_dsn = f"postgresql://{user}@{host}:{port}/postgres"
+
+    import asyncpg
+
+    admin_pool = await asyncpg.create_pool(admin_dsn, min_size=1, max_size=2)
+    async with admin_pool.acquire() as conn:
+        await conn.execute(SCHEMA_SQL)
+    await admin_pool.close()
+
+    puck_dsn = f"postgresql://testagent@{host}:{port}/postgres"
+    oberon_dsn = f"postgresql://testagent@{host}:{port}/postgres"
+
+    from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart
+
+    from pillywiggins.memory.store import ConversationStore
+
+    puck_store = ConversationStore(puck_dsn, agent_id="puck", channel="discord")
+    oberon_store = ConversationStore(oberon_dsn, agent_id="oberon", channel="discord")
+
+    await puck_store.connect()
+    await oberon_store.connect()
+
+    # Both agents save to the SAME conversation key
+    puck_msgs: list = [ModelRequest(parts=[TextPart("puck's secret plan")])]
+    oberon_msgs: list = [ModelRequest(parts=[TextPart("oberon's counter-plan")])]
+
+    await puck_store.save("war-room", puck_msgs)
+    await oberon_store.save("war-room", oberon_msgs)
+
+    # Each sees only their own message
+    puck_loaded = await puck_store.load("war-room")
+    assert puck_loaded is not None
+    assert len(puck_loaded) == 1
+    assert "puck's secret plan" in str(puck_loaded[0].parts[0])
+
+    oberon_loaded = await oberon_store.load("war-room")
+    assert oberon_loaded is not None
+    assert len(oberon_loaded) == 1
+    assert "oberon's counter-plan" in str(oberon_loaded[0].parts[0])
+
+    await puck_store.close()
+    await oberon_store.close()

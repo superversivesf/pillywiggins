@@ -17,6 +17,7 @@ for mod_name in ("aiosmtplib", "imap_tools"):
 from pillywiggins.adapters.email_adapter import (
     EmailAdapter,
     _normalize_subject,
+    _sanitize_header,
 )
 
 
@@ -343,3 +344,86 @@ async def test_send_email_failure_logs(adapter, caplog):
         await adapter._send_email("user@example.com", "Subject", "Body")
 
     assert "Failed to send email" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# Regression tests: string user ID auth + CRLF header injection
+# ---------------------------------------------------------------------------
+
+
+def test_sanitize_header_replaces_crlf():
+    """_sanitize_header() should replace \\r and \\n with spaces."""
+    assert _sanitize_header("hello\r\nworld") == "hello  world"
+    assert _sanitize_header("\r\ninjected\r\n") == "  injected  "
+    assert _sanitize_header("clean") == "clean"
+    assert _sanitize_header(42) == "42"  # Non-string handled gracefully
+
+
+@pytest.mark.parametrize("uid", [
+    "bob@example.com",
+    "alice@mail.org",
+    "user+tag@domain.co.uk",
+    "@user:matrix.org",
+    "@bob:example.com",
+])
+def test_is_authorized_accepts_string_user_ids(adapter, uid):
+    """_is_authorized() must accept string user IDs like email addresses."""
+    adapter._allow_all = False
+    adapter._allowed_user_ids = {"bob@example.com", "@user:matrix.org"}
+    expected = uid in adapter._allowed_user_ids
+    assert adapter._is_authorized(uid) is expected
+
+
+@pytest.mark.asyncio
+async def test_send_email_blocks_crlf_injection_in_subject(adapter):
+    """CRLF in subject should be sanitized before hitting SMTP."""
+    mock_client = AsyncMock()
+    aiosmtplib_mod = sys.modules["aiosmtplib"]
+    aiosmtplib_mod.SMTP.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    aiosmtplib_mod.SMTP.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    await adapter._send_email(
+        "user@example.com",
+        "Hello\r\nBcc: attacker@evil.com\r\nX-Injected: true",
+        "Body content",
+    )
+
+    sent_msg = mock_client.send_message.call_args[0][0]
+    # CRLF should be replaced with spaces; header injection blocked
+    assert "\r" not in sent_msg["Subject"]
+    assert "\n" not in sent_msg["Subject"]
+    assert "Bcc:" in sent_msg["Subject"]  # becomes part of subject, not a header
+
+
+@pytest.mark.asyncio
+async def test_send_email_blocks_crlf_injection_in_to(adapter):
+    """CRLF in To address should be sanitized."""
+    mock_client = AsyncMock()
+    aiosmtplib_mod = sys.modules["aiosmtplib"]
+    aiosmtplib_mod.SMTP.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    aiosmtplib_mod.SMTP.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    await adapter._send_email(
+        "user@example.com\r\nBcc: attacker@evil.com",
+        "Hello",
+        "Body",
+    )
+
+    sent_msg = mock_client.send_message.call_args[0][0]
+    assert "\r" not in sent_msg["To"]
+    assert "\n" not in sent_msg["To"]
+
+
+@pytest.mark.asyncio
+async def test_send_email_preserves_body_newlines(adapter):
+    """Body newlines should NOT be sanitized — only headers."""
+    mock_client = AsyncMock()
+    aiosmtplib_mod = sys.modules["aiosmtplib"]
+    aiosmtplib_mod.SMTP.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    aiosmtplib_mod.SMTP.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    body = "Line 1\nLine 2\nLine 3"
+    await adapter._send_email("user@example.com", "Hello", body)
+
+    sent_msg = mock_client.send_message.call_args[0][0]
+    assert "Line 1\nLine 2\nLine 3" in sent_msg.get_content()

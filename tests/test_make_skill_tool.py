@@ -15,6 +15,18 @@ _make_ctx = make_ctx
 _make_skill = make_skill
 
 
+@pytest.fixture(autouse=True)
+def _mock_sandbox_for_unit_tests():
+    """Ensure sandbox is disabled for unit tests of _make_skill_tool.
+    
+    These tests verify tool generation, docstrings, and error handling
+    — they are not testing sandbox behavior and should not trigger
+    sandbox execution (which requires a valid file_path).
+    """
+    with patch("pillywiggins.agents.tools._should_sandbox", return_value=False):
+        yield
+
+
 class TestMakeSkillToolFunctionGeneration:
     @pytest.mark.asyncio
     async def test_generates_callable_tool_function(self):

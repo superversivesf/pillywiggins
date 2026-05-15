@@ -9,6 +9,18 @@ services:
     - pgdata:/var/lib/postgresql/data
     - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     restart: unless-stopped
+    cap_drop:
+    - ALL
+    read_only: true
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp
+    - /var/run/postgresql
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     healthcheck:
       test:
       - CMD-SHELL
@@ -24,8 +36,19 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     command: redis-server --appendonly yes
+    cap_drop:
+    - ALL
+    read_only: true
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp
     volumes:
     - redisdata:/data
+    deploy:
+      resources:
+        limits:
+          memory: 256M
     ports:
     - 127.0.0.1:6379:6379
     healthcheck:
@@ -41,7 +64,18 @@ services:
   nats:
     image: nats:2-alpine
     restart: unless-stopped
+    cap_drop:
+    - ALL
+    read_only: true
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp
     command: nats-server -js -m 8222
+    deploy:
+      resources:
+        limits:
+          memory: 256M
     ports:
     - 127.0.0.1:4222:4222
     - 127.0.0.1:8222:8222
@@ -60,12 +94,23 @@ services:
   searxng:
     image: searxng/searxng:latest
     restart: unless-stopped
+    cap_drop:
+    - ALL
+    read_only: true
+    security_opt:
+    - no-new-privileges:true
+    tmpfs:
+    - /tmp
     environment:
       SEARXNG_BASE_URL: http://searxng:8080/
       SEARXNG_SECRET: ${SEARXNG_SECRET:-}
     volumes:
     - searxng_data:/etc/searxng:rw
     - ./searxng_settings.yml:/etc/searxng/settings.yml
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     ports:
     - 127.0.0.1:8888:8080
     healthcheck:
@@ -81,17 +126,31 @@ services:
     networks:
     - pillywiggins
 
-  # # Use `pillywiggins onboard` to add agents (Telegram is the default first adapter).
-  # puck:
+  # # Uncomment and customize to add an agent. Use `pillywiggins onboard`
+  # # to generate your agent config. Copy this block once per agent
+  # # and set a unique service name, AGENT_ID, and personality file.
+  # agent:
   #   build: .
   #   restart: unless-stopped
-  #   command: python -m pillywiggins --agent-id puck
+  #   cap_drop:
+  #   - ALL
+  #   read_only: true
+  #   security_opt:
+  #   - no-new-privileges:true
+  #   tmpfs:
+  #   - /tmp
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 512M
+  #   command: python -m pillywiggins --agent-id agent
   #   env_file:
-  #     - .env
+  #   - .env
   #   environment:
-  #     AGENT_ID: puck
-  #     TELEGRAM_BOT_TOKEN: ${PUCK_TELEGRAM_TOKEN}
-  #     PERSONALITY_FILE: /config/puck.yaml
+  #     AGENT_ID: agent
+  #     PERSONALITY_FILE: /config/agent.yaml
+  #     # TELEGRAM_BOT_TOKEN: ${AGENT_TELEGRAM_TOKEN}   # uncomment for Telegram
+  #     # SLACK_BOT_TOKEN: ${AGENT_SLACK_TOKEN}         # uncomment for Slack
   #   volumes:
   #   - ./personalities:/config:ro
   #   - ./agents.yaml:/app/agents.yaml:ro
@@ -99,7 +158,7 @@ services:
   #   healthcheck:
   #     test:
   #     - CMD-SHELL
-  #     - python -c 'import urllib.request; urllib.request.urlopen("http://localhost:8080/healthz");' || exit 1
+  #     - pgrep -f 'pillywiggins --agent-id' || exit 1
   #     interval: 10s
   #     timeout: 5s
   #     retries: 3

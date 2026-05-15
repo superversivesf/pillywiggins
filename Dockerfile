@@ -34,8 +34,15 @@ RUN pip install --no-cache-dir \
 COPY personalities/ ./personalities/
 COPY skills/ ./skills/
 
-# Create logs directory for agent round-trip logging
-RUN mkdir -p /app/logs
+# Create non-root app user and logs directory for agent round-trip logging
+RUN useradd -m appuser && mkdir -p /app/logs && chown -R appuser:appuser /app
+
+# Health check: verify the agent is responding
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')" || exit 1
+
+# Switch to non-root user
+USER appuser
 
 # Run the agent
-CMD ["python", "-m", "pillywiggins", "--agent-id", "puck"]
+CMD python -m pillywiggins --agent-id "${AGENT_ID}"

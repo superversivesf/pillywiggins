@@ -36,9 +36,46 @@ async def _builtin_memory_review(**kwargs: Any) -> None:
         logger.warning("memory_review: no agent handler for %s", agent_id)
         return
     try:
+        state_parts: list[str] = []
+
+        # Query PrivateMemory stats if available
+        pm = getattr(handler, "_private_memory", None)
+        if pm is not None and getattr(pm, "_pool", None) is not None:
+            try:
+                async with pm._pool.acquire() as conn:
+                    await pm._ensure_agent_id(conn)
+                    count_row = await conn.fetchval(
+                        f"SELECT COUNT(*) FROM {pm._table_name}"
+                    )
+                    oldest_row = await conn.fetchval(
+                        f"SELECT MIN(created_at) FROM {pm._table_name}"
+                    )
+                mem_count = int(count_row) if count_row is not None else 0
+                state_parts.append(f"count={mem_count}")
+                if oldest_row is not None:
+                    import datetime
+                    now = datetime.datetime.now(datetime.UTC)
+                    age_seconds = (now - oldest_row).total_seconds()
+                    if age_seconds < 120:
+                        state_parts.append(f"oldest_age={int(age_seconds)}s")
+                    elif age_seconds < 7200:
+                        state_parts.append(f"oldest_age={int(age_seconds // 60)}m")
+                    else:
+                        state_parts.append(f"oldest_age={int(age_seconds // 3600)}h")
+                state_parts.append(f"table={pm._table_name}")
+            except Exception:
+                logger.debug("Could not query private memory stats for %s", agent_id, exc_info=True)
+        else:
+            state_parts.append("no_private_memory")
+
         conversation_key = args.get("conversation_key") if isinstance(args, dict) else None
         result = await handler.compact_history(conversation_key=conversation_key)
-        logger.info("memory_review result for %s: %s", agent_id, result)
+        logger.info(
+            "memory_review result for %s: %s (state: %s)",
+            agent_id,
+            result,
+            ", ".join(state_parts),
+        )
     except Exception:
         logger.exception("memory_review failed for %s", agent_id)
 
@@ -52,9 +89,14 @@ async def _builtin_skill_reload(**kwargs: Any) -> None:
         return
     try:
         if handler._skill_registry is not None:
-            handler._skill_registry.load_all()
+            loaded = handler._skill_registry.load_all()
             handler._refresh_brain_tools()
-            logger.info("skill_reload completed for %s", agent_id)
+            count = len(loaded)
+            logger.info(
+                "skill_reload completed for %s: %d skills loaded",
+                agent_id,
+                count,
+            )
         else:
             logger.warning("skill_reload: no skill_registry for %s", agent_id)
     except Exception:
@@ -74,7 +116,7 @@ async def _builtin_custom(**kwargs: Any) -> None:
             logger.warning("custom: args is not a dict for %s", agent_id)
             return
 
-        skill_name = args.get("skill")
+        skill_name = args.get("skill") or args.get("action")
         if skill_name and handler._skill_registry is not None:
             skill = handler._skill_registry.get_skill(skill_name)
             if skill is not None:

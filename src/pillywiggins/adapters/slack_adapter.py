@@ -18,6 +18,18 @@ logger = logging.getLogger(__name__)
 class SlackAdapter(BaseAdapter):
     command_prefix = "!"
 
+    @staticmethod
+    def _mask_token(token: str | None) -> str:
+        """Redact a Slack token for safe logging.
+
+        Returns a string showing only the first 5 and last 4 characters.
+        """
+        if not token:
+            return ""
+        if len(token) <= 12:
+            return "***"
+        return f"{token[:5]}****{token[-4:]}"
+
     def __init__(self, agent: PillywigginAgent, bot_token: str, settings: Settings):
         super().__init__(agent, settings)
         self.bot_token = bot_token
@@ -31,7 +43,7 @@ class SlackAdapter(BaseAdapter):
         self._web_client = AsyncWebClient(token=self.bot_token)
         # Register message handler
         self._app.message()(self._on_message)
-        logger.info("Slack adapter connected (token starts with %s...)", self.bot_token[:10])
+        logger.info("Slack adapter connected (token: %s)", self._mask_token(self.bot_token))
 
     async def listen(self) -> None:
         """Start the Slack Socket Mode connection."""

@@ -262,3 +262,173 @@ async def test_cmd_compact_calls_agent():
     await adapter._cmd_compact(update, None)
 
     adapter.agent.compact_history.assert_awaited_once_with(conversation_key="99")
+
+
+# ---------------------------------------------------------------------------
+# Bug 1: Command handlers must enforce _is_authorized()
+# ---------------------------------------------------------------------------
+
+
+def _make_restricted_adapter(allowed_ids=None):
+    """Create an adapter with restricted auth (not allow-all)."""
+    settings = make_mock_settings(allowed_user_ids="restricted")
+    adapter = _make_adapter()
+    adapter._allow_all = False
+    adapter._allowed_user_ids = allowed_ids or {42, 100}
+    return adapter
+
+
+@pytest.mark.asyncio
+async def test_cmd_help_rejects_unauthorized_user():
+    """_cmd_help must check auth before replying with help text."""
+    adapter = _make_restricted_adapter()
+    update = _make_update(user_id=999, chat_id=99)
+    update.message.reply_text = AsyncMock()
+
+    await adapter._cmd_help(update, None)
+
+    update.message.reply_text.assert_awaited_once()
+    text = update.message.reply_text.call_args[0][0]
+    assert "not authorized" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_cmd_status_rejects_unauthorized_user():
+    """_cmd_status must not dispatch for unauthorized users."""
+    adapter = _make_restricted_adapter()
+    adapter.dispatch_command = AsyncMock()
+    update = _make_update(user_id=999, chat_id=99)
+    update.message.reply_text = AsyncMock()
+
+    await adapter._cmd_status(update, None)
+
+    adapter.dispatch_command.assert_not_called()
+    update.message.reply_text.assert_awaited_once()
+    assert "not authorized" in update.message.reply_text.call_args[0][0].lower()
+
+
+@pytest.mark.asyncio
+async def test_cmd_models_rejects_unauthorized_user():
+    """_cmd_models must not dispatch for unauthorized users."""
+    adapter = _make_restricted_adapter()
+    adapter.dispatch_command = AsyncMock()
+    update = _make_update(user_id=999, chat_id=99)
+    update.message.reply_text = AsyncMock()
+
+    await adapter._cmd_models(update, None)
+
+    adapter.dispatch_command.assert_not_called()
+    update.message.reply_text.assert_awaited_once()
+    assert "not authorized" in update.message.reply_text.call_args[0][0].lower()
+
+
+@pytest.mark.asyncio
+async def test_cmd_model_rejects_unauthorized_user():
+    """_cmd_model must not dispatch for unauthorized users."""
+    adapter = _make_restricted_adapter()
+    adapter.dispatch_command = AsyncMock()
+    update = _make_update(user_id=999, chat_id=99)
+    update.message.reply_text = AsyncMock()
+    context = MagicMock()
+    context.args = ["some-model"]
+
+    await adapter._cmd_model(update, context)
+
+    adapter.dispatch_command.assert_not_called()
+    update.message.reply_text.assert_awaited_once()
+    assert "not authorized" in update.message.reply_text.call_args[0][0].lower()
+
+
+@pytest.mark.asyncio
+async def test_cmd_skills_rejects_unauthorized_user():
+    """_cmd_skills must not dispatch for unauthorized users."""
+    adapter = _make_restricted_adapter()
+    adapter.dispatch_command = AsyncMock()
+    update = _make_update(user_id=999, chat_id=99)
+    update.message.reply_text = AsyncMock()
+
+    await adapter._cmd_skills(update, None)
+
+    adapter.dispatch_command.assert_not_called()
+    update.message.reply_text.assert_awaited_once()
+    assert "not authorized" in update.message.reply_text.call_args[0][0].lower()
+
+
+@pytest.mark.asyncio
+async def test_cmd_compact_rejects_unauthorized_user():
+    """_cmd_compact must not dispatch for unauthorized users."""
+    adapter = _make_restricted_adapter()
+    adapter.dispatch_command = AsyncMock()
+    update = _make_update(user_id=999, chat_id=99)
+    update.message.reply_text = AsyncMock()
+
+    await adapter._cmd_compact(update, None)
+
+    adapter.dispatch_command.assert_not_called()
+    update.message.reply_text.assert_awaited_once()
+    assert "not authorized" in update.message.reply_text.call_args[0][0].lower()
+
+
+@pytest.mark.asyncio
+async def test_cmd_reset_rejects_unauthorized_user():
+    """_cmd_reset must not dispatch for unauthorized users."""
+    adapter = _make_restricted_adapter()
+    adapter.dispatch_command = AsyncMock()
+    update = _make_update(user_id=999, chat_id=99)
+    update.message.reply_text = AsyncMock()
+
+    await adapter._cmd_reset(update, None)
+
+    adapter.dispatch_command.assert_not_called()
+    update.message.reply_text.assert_awaited_once()
+    assert "not authorized" in update.message.reply_text.call_args[0][0].lower()
+
+
+# ---------------------------------------------------------------------------
+# Bug 2: Self-trigger check — prevent infinite reply loops
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_on_message_ignores_self_messages():
+    """_on_message must ignore messages from the bot itself."""
+    adapter = _make_adapter()
+    bot_id = 12345
+    adapter._app.bot.id = bot_id
+    adapter.agent.handle_message = AsyncMock()
+    update = _make_update(user_id=bot_id, chat_id=99)
+
+    await adapter._on_message(update, None)
+
+    adapter.agent.handle_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cmd_help_ignores_self_messages():
+    """_cmd_help must ignore messages from the bot itself."""
+    adapter = _make_adapter()
+    bot_id = 12345
+    adapter._app.bot.id = bot_id
+    update = _make_update(user_id=bot_id, chat_id=99)
+    update.message.reply_text = AsyncMock()
+
+    await adapter._cmd_help(update, None)
+
+    # Should not reply — the bot should not respond to itself
+    update.message.reply_text.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cmd_status_ignores_self_messages():
+    """_cmd_status must ignore messages from the bot itself."""
+    adapter = _make_adapter()
+    bot_id = 12345
+    adapter._app.bot.id = bot_id
+    adapter.dispatch_command = AsyncMock()
+    update = _make_update(user_id=bot_id, chat_id=99)
+    update.message.reply_text = AsyncMock()
+
+    await adapter._cmd_status(update, None)
+
+    adapter.dispatch_command.assert_not_called()
+    update.message.reply_text.assert_not_called()

@@ -21,6 +21,13 @@ logger = logging.getLogger(__name__)
 _RE_PREFIX = re.compile(r"^(Re|Fw|Fwd|RE|FW|FWD)\s*:\s*", re.IGNORECASE)
 
 
+def _sanitize_header(value: str) -> str:
+    """Prevent CRLF header injection by replacing \\r and \\n with spaces."""
+    if not isinstance(value, str):
+        return str(value)
+    return value.replace("\r", " ").replace("\n", " ")
+
+
 def _normalize_subject(subject: str) -> str:
     """Strip reply/fwd prefixes for thread matching."""
     s = subject.strip()
@@ -217,13 +224,18 @@ class EmailAdapter(BaseAdapter):
         if isinstance(to, str):
             to = [to]
 
+        # Sanitize headers to prevent CRLF injection
+        to = [_sanitize_header(addr) for addr in to]
+        subject = _sanitize_header(subject)
+
         msg = email.message.EmailMessage()
         msg["From"] = self.smtp_user
         msg["To"] = ", ".join(to)
         msg["Subject"] = subject
         if in_reply_to:
-            msg["In-Reply-To"] = in_reply_to
-            msg["References"] = in_reply_to
+            in_reply_to_safe = _sanitize_header(in_reply_to)
+            msg["In-Reply-To"] = in_reply_to_safe
+            msg["References"] = in_reply_to_safe
         msg.set_content(body)
 
         try:

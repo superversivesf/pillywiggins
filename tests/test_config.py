@@ -63,15 +63,20 @@ def test_settings_resolve_embedding_fallback_writes_empty_model_safely(monkeypat
     os.environ.pop("EMBEDDING_MODEL", None)
 
 
-def test_settings_defaults():
-    # When a local .env file exists, it overrides defaults.
-    # This test only asserts fields that have stable defaults regardless of .env.
-    s = Settings()
+def test_settings_defaults(monkeypatch):
+    # Autouse fixture sets DATABASE_URL / PG_PASSWORD via env.
+    # This test asserts fields that have stable defaults regardless of .env.
+    # Set personality_file explicitly since .env may override it.
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("PG_PASSWORD", raising=False)
+    s = Settings(
+        database_url="postgresql://user:realpass@host:5432/db",
+        pg_password="realpass",
+        personality_file="/config/fey_court/puck.yaml",
+    )
     assert s.agent_id == "puck"
     assert s.channel == "telegram"
     assert s.personality_file == "/config/fey_court/puck.yaml"
-    assert s.database_url == "postgresql://pillywiggins:changeme@postgres:5432/pillywiggins"
-    assert s.pg_password == "changeme"
     assert s.redis_url == "redis://redis:6379/0"
     assert s.nats_url == "nats://nats:4222"
     assert s.llm_provider == "ollama"
@@ -161,19 +166,19 @@ def test_get_allowed_user_ids_all_case_insensitive():
 def test_get_allowed_user_ids_parses_comma_separated():
     s = Settings(allowed_user_ids="42,100,999")
     result = s.get_allowed_user_ids()
-    assert result == {42, 100, 999}
+    assert result == {"42", "100", "999"}
 
 
 def test_get_allowed_user_ids_strips_whitespace():
     s = Settings(allowed_user_ids=" 42 , 100 ")
     result = s.get_allowed_user_ids()
-    assert result == {42, 100}
+    assert result == {"42", "100"}
 
 
 def test_get_allowed_user_ids_single_id():
     s = Settings(allowed_user_ids="42")
     result = s.get_allowed_user_ids()
-    assert result == {42}
+    assert result == {"42"}
 
 
 def test_get_allowed_user_ids_whitespace_only_returns_empty():
@@ -185,7 +190,7 @@ def test_get_allowed_user_ids_whitespace_only_returns_empty():
 def test_get_allowed_user_ids_mixed_empty_entries():
     s = Settings(allowed_user_ids="42,,100,")
     result = s.get_allowed_user_ids()
-    assert result == {42, 100}
+    assert result == {"42", "100"}
 
 
 def test_get_allowed_user_ids_all_mixed_case():
@@ -291,24 +296,41 @@ def test_settings_validation_error_on_invalid_float_env(monkeypatch):
 
 
 def test_settings_missing_pg_password_falls_back_to_default(monkeypatch):
-    """When PG_PASSWORD env var is absent, the default 'changeme' is used."""
+    """When PG_PASSWORD env var is absent, the default empty string triggers validation error."""
     monkeypatch.delenv("PG_PASSWORD", raising=False)
-    s = Settings()
-    assert s.pg_password == "changeme"
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(
+            database_url="postgresql://user:realpass@host:5432/db",
+            pg_password="",
+        )
+    errors = exc_info.value.errors()
+    assert any("pg_password" in str(e.get("loc", "")).lower() for e in errors)
 
 
 def test_settings_missing_database_url_falls_back_to_default(monkeypatch):
-    """When DATABASE_URL env var is absent, the default is used."""
+    """When DATABASE_URL env var is absent, the default empty string triggers validation error."""
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    s = Settings()
-    assert "postgres:5432/pillywiggins" in s.database_url
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(
+            database_url="",
+            pg_password="realpass",
+        )
+    errors = exc_info.value.errors()
+    assert any("database_url" in str(e.get("loc", "")).lower() for e in errors)
 
 
-def test_get_allowed_user_ids_malformed_non_numeric_raises():
-    """Non-numeric user IDs should raise ValueError (malformed input branch)."""
-    s = Settings(allowed_user_ids="alice,42")
-    with pytest.raises(ValueError, match="invalid literal"):
-        s.get_allowed_user_ids()
+def test_get_allowed_user_ids_string_ids_accepted():
+    """Slack-style string user IDs (e.g., U07ABCD1234) should be accepted."""
+    s = Settings(allowed_user_ids="U07ABCD1234,U999XYZ")
+    result = s.get_allowed_user_ids()
+    assert result == {"U07ABCD1234", "U999XYZ"}
+
+
+def test_get_allowed_user_ids_mixed_int_and_string():
+    """Mixed int and string user IDs should both be accepted as strings."""
+    s = Settings(allowed_user_ids="42,U07ABCD1234,100")
+    result = s.get_allowed_user_ids()
+    assert result == {"42", "U07ABCD1234", "100"}
 
 
 def test_get_allowed_user_ids_empty_string_returns_empty():
