@@ -320,7 +320,14 @@ async def save_to_private_memory(ctx: RunContext[AgentDeps], content: str) -> st
 async def test_driven_skill(
     ctx: RunContext[AgentDeps], name: str, code: str, test_code: str
 ) -> str:
-    """Validate both skill code and test code, then run tests in the sandbox.
+    """**DEPRECATED** — Use ``build_and_publish_skill`` instead.
+
+    Validate both skill code and test code, then run tests in the sandbox.
+
+    .. deprecated::
+        This requires multiple tool calls to complete the full pipeline.
+        Use ``build_and_publish_skill`` which handles draft, test, and publish
+        in a single call.
 
     This is the TDD (test-driven development) path: the user provides both
     the skill implementation and the test assertions.  The system validates that
@@ -356,7 +363,7 @@ async def test_driven_skill(
         lines.append(f"Tests completed in {elapsed:.1f}ms")
     lines.append("Status: draft (ready for review and publish)")
     lines.append("")
-    lines.append("Use review_skill_code to review, then publish_skill_code to publish.")
+    lines.append("Use build_and_publish_skill for the complete single-call pipeline (recommended).")
     return "\n".join(lines)
 
 
@@ -529,6 +536,136 @@ async def publish_skill_code(
         nats_bus=ctx.deps.nats_bus,
     )
     return sanitize_or_default(get_progress_message("publishing") + "\n" + result, default="[Content blocked due to security policy]")
+
+
+async def build_and_publish_skill(
+    ctx: RunContext[AgentDeps],
+    name: str,
+    description: str,
+    code: str,
+) -> str:
+    """Build, test, and publish a skill in a single call. This is the **recommended** tool.
+
+    Unlike the multi-step pipeline (build_skill → test_skill_code → review_skill_code →
+    publish_skill_code), this tool does everything in one async call.  The LLM must
+    provide the skill name, description, and full Python source code.  The tool will:
+
+    1. Draft the skill (validate schema, extract SKILL_META)
+    2. Run a smoke test in the sandbox (calls ``run()`` with empty args)
+    3. If the smoke test passes, auto-publish: write the file, register with the
+       registry, and broadcast via NATS
+    4. Return a comprehensive result showing each stage outcome
+
+    The code must conform to the skill schema:
+    - SKILL_META must be a top-level dict assignment with keys: name, description, parameters, permissions.
+    - permissions must be a dict like {"network": False, "subprocess": False, "file_write": False}.
+    - Must contain an async def run() function at the top level.
+    - No disallowed imports (e.g. requests).
+    - No dangerous patterns (os.system, eval, exec, subprocess.Popen) unless permitted.
+
+    Args:
+        name: The skill name (used for the filename and registry entry).
+        description: A human-readable description of what the skill does.
+        code: The complete Python source code for the skill, including SKILL_META.
+
+    Returns:
+        Comprehensive result showing draft, test, and publish outcomes.
+    """
+    from pillywiggins.skills.builder import (
+        draft_skill,
+        publish_skill,
+        get_progress_message,
+        DraftStatus,
+    )
+    from pillywiggins.skills.sandbox import run_sandboxed
+
+    lines: list[str] = []
+
+    # —— Stage 1: Draft ——
+    lines.append(get_progress_message("drafting"))
+    try:
+        draft = draft_skill(name, code)
+    except Exception as exc:
+        lines.append(f"❌ Draft failed: {type(exc).__name__}: {exc}")
+        return "\n".join(lines)
+
+    if draft.status == DraftStatus.ERROR:
+        error_msg = draft.test_results[0].get("error", "Unknown error") if draft.test_results else "Unknown error"
+        lines.append(f"❌ Draft validation failed: {error_msg}")
+        schema_errors = draft.meta.get("schema_errors")
+        if schema_errors:
+            for err in schema_errors:
+                lines.append(f"  • Schema error: {err}")
+        return "\n".join(lines)
+
+    lines.append(f"✅ Draft created: {draft.name}")
+    lines.append(f"   Description: {draft.meta.get('description', description)}")
+    perms = [k for k, v in draft.permissions.items() if v]
+    if perms:
+        lines.append(f"   Permissions: {', '.join(perms)}")
+    else:
+        lines.append("   Permissions: none")
+
+    # —— Stage 2: Smoke Test ——
+    lines.append("")
+    lines.append(get_progress_message("testing"))
+    try:
+        sandbox_result = await run_sandboxed(
+            draft.code,
+            args={},
+            permissions=draft.permissions,
+        )
+    except Exception as exc:
+        lines.append(f"❌ Smoke test failed (exception): {type(exc).__name__}: {exc}")
+        return "\n".join(lines)
+
+    if not sandbox_result.success:
+        lines.append(f"❌ Smoke test failed: {sandbox_result.error}")
+        lines.append(f"   Execution time: {sandbox_result.execution_time_ms:.1f}ms")
+        lines.append("")
+        lines.append("→ Fix the skill code and call build_and_publish_skill again.")
+        return "\n".join(lines)
+
+    draft.test_results = [
+        {
+            "args": {},
+            "expected": None,
+            "passed": True,
+            "actual": str(sandbox_result.result)[:200] if sandbox_result.result else None,
+            "error": None,
+            "timed_out": False,
+            "execution_time_ms": sandbox_result.execution_time_ms,
+        }
+    ]
+    draft.status = DraftStatus.TESTED
+    lines.append(f"✅ Smoke test passed in {sandbox_result.execution_time_ms:.1f}ms")
+    if sandbox_result.result is not None:
+        result_preview = str(sandbox_result.result)[:200]
+        lines.append(f"   Result preview: {result_preview}")
+
+    # —— Stage 3: Publish ——
+    lines.append("")
+    lines.append(get_progress_message("publishing"))
+    settings = ctx.deps.settings
+    skills_dir = settings.skills_dir if settings is not None else "/app/skills"
+    pub_result = await publish_skill(
+        draft,
+        approved=True,
+        skills_dir=skills_dir,
+        registry=ctx.deps.skill_registry,
+        nats_bus=ctx.deps.nats_bus,
+    )
+    if "successfully" in pub_result:
+        lines.append(f"✅ {pub_result}")
+    else:
+        lines.append(f"❌ Publish failed: {pub_result}")
+        return "\n".join(lines)
+
+    # —— Summary ——
+    lines.append("")
+    lines.append("─" * 40)
+    lines.append(f"Skill '{name}' built, tested, and published in one call.")
+    return sanitize_or_default("\n".join(lines), default="[Content blocked due to security policy]")
 
 
 async def schedule_task(

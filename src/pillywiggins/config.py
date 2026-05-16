@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     personality_file: str = ""
     database_url: str = ""
     pg_password: str = ""
-    redis_url: str = "redis://redis:6379/0"
+    redis_url: str = "redis://redis:6379/0"  # Used for ConversationCache; scheduler uses MemoryJobStore (see note below)
     nats_url: str = "nats://nats:4222"
     nats_connect_timeout: float = 5.0
     nats_reconnect_attempts: int = 5

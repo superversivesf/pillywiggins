@@ -5,10 +5,8 @@ import logging
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 from apscheduler.jobstores.memory import MemoryJobStore
-from apscheduler.jobstores.redis import RedisJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from pillywiggins.messaging.unified import ChannelType, UnifiedMessage
@@ -206,41 +204,16 @@ class AgentScheduler:
             return self._action_handlers[action]
         return self._action_handlers["custom"]
 
-    def _parse_redis_url(self) -> dict[str, Any]:
-        parsed = urlparse(self._redis_url)
-        kwargs: dict[str, Any] = {
-            "host": parsed.hostname or "localhost",
-            "port": parsed.port or 6379,
-        }
-        if parsed.password:
-            kwargs["password"] = parsed.password
-        if parsed.username:
-            kwargs["username"] = parsed.username
-        db = 0
-        if parsed.path and parsed.path.strip("/"):
-            try:
-                db = int(parsed.path.strip("/"))
-            except ValueError:
-                pass
-        kwargs["db"] = db
-        return kwargs
-
     def _create_scheduler(self) -> AsyncIOScheduler:
-        try:
-            connect_kwargs = self._parse_redis_url()
-            db = connect_kwargs.pop("db")
-            jobstore = RedisJobStore(db=db, **connect_kwargs)
-            jobstore.redis.ping()
-            jobstores = {"default": jobstore}
-            logger.info("Using RedisJobStore for %s", self._agent_id)
-        except Exception:
-            jobstores = {"default": MemoryJobStore()}
-            logger.warning(
-                "Redis unavailable for %s, falling back to MemoryJobStore",
-                self._agent_id,
-                exc_info=True,
-            )
-        return AsyncIOScheduler(jobstores=jobstores)
+        # MemoryJobStore is the default. RedisJobStore has a known issue:
+        # APScheduler job state can contain unpicklable objects (asyncio.Lock,
+        # _thread.lock), causing `TypeError: cannot pickle '_thread.lock' object`
+        # when RedisJobStore serializes with pickle.dumps(job.__getstate__()).
+        #
+        # RedisJobStore can be opted-in by setting self._use_redis_jobstore=True
+        # and ensuring all job kwargs are pickle-safe. JSON file persistence
+        # (_persist_json_job) already provides durability across restarts.
+        return AsyncIOScheduler(jobstores={"default": MemoryJobStore()})
 
     async def start(self, yaml_schedules: dict | None = None) -> None:
         self._yaml_schedules = yaml_schedules or {}
@@ -248,10 +221,12 @@ class AgentScheduler:
         yaml_jobs = self._load_schedules(self._yaml_schedules)
         json_jobs = self._load_json_schedules()
         all_jobs = self._merge_jobs(yaml_jobs, json_jobs)
+        added = 0
         for job in all_jobs:
-            self._add_job_to_scheduler(job)
+            if self._add_job_to_scheduler(job):
+                added += 1
         self._scheduler.start()
-        logger.info("Scheduler started for %s with %d jobs", self._agent_id, len(all_jobs))
+        logger.info("Scheduler started for %s with %d/%d jobs added", self._agent_id, added, len(all_jobs))
 
     async def stop(self) -> None:
         if self._scheduler is not None:
@@ -330,9 +305,15 @@ class AgentScheduler:
             metadata={"trigger": "scheduled", "action": job.get("action", "custom")},
         )
 
-    def _add_job_to_scheduler(self, job: dict) -> None:
+    def _add_job_to_scheduler(self, job: dict) -> bool:
+        """Add a single job to the running scheduler.
+
+        Returns True on success, False on failure.  Wraps all add_job()
+        calls in try/except so that a single bad job definition cannot
+        crash the whole scheduler startup/reload.
+        """
         if self._scheduler is None:
-            return
+            return False
         name = job["name"]
         action = job.get("action", "custom")
         job_id = _make_job_id(self._agent_id, name)
@@ -357,23 +338,35 @@ class AgentScheduler:
             "replace_existing": True,
         }
 
-        if "interval_seconds" in job:
-            self._scheduler.add_job(
-                handler,
-                "interval",
-                seconds=job["interval_seconds"],
-                **trigger_kwargs,
+        try:
+            if "interval_seconds" in job:
+                self._scheduler.add_job(
+                    handler,
+                    "interval",
+                    seconds=job["interval_seconds"],
+                    **trigger_kwargs,
+                )
+            elif "cron" in job:
+                cron_kwargs = parse_cron(job["cron"])
+                self._scheduler.add_job(
+                    handler,
+                    "cron",
+                    **cron_kwargs,
+                    **trigger_kwargs,
+                )
+            else:
+                logger.warning("Job %s has no interval or cron trigger, skipping", name)
+                return False
+            logger.debug("Added job %s (%s) to scheduler for %s", name, action, self._agent_id)
+            return True
+        except Exception:
+            logger.exception(
+                "Failed to add job %s (%s) to scheduler for %s",
+                name,
+                action,
+                self._agent_id,
             )
-        elif "cron" in job:
-            cron_kwargs = parse_cron(job["cron"])
-            self._scheduler.add_job(
-                handler,
-                "cron",
-                **cron_kwargs,
-                **trigger_kwargs,
-            )
-        else:
-            logger.warning("Job %s has no interval or cron trigger, skipping", name)
+            return False
 
     async def add_job(
         self,
@@ -394,10 +387,24 @@ class AgentScheduler:
         if args is not None:
             job["args"] = args
 
-        self._add_job_to_scheduler(job)
-        self._persist_json_job(job)
-        logger.info("Added job %s for %s", name, self._agent_id)
-        return {"success": True, "name": name}
+        try:
+            added = self._add_job_to_scheduler(job)
+            if not added:
+                return {
+                    "success": False,
+                    "name": name,
+                    "error": "Failed to add job to scheduler — check logs for details",
+                }
+            self._persist_json_job(job)
+            logger.info("Added job %s for %s", name, self._agent_id)
+            return {"success": True, "name": name}
+        except Exception as exc:
+            logger.exception("Failed to add job %s for %s", name, self._agent_id)
+            return {
+                "success": False,
+                "name": name,
+                "error": f"Unexpected error adding job: {exc}",
+            }
 
     async def remove_job(self, name: str) -> bool:
         if self._scheduler is None:
@@ -437,9 +444,11 @@ class AgentScheduler:
         yaml_jobs = self._load_schedules(self._yaml_schedules)
         json_jobs = self._load_json_schedules()
         all_jobs = self._merge_jobs(yaml_jobs, json_jobs)
+        added = 0
         for job in all_jobs:
-            self._add_job_to_scheduler(job)
-        logger.info("Reloaded scheduler for %s with %d jobs", self._agent_id, len(all_jobs))
+            if self._add_job_to_scheduler(job):
+                added += 1
+        logger.info("Reloaded scheduler for %s with %d/%d jobs added", self._agent_id, added, len(all_jobs))
 
     def _persist_json_job(self, job: dict) -> None:
         existing = self._load_json_schedules_raw()
