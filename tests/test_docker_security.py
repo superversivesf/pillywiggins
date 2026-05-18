@@ -285,3 +285,118 @@ def test_services_with_volumes_have_tmpfs():
                 f"Service '{name}' has volumes but no tmpfs: [/tmp]. "
                 "When read_only: true, add tmpfs for writable /tmp."
             )
+
+
+# ---------------------------------------------------------------------------
+# Onboard-generated agent security hardening tests
+# ---------------------------------------------------------------------------
+
+from unittest.mock import patch
+
+
+def test_onboard_generated_agent_has_cap_drop_all(tmp_path):
+    """add_agent_to_docker_compose() must include cap_drop: [ALL] in the
+    generated service definition."""
+    from pillywiggins.onboard import add_agent_to_docker_compose
+
+    compose_path = tmp_path / "docker-compose.yaml"
+    compose_path.write_text(yaml.dump({"services": {}, "volumes": {}}))
+    with patch("pillywiggins.onboard.DOCKER_COMPOSE", compose_path):
+        add_agent_to_docker_compose(
+            agent_id="testagent",
+            personality_filename="test.yaml",
+            token_env="TESTAGENT_TELEGRAM_TOKEN",
+        )
+    data = yaml.safe_load(compose_path.read_text())
+    svc = data["services"]["testagent"]
+    assert svc.get("cap_drop") == ["ALL"], (
+        "Onboard-generated agent must have cap_drop: [ALL]. "
+        "Missing from add_agent_to_docker_compose() in onboard.py."
+    )
+
+
+def test_onboard_generated_agent_has_read_only(tmp_path):
+    """add_agent_to_docker_compose() must include read_only: true in the
+    generated service definition."""
+    from pillywiggins.onboard import add_agent_to_docker_compose
+
+    compose_path = tmp_path / "docker-compose.yaml"
+    compose_path.write_text(yaml.dump({"services": {}, "volumes": {}}))
+    with patch("pillywiggins.onboard.DOCKER_COMPOSE", compose_path):
+        add_agent_to_docker_compose(
+            agent_id="testagent",
+            personality_filename="test.yaml",
+            token_env="TESTAGENT_TELEGRAM_TOKEN",
+        )
+    data = yaml.safe_load(compose_path.read_text())
+    svc = data["services"]["testagent"]
+    assert svc.get("read_only") is True, (
+        "Onboard-generated agent must have read_only: true. "
+        "Missing from add_agent_to_docker_compose() in onboard.py."
+    )
+
+
+def test_onboard_generated_agent_has_no_new_privileges(tmp_path):
+    """add_agent_to_docker_compose() must include no-new-privileges:true
+    via security_opt."""
+    from pillywiggins.onboard import add_agent_to_docker_compose
+
+    compose_path = tmp_path / "docker-compose.yaml"
+    compose_path.write_text(yaml.dump({"services": {}, "volumes": {}}))
+    with patch("pillywiggins.onboard.DOCKER_COMPOSE", compose_path):
+        add_agent_to_docker_compose(
+            agent_id="testagent",
+            personality_filename="test.yaml",
+            token_env="TESTAGENT_TELEGRAM_TOKEN",
+        )
+    data = yaml.safe_load(compose_path.read_text())
+    svc = data["services"]["testagent"]
+    sec_opts = svc.get("security_opt", [])
+    assert "no-new-privileges:true" in sec_opts, (
+        "Onboard-generated agent must have security_opt: [no-new-privileges:true]. "
+        "Missing from add_agent_to_docker_compose() in onboard.py."
+    )
+
+
+def test_onboard_generated_agent_has_tmpfs(tmp_path):
+    """add_agent_to_docker_compose() must include tmpfs: [/tmp]
+    since the container runs read-only."""
+    from pillywiggins.onboard import add_agent_to_docker_compose
+
+    compose_path = tmp_path / "docker-compose.yaml"
+    compose_path.write_text(yaml.dump({"services": {}, "volumes": {}}))
+    with patch("pillywiggins.onboard.DOCKER_COMPOSE", compose_path):
+        add_agent_to_docker_compose(
+            agent_id="testagent",
+            personality_filename="test.yaml",
+            token_env="TESTAGENT_TELEGRAM_TOKEN",
+        )
+    data = yaml.safe_load(compose_path.read_text())
+    svc = data["services"]["testagent"]
+    tmpfs = svc.get("tmpfs", [])
+    assert "/tmp" in tmpfs, (
+        "Onboard-generated agent must have tmpfs: [/tmp] for writable temp space. "
+        "Missing from add_agent_to_docker_compose() in onboard.py."
+    )
+
+
+def test_onboard_generated_agent_has_deploy_resources_limits(tmp_path):
+    """add_agent_to_docker_compose() must include deploy.resources.limits.memory."""
+    from pillywiggins.onboard import add_agent_to_docker_compose
+
+    compose_path = tmp_path / "docker-compose.yaml"
+    compose_path.write_text(yaml.dump({"services": {}, "volumes": {}}))
+    with patch("pillywiggins.onboard.DOCKER_COMPOSE", compose_path):
+        add_agent_to_docker_compose(
+            agent_id="testagent",
+            personality_filename="test.yaml",
+            token_env="TESTAGENT_TELEGRAM_TOKEN",
+        )
+    data = yaml.safe_load(compose_path.read_text())
+    svc = data["services"]["testagent"]
+    deploy = svc.get("deploy", {})
+    limits = deploy.get("resources", {}).get("limits", {})
+    assert limits.get("memory") == "512M", (
+        f"Onboard-generated agent must have deploy.resources.limits.memory: 512M. "
+        f"Got: {limits}. Missing from add_agent_to_docker_compose() in onboard.py."
+    )

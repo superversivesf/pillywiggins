@@ -8,6 +8,7 @@ from pillywiggins.agents.deps import AgentDeps
 from pillywiggins.agents.tools import (
     build_and_publish_skill,
     build_skill,
+    consolidate_memory,
     get_conversation_info,
     get_current_time,
     list_scheduled_tasks,
@@ -99,6 +100,7 @@ def create_brain(
 
     agent.tool(recall_private_memory)
     agent.tool(save_to_private_memory)
+    agent.tool(consolidate_memory)
     agent.tool(query_council_memory)
     agent.tool(share_to_council)
     agent.tool(build_and_publish_skill)

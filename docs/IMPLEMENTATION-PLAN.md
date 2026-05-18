@@ -1,7 +1,7 @@
 # Pillywiggins: Implementation Plan & Checklist
 
 **Version 2.0 — April 2026**  
-**Updated — May 2026: Telegram default, adapters complete, hardening partial**  
+**Last verified: May 2026** — Telegram default, adapters complete, hardening partial  
 **Canonical architecture: `pillywiggins-overview-v2.md` (Docker Compose)**
 
 ---
@@ -237,8 +237,8 @@
   docker compose exec -T postgres psql -U postgres pillywiggins < scripts/setup-db.sql
   ```
   (Or use `psql` directly inside the container)
-- [ ] Verify pgvector: `SELECT extname FROM pg_extension WHERE extname='vector';`
-- [ ] Verify RLS: `\d private_memory` should show `Row Level Security: enabled`
+- [x] Verify pgvector: `SELECT extname FROM pg_extension WHERE extname='vector';`
+- [x] Verify RLS: `\d private_memory` should show `Row Level Security: enabled`
 
 #### 1.4 Pull Ollama models
 
@@ -365,7 +365,8 @@ ALL of the following must pass before proceeding:
 | NVIDIA Container Toolkit setup issues | Test GPU passthrough first: `nvidia-smi` on the host before deploying the agent |
 | Ollama model pull timeouts | Pre-pull models using `scripts/pull-models.sh` (runs on external Ollama host); ensure persistent storage for `/root/.ollama` on the external host |
 | Discord gateway connection flakes | Add reconnection logic to `discord.py` client; Docker restart policy `unless-stopped` |
-| Redis connection loss on agent startup | `depends_on` with healthcheck; retry logic in Redis client |
+
+**(Phase 1 status: DONE)**
 
 ---
 
@@ -380,9 +381,9 @@ ALL of the following must pass before proceeding:
 #### 2.1 Private memory with RLS
 
 - [x] Implement `src/pillywiggins/memory/private.py`:
-  - [ ] `save_memory(agent_id, content, memory_type, embedding)` — INSERT with `agent_id`
-  - [ ] `search_memory(agent_id, query_embedding, limit=5)` — semantic search via pgvector cosine distance
-  - [ ] Connection pool with `SET app.agent_id = '...'` on every connection checkout (overview-v2 §2):
+  - [x] `save_memory(agent_id, content, memory_type, embedding)` — INSERT with `agent_id`
+  - [x] `search_memory(agent_id, query_embedding, limit=5)` — semantic search via pgvector cosine distance
+  - [x] Connection pool with `SET app.agent_id = '...'` on every connection checkout (overview-v2 §2):
     ```python
     async def on_connect(connection):
         await connection.execute("SET app.agent_id = $1", self.agent_id)
@@ -433,8 +434,8 @@ ALL of the following must pass before proceeding:
 
 - [x] Council memory table already created by `setup-db.sh` from Phase 1
 - [x] Implement `src/pillywiggins/memory/council.py`:
-  - [ ] `write_council_entry(agent_id, content, tags, embedding)`
-  - [ ] `search_council(query_embedding, tags=None, limit=10)`
+  - [x] `write_council_entry(agent_id, content, tags, embedding)`
+  - [x] `search_council(query_embedding, tags=None, limit=10)`
   - [x] Validate writes: max 2000 chars, tag whitelist, rate limit (10/hour/agent), dedup check (cosine sim > 0.95) (overview-v2 §9)
   - [x] `message_type` field: `insight`, `skill_announcement`, etc.
 - [x] Register `query_council_memory` and `share_to_council` as PydanticAI tools
@@ -463,6 +464,8 @@ ALL of the following must pass before proceeding:
 | pgvector index creation too slow on larger datasets | Start with `lists = 50` for private memory; increase after population grows past ~100K rows |
 | Embedding model colocation on same GPU as chat model | Monitor VRAM; `nomic-embed-text` requires only ~300MB — start with colocation on same Ollama instance |
 | Redis connection drops during conversation save | Retry logic in Redis client; PostgreSQL is always the durable fallback |
+
+**(Phase 2 status: DONE)**
 
 ---
 
@@ -518,16 +521,16 @@ ALL of the following must pass before proceeding:
 
 - [x] Implement `src/pillywiggins/skills/registry.py` (overview-v2 §3):
   - [x] `load_all()` — read `skills/registry.json` and import all skill modules
-  - [ ] `list_skills() -> list[Skill]` — return all loaded skills
-  - [ ] `get_skill(name) -> Skill` — return a specific skill
-  - [ ] `register_skill(name, code, meta)` — save a new skill to disk and update registry
+  - [x] `list_skills() -> list[Skill]` — return all loaded skills
+  - [x] `get_skill(name) -> Skill` — return a specific skill
+  - [x] `register_skill(name, code, meta)` — save a new skill to disk and update registry
   - [x] `watch_for_changes()` — monitor skills directory (watchdog or polling every 10s); reload when another agent deploys a skill
   - [x] Each `Skill` wraps a loaded module and provides `as_tool()` for PydanticAI registration
 
 #### 3.3 Sandbox executor
 
 - [x] Implement `src/pillywiggins/skills/sandbox.py` (overview-v2 §3):
-  - [ ] `run_skill_sandboxed(skill, arguments)` — execute a skill in a restricted subprocess
+  - [x] `run_skill_sandboxed(skill, arguments)` — execute a skill in a restricted subprocess
   - [x] 30-second hard timeout
   - [x] Working directory set to `/tmp` (no access to app code)
   - [x] Restricted environment variables (no `DATABASE_URL`, no tokens)
@@ -565,18 +568,18 @@ ALL of the following must pass before proceeding:
 - [x] Integration test: ask agent to build a skill, approve it, verify it appears in registry and other agents discover it
 
 - [x] Seed 2-3 example skills manually:
-  - [ ] `skills/roll_dice.py` — dice rolling
-  - [ ] `skills/check_website.py` — URL reachability check
-  - [ ] `skills/count_words.py` — word count
+  - [x] `skills/roll_dice.py` — dice rolling
+  - [x] `skills/check_website.py` — URL reachability check
+  - [x] `skills/count_words.py` — word count
 
 ### Verification Gate — Phase 3
 
 - [x] Agent can build a skill through conversation (draft → test → review → deploy)
 - [x] Skill sandbox: 30-second timeout kills runaway skills, restricted env blocks access to secrets
 - [x] Skill registry: deployed skill appears in `skills/registry.json`
-- [ ] Skill discovery: agent A deploys skill, agent B receives NATS announcement and can use the skill
+- [x] Skill discovery: agent A deploys skill, agent B receives NATS announcement and can use the skill
 - [x] User approval required before skill deployment (no autonomous skill creation)
-- [ ] All built-in tools (memory, council) still work alongside skill tools
+- [x] All built-in tools (memory, council) still work alongside skill tools
 
 ### Risk items (Phase 3)
 
@@ -586,6 +589,8 @@ ALL of the following must pass before proceeding:
 | Sandbox escape risk | 30s timeout, restricted env, no access to app code; future upgrade to Docker-in-Docker |
 | Skill dependency not installed | Pre-install common packages (`aiohttp`, `beautifulsoup4`) in Docker image; flag missing deps at test time |
 | Race condition on registry.json | File locking or atomic writes; single-writer pattern (only deploy_skill modifies) |
+
+**(Phase 3 status: DONE)**
 
 ---
 
@@ -698,7 +703,7 @@ ALL of the following must pass before proceeding:
 - [x] Two agents running simultaneously (Discord + Slack)
 - [x] Private memory: agent A writes, agent A retrieves; agent B gets zero results for agent A's data
 - [x] Council memory: agent A writes, agent B can search and retrieve
-- [ ] Skill discovery: agent A deploys skill, agent B receives NATS announcement and can use it
+- [x] Skill discovery: agent A deploys skill, agent B receives NATS announcement and can use it
 - [x] Scheduling: per-agent APScheduler cron fires from personality YAML
 - [x] Scheduling: jobs survive `docker compose restart` (Redis-backed)
 - [x] `docker compose up` starts both agents, each with their own personality and schedule
@@ -711,6 +716,8 @@ ALL of the following must pass before proceeding:
 | APScheduler job duplication on restart | `replace_existing=True` on all job adds |
 | Slack Socket Mode flakes | Built-in reconnection in `slack_bolt`; Docker restart policy |
 | Ollama concurrency with 2 agents | `OLLAMA_NUM_PARALLEL=2` handles concurrent requests; monitor queue times |
+
+**(Phase 4 status: DONE)**
 
 ---
 
@@ -775,6 +782,8 @@ ALL of the following must pass before proceeding:
 | Email IMAP threading complexity | Start with 3-message window; expand after testing |
 | Matrix E2EE setup complexity | Defer E2EE to Phase 7; start with unencrypted sync |
 | Channel SDK version changes | Pin all SDK versions in `pyproject.toml` |
+
+**(Phase 5 status: PARTIAL — adapters + personalities done; multi-agent concurrency / end-to-end fleet tests pending)**
 
 ---
 
@@ -863,16 +872,19 @@ ALL of the following must pass before proceeding:
 | Single machine failure | Daily PostgreSQL backups, documented recovery, restart policies |
 | Agent infinite tool loop | PydanticAI `retries=2`, 120s overall timeout, per-agent rate limiting |
 
+**(Phase 6 status: PARTIAL — rate limiting, structured logging, healthchecks, restart policies, backup script, security hardening, sandbox done; token bucket refactor, prompt injection detection, memory consolidation, ops runbook, unattended-ops validation pending)**
+
 ---
 
 ## Infrastructure Setup Checklist
 
 Standalone checklist for bringing up the Docker Compose infrastructure from scratch.
+> **Note for fresh deployments:** Items marked `[x]` below are verified working on the current dev machine (May 2026). Unmarked items should be followed in order for new deployments.
 
 ### Docker and GPU
 
-- [ ] Install Docker and Docker Compose
-- [ ] Install NVIDIA Container Toolkit:
+- [x] Install Docker and Docker Compose
+- [x] Install NVIDIA Container Toolkit:
   ```bash
   # Ubuntu/Debian
   curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
@@ -883,39 +895,39 @@ Standalone checklist for bringing up the Docker Compose infrastructure from scra
   sudo nvidia-ctk runtime configure --runtime=docker
   sudo systemctl restart docker
   ```
-- [ ] Verify GPU passthrough: `docker run --rm --gpus all nvidia/cuda nvidia-smi`
+- [x] Verify GPU passthrough: `docker run --rm --gpus all nvidia/cuda nvidia-smi`
 
 ### Docker Compose Services
 
-- [ ] Start all infrastructure: `docker compose up -d postgres redis nats`
-- [ ] Verify PostgreSQL: `docker compose exec postgres pg_isready -U postgres`
-- [ ] Verify Redis: `docker compose exec redis redis-cli ping` → PONG
-- [ ] Verify NATS: `docker compose exec nats nats server check`
-- [ ] Verify Ollama (on external host): `curl http://localhost:11434/api/tags`
+- [x] Start all infrastructure: `docker compose up -d postgres redis nats`
+- [x] Verify PostgreSQL: `docker compose exec postgres pg_isready -U postgres`
+- [x] Verify Redis: `docker compose exec redis redis-cli ping` → PONG
+- [x] Verify NATS: `docker compose exec nats nats server check`
+- [x] Verify Ollama (on external host): `curl http://localhost:11434/api/tags`
 
 ### Database Schema
 
-- [ ] Run `scripts/setup-db.sh` to create schemas, enable pgvector, set up RLS
-- [ ] Verify pgvector: `SELECT extname FROM pg_extension WHERE extname='vector';`
-- [ ] Verify RLS: `\d private_memory` should show `Row Level Security: enabled`
-- [ ] Create per-agent DB roles (included in `setup-db.sh`)
+- [x] Run `scripts/setup-db.sh` to create schemas, enable pgvector, set up RLS
+- [x] Verify pgvector: `SELECT extname FROM pg_extension WHERE extname='vector';`
+- [x] Verify RLS: `\d private_memory` should show `Row Level Security: enabled`
+- [x] Create per-agent DB roles (included in `setup-db.sh`)
 
 ### Ollama Models
 
 > Ollama runs externally — run these commands on the Ollama host, not inside the project Compose.
 
-- [ ] Run `scripts/pull-models.sh` to pull chat and embedding models
-- [ ] Verify models: `curl http://localhost:11434/api/tags`
-- [ ] Set `OLLAMA_NUM_PARALLEL=2` and `OLLAMA_MAX_LOADED_MODELS=2` on the Ollama host (or in its container environment)
+- [x] Run `scripts/pull-models.sh` to pull chat and embedding models
+- [x] Verify models: `curl http://localhost:11434/api/tags`
+- [x] Set `OLLAMA_NUM_PARALLEL=2` and `OLLAMA_MAX_LOADED_MODELS=2` on the Ollama host (or in its container environment)
 - [ ] Monitor VRAM usage under load
 
 ### Secrets
 
-- [ ] Copy `env.example` to `.env`
-- [ ] Fill in all tokens: `DISCORD_TOKEN`, `SLACK_BOT_TOKEN`, `TELEGRAM_TOKEN`, etc.
-- [ ] Set strong passwords for `PG_PASSWORD` and Redis
-- [ ] Confirm `.env` is in `.gitignore`
-- [ ] Set file permissions: `chmod 600 .env`
+- [x] Copy `env.example` to `.env`
+- [x] Fill in all tokens: `DISCORD_TOKEN`, `SLACK_BOT_TOKEN`, `TELEGRAM_TOKEN`, etc.
+- [x] Set strong passwords for `PG_PASSWORD` and Redis
+- [x] Confirm `.env` is in `.gitignore`
+- [x] Set file permissions: `chmod 600 .env`
 
 ---
 

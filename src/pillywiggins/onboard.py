@@ -17,6 +17,9 @@ DOCKER_COMPOSE_EXAMPLE = Path("docker-compose.yaml.example")
 ENV_FILE = Path(".env")
 ENV_EXAMPLE = Path("env.example")
 
+DEFAULT_AI_ENDPOINT = "http://localhost:11434/v1"
+DEFAULT_AI_MODEL = "qwen3.5:8b"
+
 COMPOSE_DEPENDS_ON = {
     "postgres": {"condition": "service_healthy"},
     "redis": {"condition": "service_healthy"},
@@ -32,6 +35,77 @@ COMPOSE_VOLUMES = [
 ]
 
 LLM_ENV_KEYS = ("LLM_PROVIDER", "LLM_BASE_URL", "LLM_API_KEY", "MODEL_NAME")
+
+PROVIDER_REGISTRY: dict[str, dict] = {
+    "ollama": {
+        "label": "Ollama (local, self-hosted)",
+        "provider_tag": "ollama",
+        "default_base_url": "http://host.docker.internal:11434/v1",
+        "suggested_models": ["qwen3.5:8b", "llama3.2:3b", "mistral:7b", "phi4:14b", "deepseek-r1:8b"],
+        "needs_api_key": False,
+    },
+    "ollama_cloud": {
+        "label": "Ollama Cloud (ollama.com)",
+        "provider_tag": "openai",
+        "default_base_url": "https://ollama.com/v1",
+        "suggested_models": ["qwen3.5:9b", "llama3.3:70b", "deepseek-r1:8b"],
+        "needs_api_key": True,
+    },
+    "openai": {
+        "label": "OpenAI",
+        "provider_tag": "openai",
+        "default_base_url": "https://api.openai.com/v1",
+        "suggested_models": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o4-mini"],
+        "needs_api_key": True,
+    },
+    "groq": {
+        "label": "Groq (fast inference)",
+        "provider_tag": "openai",
+        "default_base_url": "https://api.groq.com/openai/v1",
+        "suggested_models": ["llama-3.3-70b-versatile", "llama-4-scout-17b-16e-instruct", "deepseek-r1-distill-llama-70b"],
+        "needs_api_key": True,
+    },
+    "together": {
+        "label": "Together AI",
+        "provider_tag": "openai",
+        "default_base_url": "https://api.together.xyz/v1",
+        "suggested_models": ["meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8", "deepseek-ai/DeepSeek-R1"],
+        "needs_api_key": True,
+    },
+    "openrouter": {
+        "label": "OpenRouter",
+        "provider_tag": "openai",
+        "default_base_url": "https://openrouter.ai/api/v1",
+        "suggested_models": ["anthropic/claude-sonnet-4-5", "google/gemini-2.5-flash", "meta-llama/llama-4-maverick"],
+        "needs_api_key": True,
+    },
+    "vllm": {
+        "label": "vLLM (self-hosted inference server)",
+        "provider_tag": "openai",
+        "default_base_url": "http://host.docker.internal:8000/v1",
+        "suggested_models": ["qwen3.5:8b", "llama-3-8b", "mistral-7b"],
+        "needs_api_key": False,
+    },
+    "litellm": {
+        "label": "LiteLLM Proxy (multi-provider gateway)",
+        "provider_tag": "openai",
+        "default_base_url": "http://host.docker.internal:4000/v1",
+        "suggested_models": [],
+        "needs_api_key": False,
+    },
+    "custom": {
+        "label": "Custom (any OpenAI-compatible API)",
+        "provider_tag": "openai",
+        "default_base_url": "",
+        "suggested_models": [],
+        "needs_api_key": False,
+    },
+}
+
+PROVIDER_CHOICES = [
+    questionary.Choice(title=info["label"], value=key)
+    for key, info in PROVIDER_REGISTRY.items()
+]
 
 COMMON_TIMEZONES = [
     "UTC",
@@ -61,6 +135,8 @@ RED = "\033[31m"
 RESET = "\033[0m"
 
 logger = logging.getLogger(__name__)
+
+_configured_agents: dict[str, str] = {}
 
 
 def _host_url(url: str) -> str:
@@ -421,6 +497,11 @@ def add_agent_to_docker_compose(
         "env_file": ".env",
         "restart": "unless-stopped",
         "extra_hosts": ["host.docker.internal:host-gateway"],
+        "cap_drop": ["ALL"],
+        "read_only": True,
+        "security_opt": ["no-new-privileges:true"],
+        "tmpfs": ["/tmp"],
+        "deploy": {"resources": {"limits": {"memory": "512M"}}},
         "environment": service_env,
         "volumes": list(COMPOSE_VOLUMES),
         "depends_on": dict(COMPOSE_DEPENDS_ON),
@@ -913,19 +994,24 @@ async def _add_agent_flow() -> None:
     if existing_llm:
         defaults = {k: existing_llm.get(k, defaults.get(k, "")) for k in LLM_ENV_KEYS}
 
-    llm_provider = await questionary.select(
+    default_provider_key = defaults.get("LLM_PROVIDER", "ollama") or "ollama"
+    if default_provider_key not in PROVIDER_REGISTRY:
+        default_provider_key = "ollama"
+
+    provider_key = await questionary.select(
         "Select LLM provider:",
-        choices=["ollama", "openai"],
-        default=defaults.get("LLM_PROVIDER", "ollama") or "ollama",
+        choices=PROVIDER_CHOICES,
+        default=default_provider_key,
     ).ask_async()
-    if llm_provider is None:
+    if provider_key is None:
         return
 
-    if llm_provider == "ollama":
-        default_base = defaults.get("LLM_BASE_URL") or "http://host.docker.internal:11434/v1"
-    else:
-        default_base = defaults.get("LLM_BASE_URL") or "https://api.openai.com/v1"
+    provider_info = PROVIDER_REGISTRY[provider_key]
+    llm_provider = provider_info["provider_tag"]
+    needs_key = provider_info["needs_api_key"]
+    suggested = provider_info["suggested_models"]
 
+    default_base = defaults.get("LLM_BASE_URL") or provider_info["default_base_url"]
     llm_base_url = await questionary.text(
         "LLM base URL:",
         default=default_base,
@@ -934,7 +1020,7 @@ async def _add_agent_flow() -> None:
         return
 
     llm_api_key = ""
-    if llm_provider == "openai" or "ollama.com" in llm_base_url:
+    if needs_key:
         default_key = defaults.get("LLM_API_KEY", "")
         llm_api_key = await questionary.text(
             "LLM API key (leave blank if not needed):",
@@ -948,7 +1034,7 @@ async def _add_agent_flow() -> None:
     if models:
         default_model = defaults.get("MODEL_NAME", "")
         if default_model not in models:
-            default_model = models[0]
+            default_model = models[0] if models else suggested[0] if suggested else ""
         chosen_model = await questionary.select(
             "Select model:",
             choices=models,
@@ -957,9 +1043,10 @@ async def _add_agent_flow() -> None:
         if chosen_model is None:
             return
     else:
+        default_model = defaults.get("MODEL_NAME", suggested[0] if suggested else "")
         chosen_model = await questionary.text(
-            "Model name (could not poll models from provider):",
-            default=defaults.get("MODEL_NAME", "qwen3.5:8b"),
+            "Model name (could not poll models from provider; type model name):",
+            default=default_model,
         ).ask_async()
         if chosen_model is None:
             return
@@ -1073,6 +1160,9 @@ async def _add_agent_flow() -> None:
         timezone=tz,
     )
 
+    # Store configured agent for test prompt (accumulates across add-agent calls)
+    _configured_agents[agent_id] = token
+
     # 11. Docker up
     start = await questionary.confirm(
         "Build and start all services now?",
@@ -1086,6 +1176,43 @@ async def _add_agent_flow() -> None:
             logger.warning("docker compose not found. Run manually: docker compose up -d --build")
     else:
         logger.info("Run when ready: docker compose up -d --build")
+
+    # 12. Test prompt
+    print()
+    test_opt = input("Would you like to run an integration test to verify your agents are working? [y/N]: ").strip().lower()
+    if test_opt == "y":
+        print()
+        print("--- Test Configuration ---")
+        test_token = input("Test harness bot token (from @BotFather): ").strip()
+        if not test_token:
+            print("Skipping — bot token required for testing.")
+            return
+
+        endpoint = input(f"AI judge endpoint URL [{DEFAULT_AI_ENDPOINT}]: ").strip() or DEFAULT_AI_ENDPOINT
+        chosen_model_for_test = input(f"Judge model name [{DEFAULT_AI_MODEL}]: ").strip() or DEFAULT_AI_MODEL
+
+        # Gather agent_id -> token mappings from what onboarding just configured
+        agent_tokens = dict(_configured_agents)
+
+        try:
+            from tests.blackbox.config import BlackboxConfig
+            cfg = BlackboxConfig()
+            cfg.ai_endpoint_url = endpoint
+            cfg.ai_model = chosen_model_for_test
+            cfg.test_telegram_token = test_token
+            cfg.agent_tokens = agent_tokens
+            cfg.save()
+            print(f"Test configuration saved to .blackbox_config.json")
+
+            run_now = input("Run the test scenarios now? [Y/n]: ").strip().lower()
+            if run_now in ("", "y"):
+                print("\nStarting integration tests...\n")
+                from tests.blackbox.runner import main as run_tests
+                run_tests()
+        except ImportError:
+            print("Test suite not available. Make sure tests/blackbox/ is in the Python path.")
+        except Exception as e:
+            print(f"Error setting up tests: {e}")
 
 
 async def _reconfigure_agent_flow() -> None:
@@ -1156,24 +1283,34 @@ async def _reconfigure_agent_flow() -> None:
     )
     current_model = env.get("MODEL_NAME", defaults.get("MODEL_NAME", "qwen3.5:8b"))
 
-    new_provider = await questionary.select(
+    current_provider_key = "ollama"
+    for k, info in PROVIDER_REGISTRY.items():
+        if info["provider_tag"] == current_provider:
+            current_provider_key = k
+            break
+
+    provider_key = await questionary.select(
         "LLM provider:",
-        choices=["ollama", "openai"],
-        default=current_provider,
+        choices=PROVIDER_CHOICES,
+        default=current_provider_key,
     ).ask_async()
-    if new_provider is None:
+    if provider_key is None:
         return
+
+    provider_info = PROVIDER_REGISTRY[provider_key]
+    new_provider = provider_info["provider_tag"]
+    needs_key = provider_info["needs_api_key"]
+    suggested = provider_info["suggested_models"]
 
     new_base_url = await questionary.text(
         "LLM base URL:",
-        default=current_base_url,
+        default=provider_info["default_base_url"] or current_base_url,
     ).ask_async()
     if new_base_url is None:
         return
 
     llm_api_key = ""
     existing_has_api_key = "LLM_API_KEY" in env
-    needs_key = new_provider == "openai" or "ollama.com" in new_base_url
     if needs_key:
         llm_api_key = await questionary.text(
             "LLM API key (leave blank to keep current):",
@@ -1185,7 +1322,7 @@ async def _reconfigure_agent_flow() -> None:
     model_infos = await list_models(_host_url(new_base_url), llm_api_key or None, new_provider)
     models = sorted(m.id for m in model_infos if m.id)
     if models:
-        default_model = current_model if current_model in models else models[0]
+        default_model = current_model if current_model in models else (models[0] if models else suggested[0] if suggested else "")
         new_model = await questionary.select(
             "Select model:",
             choices=models,
@@ -1194,9 +1331,10 @@ async def _reconfigure_agent_flow() -> None:
         if new_model is None:
             return
     else:
+        default_model = current_model or (suggested[0] if suggested else "")
         new_model = await questionary.text(
-            "Model name:",
-            default=current_model,
+            "Model name (could not poll models; type model name):",
+            default=default_model,
         ).ask_async()
         if new_model is None:
             return

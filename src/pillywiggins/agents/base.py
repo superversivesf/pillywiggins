@@ -30,6 +30,7 @@ from pillywiggins.security.prompt_sanitizer import (
     PromptSanitizer,
     PromptInjectionError,
     sanitize_or_default,
+    sanitize_output,
 )
 
 logger = logging.getLogger(__name__)
@@ -356,7 +357,7 @@ class PillywigginAgent:
                     embedding_dimension=self._settings.embedding_dimension,
                 ),
             )
-            message_text = result.output
+            message_text = sanitize_output(result.output)
             await self._adapter.send(conversation_key, message_text, {"chat_id": chat_id})
             logger.info("send_message for %s to %s", self.agent_id, conversation_key)
         except Exception:
@@ -695,4 +696,4 @@ class PillywigginAgent:
                 agent_logger.log_timing("persist_history", persist_duration_ms)
 
             agent_logger.log_llm_response(result.output, total_duration_ms)
-            return result.output
+            return sanitize_output(result.output)

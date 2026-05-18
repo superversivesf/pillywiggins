@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     compact_keep_messages: int = 6
     compact_truncate_message_chars: int = 2000
     allowed_user_ids: str = ""
+    memory_retention_days: int = 90
+    memory_max_entries: int = 1000
     skills_dir: str = "/app/skills"
     sandbox_all: bool = True
     sandbox_skills: str = ""

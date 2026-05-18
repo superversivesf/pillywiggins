@@ -377,3 +377,23 @@ def test_settings_empty_discord_token_is_accepted():
     """Empty discord_bot_token should be accepted as a valid default."""
     s = Settings(discord_bot_token="")
     assert s.discord_bot_token == ""
+
+
+class TestGitignoreEnforcement:
+    """Verify sensitive files can never be tracked by git."""
+
+    def test_gitignore_exists(self):
+        gitignore = Path(".gitignore")
+        assert gitignore.exists(), ".gitignore must exist"
+
+    def test_env_is_gitignored(self):
+        gitignore = Path(".gitignore").read_text()
+        assert ".env" in gitignore, ".env must be in .gitignore"
+
+    def test_agents_yaml_is_gitignored(self):
+        gitignore = Path(".gitignore").read_text()
+        assert "agents.yaml" in gitignore, "agents.yaml must be in .gitignore"
+
+    def test_docker_compose_yaml_is_gitignored(self):
+        gitignore = Path(".gitignore").read_text()
+        assert "docker-compose.yaml" in gitignore, "docker-compose.yaml must be in .gitignore"

@@ -68,6 +68,19 @@ async def _builtin_memory_review(**kwargs: Any) -> None:
 
         conversation_key = args.get("conversation_key") if isinstance(args, dict) else None
         result = await handler.compact_history(conversation_key=conversation_key)
+
+        # Prune old memories
+        settings = handler._settings
+        retention_days = getattr(settings, "memory_retention_days", 90)
+        max_entries = getattr(settings, "memory_max_entries", 1000)
+        pm = getattr(handler, "_private_memory", None)
+        if pm is not None and getattr(pm, "_pool", None) is not None:
+            try:
+                await pm.prune_by_age(retention_days)
+                await pm.prune_to_max(max_entries)
+            except Exception:
+                logger.debug("Pruning failed for %s", agent_id, exc_info=True)
+
         logger.info(
             "memory_review result for %s: %s (state: %s)",
             agent_id,

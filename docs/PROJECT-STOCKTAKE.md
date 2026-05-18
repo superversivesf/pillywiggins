@@ -4,6 +4,14 @@
 **Scope:** Full codebase inventory against `pillywiggins-overview-v2.md` and `IMPLEMENTATION-PLAN.md`
 **Method:** 7 parallel assessment workers covering Core Runtime, Memory, Skills, Messaging, Adapters, Scheduling, and Infrastructure
 
+> **Note:** This document was written in April 2026. Several gaps identified have since been resolved as of May 2026:
+> - **Puck defaults removed** — config, Dockerfile, and `__main__.py` no longer hard-code Puck/Telegram; `agents.yaml` is the single source of truth
+> - **`agents.yaml` added to `.gitignore`** — prevents accidental commits of local agent config
+> - **Scheduler fixed** — switched to MemoryJobStore, eliminated `_thread.lock` pickle crash
+> - **Skill building fixed** — `build_and_publish_skill` single-call pipeline replaces 4-step multi-turn pattern
+> - **Dockerfile hardened** — non-root `USER appuser` and `HEALTHCHECK` added
+> - **Security hardened** — prompt sanitizer NFKC normalization, CRLF injection fixes in email adapter, token masking in Slack adapter, output sanitization in tools, DB credential validators
+
 ---
 
 ## Executive Summary

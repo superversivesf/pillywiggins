@@ -67,3 +67,37 @@ class PrivateMemory(PgVectorMemoryBase):
         except Exception:
             logger.exception("Private memory search failed for agent %s", self._agent_id)
             return []
+
+    async def prune_by_age(self, retention_days: int) -> int:
+        """Delete entries older than retention_days. Returns count deleted."""
+        if self._pool is None:
+            return 0
+        async with self._pool.acquire() as conn:
+            await self._ensure_agent_id(conn)
+            result = await conn.execute(
+                f"DELETE FROM {self._table_name} WHERE created_at < NOW() - INTERVAL '{retention_days} days'"
+            )
+            deleted = int(result.split("DELETE ")[-1]) if "DELETE" in result else 0
+            if deleted:
+                logger.info("Pruned %d old memories for agent %s", deleted, self._agent_id)
+            return deleted
+
+    async def prune_to_max(self, max_rows: int) -> int:
+        """Keep only the most recent max_rows entries. Returns count deleted."""
+        if self._pool is None:
+            return 0
+        async with self._pool.acquire() as conn:
+            await self._ensure_agent_id(conn)
+            count = await conn.fetchval(f"SELECT COUNT(*) FROM {self._table_name}")
+            if count <= max_rows:
+                return 0
+            result = await conn.execute(
+                f"DELETE FROM {self._table_name} WHERE id IN ("
+                f"  SELECT id FROM {self._table_name} ORDER BY created_at ASC "
+                f"  LIMIT GREATEST(0, (SELECT COUNT(*) FROM {self._table_name}) - {max_rows})"
+                f")"
+            )
+            deleted = int(result.split("DELETE ")[-1]) if "DELETE" in result else 0
+            if deleted:
+                logger.info("Pruned %d memories to stay under limit of %d for agent %s", deleted, max_rows, self._agent_id)
+            return deleted

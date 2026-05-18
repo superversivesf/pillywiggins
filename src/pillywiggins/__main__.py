@@ -87,6 +87,21 @@ def main():
 
     subparsers.add_parser("onboard", help="Interactive onboarding wizard")
 
+    test_parser = subparsers.add_parser(
+        "test", help="Black-box test suite setup and execution"
+    )
+    test_parser.add_argument(
+        "--config",
+        default=".blackbox_config.json",
+        help="Path to blackbox config file (default: .blackbox_config.json)",
+    )
+    test_parser.add_argument(
+        "--run",
+        action="store_true",
+        default=False,
+        help="Run scenarios directly (skip setup wizard)",
+    )
+
     parser.add_argument(
         "--agent-id",
         required=False,
@@ -98,6 +113,17 @@ def main():
         from pillywiggins.onboard import onboard
 
         asyncio.run(onboard())
+        return
+
+    if args.command == "test":
+        if args.run:
+            from tests.blackbox.runner import main as test_main
+
+            test_main(config_path=args.config)
+        else:
+            from tests.blackbox.cli import setup_wizard
+
+            setup_wizard(config_path=args.config)
         return
 
     if not args.agent_id:

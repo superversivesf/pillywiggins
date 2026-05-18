@@ -1,10 +1,13 @@
 import json
+import logging
 import time
 
 from pydantic_ai import RunContext
 
 from pillywiggins.agents.deps import AgentDeps
 from pillywiggins.security.prompt_sanitizer import sanitize_or_default
+
+logger = logging.getLogger(__name__)
 
 _retry_counts: dict[str, int] = {}
 
@@ -315,6 +318,23 @@ async def save_to_private_memory(ctx: RunContext[AgentDeps], content: str) -> st
     if not saved:
         return "Private memory failed to save. This can happen when the database is unreachable or the embedding dimension is mis-configured (check EMBEDDING_DIMENSION)."
     return sanitize_or_default(f"Remembered: {content}", default="[Content blocked due to security policy]")
+
+
+async def consolidate_memory(ctx: RunContext[AgentDeps]) -> str:
+    """Manually trigger memory consolidation — compact conversation history and save the summary.
+
+    Returns a summary of what was consolidated.
+    """
+    agent = getattr(ctx.deps, "agent", None)
+    if agent is None:
+        return "Cannot consolidate: agent not available."
+
+    try:
+        result = await agent.compact_history()
+        return f"Memory consolidated: {result}"
+    except Exception as exc:
+        logger.exception("consolidate_memory failed")
+        return f"Memory consolidation failed: {exc}"
 
 
 async def test_driven_skill(

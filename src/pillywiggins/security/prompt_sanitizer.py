@@ -105,6 +105,66 @@ SYSTEM_LEAK_PATTERNS = [
     (r"\bshow me your (instructions?|rules?|prompt|system prompt)", 25),
 ]
 
+# Token/key patterns — leaked API keys, secrets, JWTs
+TOKEN_PATTERNS = [
+    (r"\b(sk-[a-zA-Z0-9]{20,})\b", 40),  # OpenAI
+    (r"\b(sk-proj-[a-zA-Z0-9]{20,})\b", 40),  # OpenAI project
+    (r"\b(ghp_[a-zA-Z0-9]{36,40})\b", 40),  # GitHub personal access token
+    (r"\b(gho_[a-zA-Z0-9]{36,40})\b", 40),  # GitHub OAuth
+    (r"\b(ghu_[a-zA-Z0-9]{36,40})\b", 40),  # GitHub user-to-server
+    (r"\b(AKIA[0-9A-Z]{16})\b", 40),  # AWS access key
+    (r"\b(ASIA[0-9A-Z]{16})\b", 40),  # AWS STS temporary
+    (r"\b(xox[baprs]-[0-9a-zA-Z-]{10,48})\b", 40),  # Slack tokens
+    (r"\b(sk-ant-api[0-9a-zA-Z_-]{30,})\b", 40),  # Anthropic
+    (r"\b(AIza[0-9A-Za-z-_]{32,36})\b", 40),  # Google API
+    (r"\b(eyJ[0-9a-zA-Z_-]{20,}\.[0-9a-zA-Z_-]{20,}\.[0-9a-zA-Z_-]{10,})\b", 35),  # JWT
+    (r"\b(pk_live_[0-9a-zA-Z]{20,})\b", 40),  # Stripe live key
+    (r"\b(sk_live_[0-9a-zA-Z]{20,})\b", 40),  # Stripe secret live key
+]
+
+# Instruction hierarchy attacks — attempting to override prior instructions
+INSTRUCTION_HIERARCHY_PATTERNS = [
+    (r"\bignore all (previous|prior|above|current) (instructions?|directives?|commands?|rules?)", 30),
+    (r"\bdisregard (all |any )(previous|prior|above) (instructions?|directives?)", 30),
+    (r"\byou are now (a|an|the) ", 20),
+    (r"\byour new (instructions?|directives?|role|purpose) (is|are|will be)", 30),
+    (r"\bforget (everything|all) (and|before|about)", 25),
+    (r"\bfrom this (point|moment) (on|forward),? you (will|shall|must|are)", 25),
+    (r"\byou no longer (have|need|must|should|work for)", 20),
+    (r"\bdo not (follow|obey|listen to|adhere to) (your |the )(instructions?|rules?|guidelines?)", 30),
+]
+
+# Context boundary injection — attempting to embed fake system/instruction delimiters
+CONTEXT_BOUNDARY_PATTERNS = [
+    (r"---+\s*BEGIN\s+NEW\s+INSTRUCTIONS?\s*---*", 35),
+    (r"===+\s*SYSTEM\s+OVERRIDE\s*===*", 35),
+    (r"<\|im_start\|>\s*system", 35),
+    (r"<\|im_end\|>", 20),
+    (r"\[INST\]", 30),
+    (r"\[/INST\]", 20),
+    (r"<system>", 30),
+    (r"</system>", 20),
+    (r"<<SYS>>", 30),
+    (r"<</SYS>>", 20),
+    (r"<\|system\|>", 30),
+    (r"<\|user\|>", 20),
+    (r"<\|assistant\|>", 20),
+    (r"\bBEGIN CONTEXT\b", 25),
+    (r"\bEND CONTEXT\b", 15),
+]
+
+# Structured injection — JSON/XML/markdown blocks with embedded instruction overrides
+STRUCTURED_INJECTION_PATTERNS = [
+    (r'"instruction"\s*:', 25),
+    (r'"system"\s*:', 20),
+    (r'"role"\s*:\s*"system"', 30),
+    (r"<instruction>.*?</instruction>", 25),
+    (r"<role>.*?system.*?</role>", 25),
+    (r"```json\s*{[^}]*\"instruction\"", 25),
+    (r"```json\s*{[^}]*\"system\"", 25),
+    (r'"content"\s*:\s*"(ignore|forget|disregard)', 25),
+]
+
 # Zero-width characters used to obfuscate keywords in prompt injection attacks.
 ZERO_WIDTH_CHARS = {
     "\u200b",  # ZERO WIDTH SPACE
@@ -192,7 +252,31 @@ class PromptSanitizer:
                 score += weight
                 matched.append(f"system_leak: {pattern}")
 
-        # 5. Structural checks
+        # 5. Token/API key patterns
+        for pattern, weight in TOKEN_PATTERNS:
+            if re.search(pattern, text_normalized, re.IGNORECASE):
+                score += weight
+                matched.append(f"token_leak: {pattern}")
+
+        # 6. Instruction hierarchy patterns
+        for pattern, weight in INSTRUCTION_HIERARCHY_PATTERNS:
+            if re.search(pattern, text_normalized, re.IGNORECASE):
+                score += weight
+                matched.append(f"instruction_hierarchy: {pattern}")
+
+        # 7. Context boundary injection
+        for pattern, weight in CONTEXT_BOUNDARY_PATTERNS:
+            if re.search(pattern, text_normalized, re.IGNORECASE):
+                score += weight
+                matched.append(f"context_boundary: {pattern}")
+
+        # 8. Structured injection
+        for pattern, weight in STRUCTURED_INJECTION_PATTERNS:
+            if re.search(pattern, text_normalized, re.IGNORECASE):
+                score += weight
+                matched.append(f"structured_injection: {pattern}")
+
+        # 9. Structural checks
         # Multiple newlines with instruction-like text = possible delimiter injection
         lines = text_normalized.splitlines()
         instruction_like_lines = sum(
@@ -275,4 +359,29 @@ def sanitize_or_default(text: str, default: str = "", threshold: int = 30) -> st
     try:
         return sanitizer.sanitize(text)
     except PromptInjectionError:
+        return default
+
+
+def sanitize_output(text: str, default: str = "[Response filtered for security]", threshold: int = 20) -> str:
+    """Sanitize LLM output text before sending to users.
+
+    Uses a lower threshold than input sanitization since outputs should
+    never contain dangerous content (leaked keys, echoed injections, etc.)
+
+    Args:
+        text: The LLM output text to sanitize.
+        default: Safe replacement text if output is blocked.
+        threshold: Score threshold for blocking (default 20, lower than input 30).
+
+    Returns:
+        Original text if safe, default message otherwise.
+    """
+    if not text or not isinstance(text, str):
+        return text or ""
+
+    sanitizer = PromptSanitizer(threshold=threshold)
+    try:
+        return sanitizer.sanitize(text)
+    except PromptInjectionError:
+        logger.warning("Output sanitization blocked response with score above threshold %d", threshold)
         return default
