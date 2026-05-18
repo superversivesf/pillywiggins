@@ -22,9 +22,11 @@ WORKDIR /app
 COPY --from=build /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=build /usr/local/bin /usr/local/bin
 
-# Pre-install common skill dependencies
+# Pre-install common skill dependencies and procps (for healthcheck)
 # These are available to all skills without additional installs.
-RUN pip install --no-cache-dir \
+RUN apt-get update && apt-get install -y --no-install-recommends procps \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir \
     aiohttp \
     beautifulsoup4 \
     httpx \
@@ -37,9 +39,9 @@ COPY skills/ ./skills/
 # Create non-root app user and logs directory for agent round-trip logging
 RUN useradd -m appuser && mkdir -p /app/logs && chown -R appuser:appuser /app
 
-# Health check: verify the agent is responding
+# Health check: verify the agent process is running
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')" || exit 1
+    CMD pgrep -f 'pillywiggins --agent-id' > /dev/null || exit 1
 
 # Switch to non-root user
 USER appuser
