@@ -13,18 +13,17 @@ class AgentLogger:
     def __init__(self, agent_id: str, log_dir: str = "logs"):
         self.agent_id = agent_id
         self.log_dir = Path(log_dir)
-        self.log_dir.mkdir(parents=True, exist_ok=True)
+        self._file_handler: RotatingFileHandler | None = None
 
         self.logger = logging.getLogger(f"agent.{agent_id}")
         self.logger.setLevel(logging.INFO)
 
+        # Avoid duplicate handlers if re-instantiated with same log_dir
         expected_path = str((self.log_dir / f"agent-{agent_id}.log").resolve())
         has_correct_file_handler = any(
             isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", None) == expected_path
             for h in self.logger.handlers
         )
-
-        # Avoid duplicate handlers if re-instantiated with same log_dir
         if has_correct_file_handler:
             return
 
@@ -34,13 +33,18 @@ class AgentLogger:
             if isinstance(handler, RotatingFileHandler):
                 handler.close()
 
-        file_handler = RotatingFileHandler(
-            self.log_dir / f"agent-{agent_id}.log",
-            maxBytes=5 * 1024 * 1024,
-            backupCount=3,
-            encoding="utf-8",
-        )
-        file_handler.setLevel(logging.INFO)
+        try:
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+            self._file_handler = RotatingFileHandler(
+                self.log_dir / f"agent-{agent_id}.log",
+                maxBytes=5 * 1024 * 1024,
+                backupCount=3,
+                encoding="utf-8",
+            )
+            self._file_handler.setLevel(logging.INFO)
+            self.logger.addHandler(self._file_handler)
+        except OSError:
+            self._file_handler = None
 
         console_handler = logging.StreamHandler()
         console_handler.setLevel(logging.INFO)
@@ -49,10 +53,12 @@ class AgentLogger:
             "[%(asctime)s] %(agent_marker)s %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
-        file_handler.setFormatter(formatter)
+        if self._file_handler is not None:
+            self._file_handler.setFormatter(formatter)
         console_handler.setFormatter(formatter)
 
-        self.logger.addHandler(file_handler)
+        if self._file_handler is not None:
+            self.logger.addHandler(self._file_handler)
         self.logger.addHandler(console_handler)
 
     def _log(self, emoji: str, message: str, extra: dict | None = None) -> None:
