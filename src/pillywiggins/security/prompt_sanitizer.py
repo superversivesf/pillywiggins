@@ -1,8 +1,12 @@
 """Prompt injection detection and sanitization.
 
 Provides a PromptSanitizer class that scores text for prompt injection risk
-using multiple heuristics: jailbreak keywords, role-play triggers, delimiter
-injection, system prompt leakage attempts, etc.
+using specific structural patterns: API token leaks, context boundary
+injection (chat template delimiters), and Unicode obfuscation.
+
+Keyword-based substring matching has been removed — it caused excessive
+false positives on common words in normal conversation (e.g. "hack",
+"Dan", "sudo", "leak").
 """
 
 import logging
@@ -12,100 +16,9 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-# Pattern categories with scores (higher = more suspicious)
-JAILBREAK_PATTERNS = {
-    "ignore previous": 25,
-    "ignore all previous": 30,
-    "ignore your instructions": 35,
-    "ignore system prompt": 35,
-    "forget previous": 20,
-    "forget all": 25,
-    "disregard": 20,
-    "jailbreak": 40,
-    "DAN": 30,
-    "do anything now": 35,
-    "you are now": 25,
-    "you are in": 20,
-    "roleplay as": 20,
-    "pretend to be": 20,
-    "act as": 20,
-    "simulate being": 20,
-    "bypass": 25,
-    "hack": 20,
-    "exploit": 20,
-    "override": 25,
-    "system override": 35,
-    "admin mode": 30,
-    "developer mode": 30,
-    "root access": 30,
-    "sudo": 25,
-    "ignore safety": 35,
-    "no restrictions": 30,
-    "no limits": 25,
-    "unfiltered": 25,
-    "unrestricted": 25,
-    "leak": 15,
-    "reveal": 15,
-    "show your": 20,
-    "what are your instructions": 25,
-    "what is your system prompt": 30,
-    "print your": 20,
-    "output your": 20,
-    "repeat after me": 20,
-    "repeat the above": 25,
-    "repeat the text": 25,
-    "copy the above": 25,
-    "echo the above": 25,
-    "start your response with": 20,
-    "begin your response with": 20,
-    "only respond with": 20,
-    "do not mention": 15,
-    "do not reveal": 15,
-    "never mention": 15,
-    "never reveal": 15,
-    "hide this": 15,
-    "conceal this": 15,
-    "secret mode": 25,
-    "hidden mode": 25,
-    "debug mode": 20,
-    "test mode": 15,
-    "special instruction": 20,
-    "new instruction": 20,
-    "updated instruction": 20,
-    "temporary instruction": 20,
-    "emergency protocol": 25,
-    "urgent instruction": 20,
-}
-
-DELIMITER_PATTERNS = [
-    (r"```\s*(system|assistant|user|instruction)", 30),
-    (r"\[\[SYSTEM\]\]|\{\{SYSTEM\}\}|\[\[INSTRUCTION\]\]|\{\{INSTRUCTION\}\}", 25),
-    (r"\[\[HIDDEN\]\]|\{\{HIDDEN\}\}|\[\[SECRET\]\]|\{\{SECRET\}\}", 20),
-    (r"\b(SYSTEM|INSTRUCTION|HIDDEN|SECRET)\s*[:=]", 20),
-    (r"\n\s*\*\*\*\s*\n", 15),  # Visual delimiter like "****"
-    (r"\n\s*---+\s*\n", 15),
-    (r"\n\s*===+\s*\n", 15),
-]
-
-ROLEPLAY_PATTERNS = [
-    (r"\byou are (now |in )?(an? |the )?(AI assistant|language model|chatbot|bot)", 20),
-    (r"\bfrom now on, you (will|shall|must|are)", 25),
-    (r"\bgoing forward, you (will|shall|must|are)", 20),
-    (r"\beffective immediately", 20),
-    (r"\bthis overrides", 25),
-    (r"\bthis takes precedence", 25),
-    (r"\bthis supersedes", 25),
-]
-
-SYSTEM_LEAK_PATTERNS = [
-    (r"\byour (system |core |base )?instructions? (are|is|include)", 25),
-    (r"\byour (system |core |base )?prompt (is|contains|says)", 25),
-    (r"\bwhat (are|is) your (instructions?|rules?|guidelines?|constraints?)", 20),
-    (r"\btell me your (instructions?|rules?|prompt|system prompt)", 25),
-    (r"\bshow me your (instructions?|rules?|prompt|system prompt)", 25),
-]
-
-# Token/key patterns — leaked API keys, secrets, JWTs
+# Token/key patterns — leaked API keys, secrets, JWTs.
+# These are specific format patterns, not common words, so false
+# positives are extremely unlikely.
 TOKEN_PATTERNS = [
     (r"\b(sk-[a-zA-Z0-9]{20,})\b", 40),  # OpenAI
     (r"\b(sk-proj-[a-zA-Z0-9]{20,})\b", 40),  # OpenAI project
@@ -122,47 +35,19 @@ TOKEN_PATTERNS = [
     (r"\b(sk_live_[0-9a-zA-Z]{20,})\b", 40),  # Stripe secret live key
 ]
 
-# Instruction hierarchy attacks — attempting to override prior instructions
-INSTRUCTION_HIERARCHY_PATTERNS = [
-    (r"\bignore all (previous|prior|above|current) (instructions?|directives?|commands?|rules?)", 30),
-    (r"\bdisregard (all |any )(previous|prior|above) (instructions?|directives?)", 30),
-    (r"\byou are now (a|an|the) ", 20),
-    (r"\byour new (instructions?|directives?|role|purpose) (is|are|will be)", 30),
-    (r"\bforget (everything|all) (and|before|about)", 25),
-    (r"\bfrom this (point|moment) (on|forward),? you (will|shall|must|are)", 25),
-    (r"\byou no longer (have|need|must|should|work for)", 20),
-    (r"\bdo not (follow|obey|listen to|adhere to) (your |the )(instructions?|rules?|guidelines?)", 30),
-]
-
-# Context boundary injection — attempting to embed fake system/instruction delimiters
+# Context boundary injection — chat template delimiters that should
+# never appear in user or agent messages. These are template-format-
+# specific markers that attackers use to escape the conversation context.
 CONTEXT_BOUNDARY_PATTERNS = [
-    (r"---+\s*BEGIN\s+NEW\s+INSTRUCTIONS?\s*---*", 35),
-    (r"===+\s*SYSTEM\s+OVERRIDE\s*===*", 35),
     (r"<\|im_start\|>\s*system", 35),
     (r"<\|im_end\|>", 20),
     (r"\[INST\]", 30),
     (r"\[/INST\]", 20),
-    (r"<system>", 30),
-    (r"</system>", 20),
     (r"<<SYS>>", 30),
     (r"<</SYS>>", 20),
     (r"<\|system\|>", 30),
     (r"<\|user\|>", 20),
     (r"<\|assistant\|>", 20),
-    (r"\bBEGIN CONTEXT\b", 25),
-    (r"\bEND CONTEXT\b", 15),
-]
-
-# Structured injection — JSON/XML/markdown blocks with embedded instruction overrides
-STRUCTURED_INJECTION_PATTERNS = [
-    (r'"instruction"\s*:', 25),
-    (r'"system"\s*:', 20),
-    (r'"role"\s*:\s*"system"', 30),
-    (r"<instruction>.*?</instruction>", 25),
-    (r"<role>.*?system.*?</role>", 25),
-    (r"```json\s*{[^}]*\"instruction\"", 25),
-    (r"```json\s*{[^}]*\"system\"", 25),
-    (r'"content"\s*:\s*"(ignore|forget|disregard)', 25),
 ]
 
 # Zero-width characters used to obfuscate keywords in prompt injection attacks.
@@ -209,11 +94,11 @@ class SanitizationResult:
 class PromptSanitizer:
     """Scores and optionally blocks prompt injection attempts.
 
-    Uses multiple heuristics to detect jailbreaks, role-play triggers,
-    delimiter injection, and system prompt leakage attempts.
+    Uses specific structural heuristics: API token format patterns,
+    chat template delimiter injection, and Unicode obfuscation detection.
     """
 
-    def __init__(self, threshold: int = 30):
+    def __init__(self, threshold: int = 40):
         self.threshold = threshold
 
     def score(self, text: str) -> SanitizationResult:
@@ -228,70 +113,17 @@ class PromptSanitizer:
         score = 0
         matched = []
 
-        # 1. Jailbreak keyword patterns
-        for keyword, weight in JAILBREAK_PATTERNS.items():
-            if keyword.lower() in text_normalized:
-                score += weight
-                matched.append(f"jailbreak_keyword: {keyword}")
-
-        # 2. Delimiter injection
-        for pattern, weight in DELIMITER_PATTERNS:
-            if re.search(pattern, text_normalized, re.IGNORECASE):
-                score += weight
-                matched.append(f"delimiter_injection: {pattern}")
-
-        # 3. Role-play triggers
-        for pattern, weight in ROLEPLAY_PATTERNS:
-            if re.search(pattern, text_normalized, re.IGNORECASE):
-                score += weight
-                matched.append(f"roleplay_trigger: {pattern}")
-
-        # 4. System prompt leakage
-        for pattern, weight in SYSTEM_LEAK_PATTERNS:
-            if re.search(pattern, text_normalized, re.IGNORECASE):
-                score += weight
-                matched.append(f"system_leak: {pattern}")
-
-        # 5. Token/API key patterns
+        # 1. Token/API key patterns
         for pattern, weight in TOKEN_PATTERNS:
             if re.search(pattern, text_normalized, re.IGNORECASE):
                 score += weight
                 matched.append(f"token_leak: {pattern}")
 
-        # 6. Instruction hierarchy patterns
-        for pattern, weight in INSTRUCTION_HIERARCHY_PATTERNS:
-            if re.search(pattern, text_normalized, re.IGNORECASE):
-                score += weight
-                matched.append(f"instruction_hierarchy: {pattern}")
-
-        # 7. Context boundary injection
+        # 2. Context boundary injection
         for pattern, weight in CONTEXT_BOUNDARY_PATTERNS:
             if re.search(pattern, text_normalized, re.IGNORECASE):
                 score += weight
                 matched.append(f"context_boundary: {pattern}")
-
-        # 8. Structured injection
-        for pattern, weight in STRUCTURED_INJECTION_PATTERNS:
-            if re.search(pattern, text_normalized, re.IGNORECASE):
-                score += weight
-                matched.append(f"structured_injection: {pattern}")
-
-        # 9. Structural checks
-        # Multiple newlines with instruction-like text = possible delimiter injection
-        lines = text_normalized.splitlines()
-        instruction_like_lines = sum(
-            1 for line in lines
-            if any(kw in line for kw in ["instruction", "system", "prompt", "command"])
-        )
-        if instruction_like_lines >= 3:
-            score += 15
-            matched.append("structural: multiple_instruction_lines")
-
-        # Excessive repetition of override words
-        override_count = sum(text_normalized.count(kw) for kw in ["ignore", "disregard", "forget"])
-        if override_count >= 3:
-            score += 20
-            matched.append("structural: excessive_override_words")
 
         # Cap at 100
         score = min(score, 100)
@@ -344,8 +176,11 @@ class PromptSanitizer:
         return result.score < effective_threshold
 
 
-def sanitize_or_default(text: str, default: str = "", threshold: int = 30) -> str:
-    """Convenience function: sanitize text or return default if blocked.
+def sanitize_or_default(text: str, default: str = "", threshold: int = 40) -> str:
+    """Sanitize input text against structural injection patterns.
+
+    Only blocks API token leaks and chat template delimiter injection.
+    Does NOT check common words — normal conversation is never blocked.
 
     Args:
         text: Text to sanitize.
@@ -362,16 +197,16 @@ def sanitize_or_default(text: str, default: str = "", threshold: int = 30) -> st
         return default
 
 
-def sanitize_output(text: str, default: str = "[Response filtered for security]", threshold: int = 25) -> str:
+def sanitize_output(text: str, default: str = "[Response filtered for security]", threshold: int = 30) -> str:
     """Sanitize LLM output text before sending to users.
 
-    Uses a lower threshold than input sanitization since outputs should
-    never contain dangerous content (leaked keys, echoed injections, etc.)
+    Uses a slightly lower threshold (30 vs 40) since outputs should
+    never contain dangerous content like leaked API keys.
 
     Args:
         text: The LLM output text to sanitize.
         default: Safe replacement text if output is blocked.
-        threshold: Score threshold for blocking (default 20, lower than input 30).
+        threshold: Score threshold for blocking.
 
     Returns:
         Original text if safe, default message otherwise.

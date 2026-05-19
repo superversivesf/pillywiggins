@@ -74,6 +74,7 @@ def test_dockerfile_creates_appuser():
 # ---------------------------------------------------------------------------
 
 ALLOWED_SERVICES = {"postgres", "redis", "nats", "searxng"}
+HARDENED_SERVICES = {"nats", "searxng"}
 
 
 def _compose_services_live():
@@ -85,15 +86,23 @@ def _compose_services_live():
 
 
 def _infra_services(services):
-    """Return only infrastructure services (exclude agent services
-    like puck, and exclude non-service keys if any)."""
+    """Return all infrastructure services (exclude agent services)."""
     return {k: v for k, v in services.items()
             if v is not None and k in ALLOWED_SERVICES}
 
 
+def _hardened_services(services):
+    """Return services that should be hardened with cap_drop, read_only, etc.
+    Excludes databases (postgres, redis) which need write access to persistent volumes."""
+    return {k: v for k, v in services.items()
+            if v is not None and k in HARDENED_SERVICES}
+
+
 def test_all_services_have_cap_drop_all():
-    """Every infrastructure service must have cap_drop: [ALL]."""
-    services = _infra_services(_compose_services())
+    """Every hardened infrastructure service must have cap_drop: [ALL].
+    Databases (postgres, redis) are excluded — they need kernel capabilities
+    for chown, user switching, and writing to persistent volumes."""
+    services = _hardened_services(_compose_services())
     missing = [name for name, svc in services.items()
                if svc.get("cap_drop") != ["ALL"]]
     assert not missing, (
@@ -102,8 +111,9 @@ def test_all_services_have_cap_drop_all():
 
 
 def test_all_services_have_read_only():
-    """Every infrastructure service must have read_only: true."""
-    services = _infra_services(_compose_services())
+    """Every hardened infrastructure service must have read_only: true.
+    Databases are excluded."""
+    services = _hardened_services(_compose_services())
     missing = [name for name, svc in services.items()
                if svc.get("read_only") is not True]
     assert not missing, (
@@ -112,15 +122,13 @@ def test_all_services_have_read_only():
 
 
 def test_all_services_have_no_new_privileges():
-    """Every infrastructure service must have no-new-privileges:true
-    (via security_opt or top-level compose v2 key)."""
-    services = _infra_services(_compose_services())
+    """Every hardened infrastructure service must have no-new-privileges:true
+    (via security_opt or top-level compose v2 key). Databases excluded."""
+    services = _hardened_services(_compose_services())
 
     def _has_no_new_priv(svc):
-        # Docker Compose v2.24+ supports 'no_new_privileges' as a top-level key.
         if svc.get("no_new_privileges") is True:
             return True
-        # Compatible approach: security_opt with no-new-privileges:true
         sec_opts = svc.get("security_opt", [])
         return "no-new-privileges:true" in sec_opts
 
@@ -175,8 +183,8 @@ def test_all_services_have_deploy_resources_limits():
 
 
 def test_live_services_have_cap_drop_all():
-    """Every live infrastructure service must have cap_drop: [ALL]."""
-    services = _infra_services(_compose_services_live())
+    """Every live hardened infrastructure service must have cap_drop: [ALL]."""
+    services = _hardened_services(_compose_services_live())
     missing = [name for name, svc in services.items()
                if svc.get("cap_drop") != ["ALL"]]
     assert not missing, (
@@ -185,8 +193,8 @@ def test_live_services_have_cap_drop_all():
 
 
 def test_live_services_have_read_only():
-    """Every live infrastructure service must have read_only: true."""
-    services = _infra_services(_compose_services_live())
+    """Every live hardened infrastructure service must have read_only: true."""
+    services = _hardened_services(_compose_services_live())
     missing = [name for name, svc in services.items()
                if svc.get("read_only") is not True]
     assert not missing, (
@@ -195,8 +203,8 @@ def test_live_services_have_read_only():
 
 
 def test_live_services_have_no_new_privileges():
-    """Every live infrastructure service must have no-new-privileges: true."""
-    services = _infra_services(_compose_services_live())
+    """Every live hardened infrastructure service must have no-new-privileges: true."""
+    services = _hardened_services(_compose_services_live())
 
     def _has_no_new_priv(svc):
         if svc.get("no_new_privileges") is True:
@@ -274,11 +282,9 @@ def test_example_agent_template_has_security_fields():
 # ---------------------------------------------------------------------------
 
 def test_services_with_volumes_have_tmpfs():
-    """Services that have volumes should also have tmpfs: [/tmp]
-    when read_only: true, so they have a writable temp area."""
-    services = _infra_services(_compose_services())
-
-    for name, svc in services.items():
+    """Read-only services that have volumes should have tmpfs: [/tmp]
+    so they have a writable temp area."""
+    for name, svc in _hardened_services(_compose_services()).items():
         if svc.get("volumes"):
             tmpfs = svc.get("tmpfs", [])
             assert "/tmp" in tmpfs or any("/tmp" in t for t in tmpfs), (
