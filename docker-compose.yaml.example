@@ -9,14 +9,6 @@ services:
     - pgdata:/var/lib/postgresql/data
     - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     restart: unless-stopped
-    cap_drop:
-    - ALL
-    read_only: true
-    security_opt:
-    - no-new-privileges:true
-    tmpfs:
-    - /tmp
-    - /var/run/postgresql
     deploy:
       resources:
         limits:
@@ -36,11 +28,6 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     command: redis-server --appendonly yes
-    cap_drop:
-    - ALL
-    read_only: true
-    security_opt:
-    - no-new-privileges:true
     tmpfs:
     - /tmp
     volumes:
