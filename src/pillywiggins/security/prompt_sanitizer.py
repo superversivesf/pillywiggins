@@ -362,7 +362,7 @@ def sanitize_or_default(text: str, default: str = "", threshold: int = 30) -> st
         return default
 
 
-def sanitize_output(text: str, default: str = "[Response filtered for security]", threshold: int = 20) -> str:
+def sanitize_output(text: str, default: str = "[Response filtered for security]", threshold: int = 25) -> str:
     """Sanitize LLM output text before sending to users.
 
     Uses a lower threshold than input sanitization since outputs should
