@@ -102,6 +102,20 @@ def main():
         help="Run scenarios directly (skip setup wizard)",
     )
 
+    import_parser = subparsers.add_parser(
+        "import-skills", help="Import Claude-style skills to Pillywiggins format"
+    )
+    import_parser.add_argument(
+        "--source",
+        required=True,
+        help="Path to .skill.md file or directory of skills",
+    )
+    import_parser.add_argument(
+        "--output",
+        default="skills",
+        help="Output directory for generated skill files (default: skills/)",
+    )
+
     parser.add_argument(
         "--agent-id",
         required=False,
@@ -124,6 +138,18 @@ def main():
             from tests.blackbox.cli import setup_wizard
 
             setup_wizard(config_path=args.config)
+        return
+
+    if args.command == "import-skills":
+        from pillywiggins.skills.claude_importer import import_claude_skills
+
+        imported = import_claude_skills(args.source, args.output)
+        if imported:
+            print(f"Imported {len(imported)} skill(s):")
+            for p in imported:
+                print(f"  {p}")
+        else:
+            print("No skills found to import.")
         return
 
     if not args.agent_id:

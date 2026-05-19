@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import secrets
+from typing import TYPE_CHECKING, Any
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -11,6 +13,12 @@ CANARY_TOKEN = secrets.token_hex(12)
 
 def get_canary_token() -> str:
     return CANARY_TOKEN
+
+
+if TYPE_CHECKING:
+    from pydantic_ai.mcp import MCPServerStdio, MCPServerStreamableHTTP
+
+logger = logging.getLogger(__name__)
 
 
 from pillywiggins.agents.deps import AgentDeps
@@ -43,6 +51,7 @@ def create_brain(
     base_url: str,
     api_key: str,
     skill_registry: object | None = None,
+    mcp_servers: list[dict[str, Any]] | None = None,
 ) -> Agent:
     if provider == "ollama":
         url = base_url or "http://host.docker.internal:11434/v1"
@@ -144,7 +153,56 @@ def create_brain(
         for skill in skill_registry.list_skills():
             agent.tool(_make_skill_tool(skill))
 
+    if mcp_servers:
+        agent._mcp_servers = mcp_servers
+
     return agent
+
+
+def _build_mcp_toolsets(
+    mcp_servers: list[dict[str, Any]],
+) -> list:
+    """Build PydanticAI MCP server toolsets from config dicts.
+
+    Each dict must have either:
+      - 'command' + optional 'args' (list[str]) for stdio transport
+      - 'url' (str) for Streamable HTTP transport
+
+    Optional keys: 'timeout' (int), 'tool_prefix' (str).
+    """
+    from pydantic_ai.mcp import MCPServerStdio, MCPServerStreamableHTTP
+
+    toolsets = []
+    for cfg in mcp_servers:
+        name = cfg.get("name", "unnamed")
+        prefix = cfg.get("tool_prefix")
+        timeout = cfg.get("timeout")
+        url = cfg.get("url")
+        command = cfg.get("command")
+
+        kwargs: dict[str, Any] = {}
+        if prefix:
+            kwargs["tool_prefix"] = prefix
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+
+        try:
+            if command:
+                args = cfg.get("args", [])
+                env = cfg.get("env")
+                server = MCPServerStdio(command, args=args, env=env, **kwargs)
+            elif url:
+                server = MCPServerStreamableHTTP(url, **kwargs)
+            else:
+                logger.warning("MCP server '%s' has no command or url, skipping", name)
+                continue
+
+            toolsets.append(server)
+            logger.info("MCP server '%s' loaded (%s)", name, "stdio" if command else "http")
+        except Exception:
+            logger.exception("Failed to create MCP server '%s'", name)
+
+    return toolsets
 
 
 def get_tool_names(agent: Agent) -> list[str]:
