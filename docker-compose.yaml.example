@@ -126,7 +126,7 @@ services:
   #   - no-new-privileges:true
   #   tmpfs:
   #   - /tmp
-  #   - /app/logs
+  #   - /app/logs:uid=1000,gid=1000
   #   deploy:
   #     resources:
   #       limits:

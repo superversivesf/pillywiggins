@@ -500,7 +500,7 @@ def add_agent_to_docker_compose(
         "cap_drop": ["ALL"],
         "read_only": True,
         "security_opt": ["no-new-privileges:true"],
-        "tmpfs": ["/tmp", "/app/logs"],
+        "tmpfs": ["/tmp", "/app/logs:uid=1000,gid=1000"],
         "deploy": {"resources": {"limits": {"memory": "512M"}}},
         "environment": service_env,
         "volumes": list(COMPOSE_VOLUMES),

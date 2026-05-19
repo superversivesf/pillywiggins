@@ -24,16 +24,19 @@ def _get_skill_logger() -> logging.Logger:
     if not any(
         isinstance(h, logging.handlers.RotatingFileHandler) for h in logger.handlers
     ):
-        DEFAULT_LOG_DIR.mkdir(parents=True, exist_ok=True)
-        handler = logging.handlers.RotatingFileHandler(
-            SKILL_LOG_FILE,
-            maxBytes=10 * 1024 * 1024,
-            backupCount=3,
-            encoding="utf-8",
-        )
-        formatter = logging.Formatter("%(message)s")
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
+        try:
+            DEFAULT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+            handler = logging.handlers.RotatingFileHandler(
+                SKILL_LOG_FILE,
+                maxBytes=10 * 1024 * 1024,
+                backupCount=3,
+                encoding="utf-8",
+            )
+            formatter = logging.Formatter("%(message)s")
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+        except OSError:
+            pass
 
     _skill_logger = logger
     return _skill_logger
