@@ -335,6 +335,8 @@ class PillywigginAgent:
             return
 
         try:
+            history = self._get_history(conversation_key)
+
             result = await self._brain.run(
                 user_prompt=sanitized_prompt,
                 deps=AgentDeps(
@@ -356,8 +358,19 @@ class PillywigginAgent:
                     llm_provider=self._settings.llm_provider,
                     embedding_dimension=self._settings.embedding_dimension,
                 ),
+                message_history=history,
             )
             message_text = sanitize_output(result.output)
+
+            new_history = result.all_messages()
+            self._set_history(new_history, conversation_key)
+            if self._cache is not None:
+                await self._cache.save(
+                    self.agent_id, new_history, conversation_key=conversation_key
+                )
+            if self._store is not None:
+                await self._store.save(conversation_key, new_history)
+
             await self._adapter.send(conversation_key, message_text, {"chat_id": chat_id})
             logger.info("send_message for %s to %s", self.agent_id, conversation_key)
         except Exception:
