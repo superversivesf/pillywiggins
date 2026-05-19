@@ -220,3 +220,14 @@ def sanitize_output(text: str, default: str = "[Response filtered for security]"
     except PromptInjectionError:
         logger.warning("Output sanitization blocked response with score above threshold %d", threshold)
         return default
+
+
+def check_canary(text: str, token: str) -> bool:
+    """Check if a canary security marker appears in the given text.
+
+    Returns True if the canary token was found (potential prompt leak).
+    Only checks non-empty tokens to avoid false positives.
+    """
+    if not token or not text:
+        return False
+    return token in text

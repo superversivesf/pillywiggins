@@ -14,7 +14,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from pillywiggins.agents.brain import Agent, create_brain
+from pillywiggins.agents.brain import Agent, create_brain, get_canary_token
 from pillywiggins.agents.deps import AgentDeps
 from pillywiggins.agents.personality import Personality
 from pillywiggins.logging_utils import AgentLogger
@@ -31,6 +31,7 @@ from pillywiggins.security.prompt_sanitizer import (
     PromptInjectionError,
     sanitize_or_default,
     sanitize_output,
+    check_canary,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,18 @@ class PillywigginAgent:
         self._brain: Agent = self._rebuild_brain()
         self._seen_mentions_this_limit_cycle: dict[str, int] = {}
         self._conversation_histories: dict[str, list[ModelMessage]] = {}
+
+    def _safe_output(self, output: str) -> str:
+        """Apply output sanitization and canary token check."""
+        result = sanitize_output(output)
+        canary = get_canary_token()
+        if check_canary(result, canary):
+            logger.warning(
+                "Canary token detected in output for %s, replacing response",
+                self.agent_id,
+            )
+            return "[Response filtered for security]"
+        return result
 
     def _rebuild_brain(self) -> Agent:
         """Re-create the brain agent with the current model and skill registry."""
@@ -360,8 +373,7 @@ class PillywigginAgent:
                 ),
                 message_history=history,
             )
-            message_text = sanitize_output(result.output)
-
+            message_text = self._safe_output(result.output)
             new_history = result.all_messages()
             self._set_history(new_history, conversation_key)
             if self._cache is not None:
@@ -686,8 +698,10 @@ class PillywigginAgent:
                 )
                 return "I cannot process that request."
 
+            wrapped_content = f"<user_message>\n{sanitized_content}\n</user_message>"
+
             result = await self._brain.run(
-                sanitized_content,
+                wrapped_content,
                 deps=deps,
                 message_history=history,
             )
