@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import logging
 import re
@@ -70,6 +72,7 @@ class PillywigginAgent:
         compact_truncate_message_chars: int = 2000,
         database_url: str | None = None,
         nats_url: str | None = None,
+        mcp_servers: list[dict[str, Any]] | None = None,
     ):
         self.agent_id = agent_id
         self.personality = personality
@@ -85,8 +88,7 @@ class PillywigginAgent:
         self._compact_truncate_message_chars = compact_truncate_message_chars
         self._database_url = database_url
         self._nats_url = nats_url
-        self._settings = Settings()
-        self._council_memory: CouncilMemory | None = None
+        self._mcp_servers: list[dict[str, Any]] | None = mcp_servers
         self._nats_bus: NatsBus | None = None
         self._scheduler: AgentScheduler | None = None
         self._adapter: Any = None
@@ -120,6 +122,7 @@ class PillywigginAgent:
             self._base_url,
             self._api_key,
             skill_registry=self._skill_registry,
+            mcp_servers=self._mcp_servers,
         )
 
     async def load_history(self, conversation_key: str | None = None) -> None:

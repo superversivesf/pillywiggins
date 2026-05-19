@@ -154,7 +154,9 @@ def create_brain(
             agent.tool(_make_skill_tool(skill))
 
     if mcp_servers:
-        agent._mcp_servers = mcp_servers
+        toolsets = _build_mcp_toolsets(mcp_servers)
+        for ts in toolsets:
+            agent._function_toolset._register(ts)
 
     return agent
 

@@ -1,9 +1,11 @@
+import json
 import logging
 import re
 import secrets
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import aiohttp
 import questionary
@@ -16,6 +18,7 @@ DOCKER_COMPOSE = Path("docker-compose.yaml")
 DOCKER_COMPOSE_EXAMPLE = Path("docker-compose.yaml.example")
 ENV_FILE = Path(".env")
 ENV_EXAMPLE = Path("env.example")
+MCP_SERVERS_JSON = Path("skills") / "mcp_servers.json"
 
 DEFAULT_AI_ENDPOINT = "http://localhost:11434/v1"
 DEFAULT_AI_MODEL = "qwen3.5:8b"
@@ -1044,13 +1047,6 @@ async def _add_agent_flow() -> None:
             return
     else:
         default_model = defaults.get("MODEL_NAME", suggested[0] if suggested else "")
-        chosen_model = await questionary.text(
-            "Model name (could not poll models from provider; type model name):",
-            default=default_model,
-        ).ask_async()
-        if chosen_model is None:
-            return
-
     # 6. Allowed users
     default_uids = "all"
     for a in load_existing_agents():
@@ -1539,6 +1535,159 @@ async def _configure_search_flow() -> None:
     logger.info(f"Values saved to {ENV_FILE}")
 
 
+async def _configure_mcp_flow() -> None:
+    """Configure global MCP servers available to all agents.
+
+    Reads/writes the shared skills/mcp_servers.json file.
+    Servers are configured globally like skills, not per-agent.
+    """
+    import json
+
+    ensure_config_files()
+
+    existing_servers: list[dict] = []
+    if MCP_SERVERS_JSON.exists():
+        try:
+            existing_servers = json.loads(MCP_SERVERS_JSON.read_text(encoding="utf-8"))
+            if not isinstance(existing_servers, list):
+                existing_servers = []
+        except Exception:
+            existing_servers = []
+
+    logger.info(f"\n{B}{CYAN}🔌 MCP Server Configuration{RESET}")
+    logger.info(f"{DIM}MCP (Model Context Protocol) servers provide shared tools to all agents.{RESET}")
+    logger.info(f"{DIM}They act like skills — configured once, available to every agent.{RESET}")
+
+    if existing_servers:
+        logger.info(f"\n{DIM}Current servers ({len(existing_servers)}):{RESET}")
+        for srv in existing_servers:
+            kind = f"stdio: {srv.get('command','?')} {srv.get('args','')}" if 'command' in srv else f"http: {srv.get('url','?')}"
+            logger.info(f"  {DIM}• {srv.get('name', '?')} ({kind}){RESET}")
+        logger.info("")
+
+    add_more = True
+    server_list: list[dict] = list(existing_servers)
+
+    while add_more:
+        add_more = await questionary.confirm(
+            "Add or update an MCP server?",
+            default=not existing_servers,
+        ).ask_async()
+        if add_more is None:
+            return
+        if not add_more:
+            break
+
+        if server_list:
+            edit_existing = await questionary.confirm(
+                "Edit an existing server?",
+                default=False,
+            ).ask_async()
+            if edit_existing and server_list:
+                choice_names = [s.get("name", "?") for s in server_list]
+                choice_names.append("Add new server")
+                choice = await questionary.select(
+                    "Which server?",
+                    choices=choice_names,
+                ).ask_async()
+                if choice == "Add new server":
+                    server_list.append({})
+                else:
+                    idx = choice_names.index(choice)
+                    # Reconfigure existing — remove and re-add
+                    srv = server_list.pop(idx)
+                    name_val = await questionary.text(
+                        "Server name:", default=srv.get("name", ""),
+                    ).ask_async()
+                    if name_val:
+                        srv["name"] = name_val
+                    server_list.insert(0, srv)
+
+        server_name = await questionary.text(
+            "MCP server name (lowercase, e.g. 'filesystem', 'github-tools'):",
+            validate=lambda v: True if v and re.match(r"^[a-z][a-z0-9_-]*$", v) else "Lowercase, letters/dashes/underscores only",
+        ).ask_async()
+        if server_name is None:
+            return
+
+        transport = await questionary.select(
+            "Transport:",
+            choices=[
+                questionary.Choice(title="Stdio — run as subprocess (e.g. Python, npx, uvx)", value="stdio"),
+                questionary.Choice(title="Streamable HTTP — connect to remote server", value="http"),
+            ],
+        ).ask_async()
+        if transport is None:
+            return
+
+        if transport == "stdio":
+            command = await questionary.text(
+                "Command:", default="npx",
+            ).ask_async()
+            if command is None:
+                return
+            args_input = await questionary.text(
+                "Arguments (space-separated):",
+                default="-y @modelcontextprotocol/server-filesystem /tmp",
+            ).ask_async()
+            if args_input is None:
+                return
+            args = args_input.split() if args_input.strip() else []
+        else:
+            url = await questionary.text(
+                "Server URL:", default="http://localhost:8000/mcp",
+            ).ask_async()
+            if url is None:
+                return
+
+        prefix = await questionary.text(
+            "Tool prefix (optional, to avoid name clashes):",
+            default="",
+        ).ask_async()
+        if prefix is None:
+            return
+
+        server_cfg: dict[str, Any] = {"name": server_name}
+        if transport == "stdio":
+            server_cfg["command"] = command
+            server_cfg["args"] = args
+        else:
+            server_cfg["url"] = url
+        if prefix.strip():
+            server_cfg["tool_prefix"] = prefix.strip()
+
+        # Replace if same name already exists
+        server_list = [s for s in server_list if s.get("name") != server_name]
+        server_list.append(server_cfg)
+
+    # Remove servers
+    if server_list:
+        remove = await questionary.confirm(
+            "Remove a server?",
+            default=False,
+        ).ask_async()
+        if remove and server_list:
+            names = [s["name"] for s in server_list] + ["Cancel"]
+            to_remove = await questionary.select(
+                "Select server to remove:",
+                choices=names,
+            ).ask_async()
+            if to_remove and to_remove != "Cancel":
+                server_list = [s for s in server_list if s["name"] != to_remove]
+
+    skills_dir = Path("skills")
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    MCP_SERVERS_JSON.write_text(
+        json.dumps(server_list, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    logger.info(f"\n✅ MCP configuration saved to {MCP_SERVERS_JSON}")
+    if server_list:
+        logger.info(f"  {len(server_list)} server(s) configured")
+    else:
+        logger.info(f"  No servers configured")
+
+
 async def onboard() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     ensure_config_files()
@@ -1553,6 +1702,7 @@ async def onboard() -> None:
                 "✨ Add agent",
                 "🔧 Reconfigure agent",
                 "🔍 Configure search (Brave/SearXNG)",
+                "🔌 Configure MCP servers",
                 "🗑️  Remove agent",
                 "🚀 Start/restart agents",
                 "👋 Exit",
@@ -1571,5 +1721,7 @@ async def onboard() -> None:
             await _configure_search_flow()
         elif action == "🗑️  Remove agent":
             await _remove_agent_flow()
+        elif action == "🔌 Configure MCP servers":
+            await _configure_mcp_flow()
         elif action == "🚀 Start/restart agents":
             await _start_restart_flow()

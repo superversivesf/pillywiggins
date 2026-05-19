@@ -2,10 +2,12 @@ import argparse
 import asyncio
 import fcntl
 import importlib
+import json
 import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from pillywiggins.agents.base import PillywigginAgent
 from pillywiggins.agents.personality import load_personality
@@ -18,6 +20,20 @@ from pillywiggins.memory.store import ConversationStore
 from pillywiggins.skills.registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
+
+
+def _load_mcp_config(skills_dir: str) -> list[dict[str, Any]]:
+    """Load global MCP server config from skills/mcp_servers.json."""
+    mcp_path = Path(skills_dir) / "mcp_servers.json"
+    if not mcp_path.exists():
+        return []
+    try:
+        servers = json.loads(mcp_path.read_text(encoding="utf-8"))
+        if isinstance(servers, list):
+            return servers
+    except Exception:
+        logger.warning("Failed to load MCP server config from %s", mcp_path, exc_info=True)
+    return []
 
 
 def _load_adapter_class(channel: str):
@@ -184,6 +200,8 @@ def main():
     private_memory = PrivateMemory(database_url=settings.database_url, agent_id=agent_id, embedding_dimension=settings.embedding_dimension)
     skill_registry = SkillRegistry(skills_dir=Path(settings.skills_dir), agent_id=agent_id)
     skill_registry.load_all()
+
+    mcp_servers = _load_mcp_config(settings.skills_dir)
     agent = PillywigginAgent(
         agent_id=agent_id,
         personality=personality,
@@ -199,6 +217,7 @@ def main():
         compact_truncate_message_chars=settings.compact_truncate_message_chars,
         database_url=settings.database_url,
         nats_url=settings.nats_url,
+        mcp_servers=mcp_servers,
     )
 
     AdapterClass = _load_adapter_class(channel)
