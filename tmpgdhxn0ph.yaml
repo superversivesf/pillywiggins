@@ -1,0 +1,21 @@
+services:
+  nats-pub:
+    build: .
+    command: python /tmp/nats_pub.py
+    depends_on:
+      nats:
+        condition: service_healthy
+    networks:
+    - pillywiggins
+    volumes:
+    - /home/jason/Repos/pillywiggins/tmpe1jg1t9y/nats_pub.py:/tmp/nats_pub.py:ro
+  nats-sub:
+    build: .
+    command: python /tmp/nats_sub.py
+    depends_on:
+      nats:
+        condition: service_healthy
+    networks:
+    - pillywiggins
+    volumes:
+    - /home/jason/Repos/pillywiggins/tmpe1jg1t9y/nats_sub.py:/tmp/nats_sub.py:ro

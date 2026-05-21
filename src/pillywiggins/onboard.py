@@ -444,6 +444,7 @@ def add_agent_to_agents_yaml(
         "allowed_user_ids": allowed_user_ids,
         "bot_chat_limit": bot_chat_limit,
         "timezone": timezone,
+        "display_name": display_name,
         "environment": environment,
     }
 
@@ -879,6 +880,15 @@ async def _add_agent_flow() -> None:
     if agent_id is None:
         return
 
+    # 3a. Display name (optional — overrides personality name in conversations)
+    default_display = personality.get("name", "") if personality else ""
+    display_name = await questionary.text(
+        "Display name (optional — what the agent calls itself; press Enter to use personality name):",
+        default=default_display,
+    ).ask_async()
+    if display_name is None:
+        return
+
     existing_ids = agent_ids_in_use()
     if agent_id in existing_ids:
         overwrite = await questionary.confirm(
@@ -980,16 +990,6 @@ async def _add_agent_flow() -> None:
     else:
         token = ""
         bot_info = "(unknown channel)"
-
-    # Optional Brave Search API key (prompt alongside credentials — can skip)
-    env = _read_env_dict(ENV_FILE)
-    existing_brave_key = env.get("BRAVE_API_KEY", "")
-    brave_api_key = await questionary.text(
-        "Brave Search API key (optional — press Enter to skip):",
-        default=existing_brave_key,
-    ).ask_async()
-    if brave_api_key:
-        add_brave_api_key_to_env(brave_api_key)
 
     # 5. LLM provider + model — default to first agent's config if available
     existing_llm = get_first_agent_llm_config()

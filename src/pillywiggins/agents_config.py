@@ -13,6 +13,7 @@ class AgentConfig:
     channel: str
     allowed_user_ids: str = "all"
     timezone: str = "UTC"
+    display_name: str = ""
     environment: dict[str, str] = field(default_factory=dict)
 
 
@@ -50,6 +51,7 @@ def load_agents_config(path: str = "agents.yaml") -> list[AgentConfig]:
                 channel=channel,
                 allowed_user_ids=allowed_user_ids,
                 timezone=timezone,
+                display_name=entry.get("display_name", ""),
                 environment=environment,
             )
         )

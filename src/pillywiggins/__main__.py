@@ -190,6 +190,10 @@ def main():
     agent_id = agent_cfg.id
     channel = agent_cfg.channel
     allowed_user_ids = agent_cfg.allowed_user_ids
+    display_name = agent_cfg.display_name
+
+    if display_name:
+        personality.name = display_name
 
     _acquire_agent_lock(agent_id)
 
