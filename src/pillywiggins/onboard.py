@@ -403,6 +403,7 @@ def add_agent_to_agents_yaml(
     bot_chat_limit: int,
     llm_config: dict | None,
     timezone: str = "UTC",
+    display_name: str = "",
 ) -> None:
     personality_path = _personality_path_for(personality_filename)
 
@@ -683,6 +684,7 @@ def add_agent_to_configs(
     llm_config: dict | None,
     token_value: str = "",
     timezone: str = "UTC",
+    display_name: str = "",
 ) -> None:
     add_agent_to_agents_yaml(
         agent_id,
@@ -693,6 +695,7 @@ def add_agent_to_configs(
         bot_chat_limit,
         llm_config,
         timezone=timezone,
+        display_name=display_name,
     )
     add_agent_to_docker_compose(
         agent_id, personality_filename, token_env, llm_config=llm_config, timezone=timezone
@@ -1142,6 +1145,7 @@ async def _add_agent_flow() -> None:
         llm_config=llm_config,
         token_value=token,
         timezone=tz,
+        display_name=display_name,
     )
 
     _print_summary(
