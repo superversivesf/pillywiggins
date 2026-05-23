@@ -222,6 +222,7 @@ def main():
         database_url=settings.database_url,
         nats_url=settings.nats_url,
         mcp_servers=mcp_servers,
+        settings=settings,
     )
 
     AdapterClass = _load_adapter_class(channel)

@@ -73,6 +73,7 @@ class PillywigginAgent:
         database_url: str | None = None,
         nats_url: str | None = None,
         mcp_servers: list[dict[str, Any]] | None = None,
+        settings: Settings | None = None,
     ):
         self.agent_id = agent_id
         self.personality = personality
@@ -89,6 +90,7 @@ class PillywigginAgent:
         self._database_url = database_url
         self._nats_url = nats_url
         self._mcp_servers: list[dict[str, Any]] | None = mcp_servers
+        self._settings = settings
         self._nats_bus: NatsBus | None = None
         self._scheduler: AgentScheduler | None = None
         self._adapter: Any = None
