@@ -124,14 +124,14 @@ class TelegramAdapter(BaseAdapter):
             return
         response = await self.dispatch_command("/status", self._conversation_key(update))
         if response:
-            await update.message.reply_text(response, parse_mode="Markdown")
+            await update.message.reply_text(response)
 
     async def _cmd_models(self, update: Update, context) -> None:
         if not await self._guard(update):
             return
         response = await self.dispatch_command("/models", self._conversation_key(update))
         if response:
-            await update.message.reply_text(response, parse_mode="Markdown")
+            await update.message.reply_text(response)
 
     async def _cmd_model(self, update: Update, context) -> None:
         if not await self._guard(update):
@@ -140,7 +140,7 @@ class TelegramAdapter(BaseAdapter):
         cmd = "/model" if not args_text else f"/model {args_text}"
         response = await self.dispatch_command(cmd, self._conversation_key(update))
         if response:
-            await update.message.reply_text(response, parse_mode="Markdown")
+            await update.message.reply_text(response)
 
     async def _cmd_reset(self, update: Update, context) -> None:
         if not await self._guard(update):
