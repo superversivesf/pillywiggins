@@ -97,7 +97,10 @@ def create_brain(
         parts.append(
             "You have private memory that persists across all conversations. "
             "When you learn important facts about the user or the world, save them to private memory so you can recall them later. "
-            "If you're unsure whether you know something, try recalling from private memory first."
+            "BEFORE you tell a user you don't know something, cannot remember, or have no information, "
+            "you MUST first search your private memory using the recall_private_memory tool. "
+            "Only say 'I don't know' or 'I can't remember' AFTER you have checked memory and found nothing there. "
+            "Your private memory may contain answers your language model does not."
         )
         parts.append(
             "When retrieved memories contradict information in the conversation history, always trust the memory as the more up-to-date and authoritative source."

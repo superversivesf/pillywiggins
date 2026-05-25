@@ -1,3 +1,4 @@
+import inspect
 import json
 import logging
 import time
@@ -869,9 +870,43 @@ async def get_current_time(ctx: RunContext[AgentDeps]) -> str:
 
 
 def _make_skill_tool(skill):
-    if skill.meta.get("parameters"):
+    """Wrap a Skill as a PydanticAI-compatible tool function.
+
+    Builds explicit __signature__ and __annotations__ from SKILL_META
+    so PydanticAI can generate structured JSON schema for the LLM.
+    Previously bare **kwargs meant small models (Qwen 3.5 8B) would
+    occasionally omit required parameters like ``query``.
+    """
+    params = skill.meta.get("parameters", {})
+
+    # Build inspect.Parameter objects from SKILL_META (same logic as
+    # Skill.as_tool() in registry.py).
+    sig_params: list[inspect.Parameter] = []
+    for pname, pdef in params.items():
+        ptype = pdef.get("type", "string")
+        if ptype == "integer":
+            annotation = int
+        elif ptype == "boolean":
+            annotation = bool
+        elif ptype in ("number", "float"):
+            annotation = float
+        else:
+            annotation = str
+
+        default = pdef.get("default", inspect.Parameter.empty)
+        sig_params.append(
+            inspect.Parameter(
+                pname,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                default=default,
+                annotation=annotation,
+            )
+        )
+
+    # Build docstring with parameter descriptions (Google-style).
+    if params:
         param_lines = []
-        for pname, pdef in skill.meta["parameters"].items():
+        for pname, pdef in params.items():
             ptype = pdef.get("type", "string")
             pdesc = pdef.get("description", "")
             pdefault = pdef.get("default")
@@ -894,7 +929,7 @@ def _make_skill_tool(skill):
     doc += perm_str
 
     async def skill_tool(ctx: RunContext[AgentDeps], **kwargs) -> str:
-    
+
         agent_id = ctx.deps.agent_id
         channel = ctx.deps.channel
         agent_logger = ctx.deps.logger
@@ -926,4 +961,26 @@ def _make_skill_tool(skill):
 
     skill_tool.__name__ = skill.name
     skill_tool.__doc__ = doc
+
+    # Attach explicit __signature__ and __annotations__ so PydanticAI can
+    # introspect structured parameters instead of bare **kwargs.
+    # This is what Skill.as_tool() does, but we keep the full RunContext,
+    # sandboxing, logging, and error-handling infrastructure.
+    # We must also include ctx as the first parameter since PydanticAI
+    # infers takes_ctx=True from the source-level annotations.
+    full_sig_params = [
+        inspect.Parameter(
+            "ctx",
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            annotation=RunContext[AgentDeps],
+        ),
+        *sig_params,
+    ]
+    skill_tool.__signature__ = inspect.Signature(full_sig_params)
+    skill_tool.__annotations__ = {
+        "ctx": RunContext[AgentDeps],
+        **{p.name: p.annotation for p in sig_params},
+        "return": str,
+    }
+
     return skill_tool
