@@ -47,12 +47,14 @@ async def run(
     max_results: int = 0,
     engines: str = "",
 ) -> dict:
-    from pillywiggins.config import Settings
+    base_url = os.environ.get("SEARXNG_URL", "http://searxng:8080").rstrip("/")
+    default_max = int(os.environ.get("SEARXNG_MAX_RESULTS", "5"))
+    default_cats = os.environ.get("SEARXNG_CATEGORIES", "general")
 
-    settings = Settings()
-    base_url = settings.searxng_url.rstrip("/")
-    default_max = settings.searxng_max_results
-    default_cats = settings.get_searxng_categories()
+    if "," in default_cats:
+        default_cats = [c.strip() for c in default_cats.split(",") if c.strip()]
+    else:
+        default_cats = [default_cats.strip()] if default_cats.strip() else ["general"]
 
     limit = max_results if max_results > 0 else default_max
     cats = [c.strip() for c in categories.split(",") if c.strip()] if categories else default_cats

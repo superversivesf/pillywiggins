@@ -14,6 +14,14 @@ logger = logging.getLogger(__name__)
 
 SAFE_ENV_VARS = {"PATH", "HOME", "USER", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE"}
 
+SKILL_ENV_VARS = {
+    "SEARXNG_URL",
+    "SEARXNG_MAX_RESULTS",
+    "SEARXNG_CATEGORIES",
+    "SEARXNG_SECRET",
+    "BRAVE_API_KEY",
+}
+
 
 DEFAULT_TIMEOUT = 30
 
@@ -39,6 +47,11 @@ def _sanitize_sandbox_result(result: SandboxResult) -> SandboxResult:
 def restricted_env(permissions: dict[str, bool]) -> dict[str, str]:
     env: dict[str, str] = {}
     for key in SAFE_ENV_VARS:
+        value = os.environ.get(key)
+        if value is not None:
+            env[key] = value
+
+    for key in SKILL_ENV_VARS:
         value = os.environ.get(key)
         if value is not None:
             env[key] = value
