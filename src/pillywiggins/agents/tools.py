@@ -882,6 +882,25 @@ async def send_message_to_agent(
     return sanitize_or_default(f"Sent message to {target_agent_id}", default="[Content blocked due to security policy]")
 
 
+async def remove_skill(ctx: RunContext[AgentDeps], name: str) -> str:
+    """Remove a skill by name. Deletes the skill file and unregisters it from the registry.
+
+    Args:
+        name: The name of the skill to remove (e.g. 'get_london_weather').
+
+    Returns:
+        Confirmation that the skill was removed, or an error message.
+    """
+    if ctx.deps.skill_registry is None:
+        return "No skill registry available."
+    if not name:
+        return "Please provide a skill name to remove."
+    removed = ctx.deps.skill_registry.unregister_skill(name)
+    if removed:
+        return sanitize_or_default(f"Skill '{name}' has been removed.", default="[Content blocked due to security policy]")
+    return f"Skill '{name}' not found in the registry."
+
+
 async def get_current_time(ctx: RunContext[AgentDeps]) -> str:
     """Get the current date and time in your configured timezone.
 

@@ -36,6 +36,7 @@ from pillywiggins.agents.tools import (
     save_to_private_memory,
     schedule_task,
     send_message_to_agent,
+    remove_skill,
     share_to_council,
     summarize_conversation,
     test_driven_skill,
@@ -156,6 +157,7 @@ def create_brain(
     agent.tool(unschedule_task)
     agent.tool(list_scheduled_tasks)
     agent.tool(send_message_to_agent)
+    agent.tool(remove_skill)
     agent.tool(get_current_time)
     agent.tool(get_conversation_info)
     agent.tool(summarize_conversation)

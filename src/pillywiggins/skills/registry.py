@@ -471,6 +471,34 @@ class SkillRegistry:
     def has_skill(self, name: str) -> bool:
         return name in self._skills
 
+    def unregister_skill(self, name: str) -> bool:
+        """Remove a skill from the registry, delete its file, and unload it.
+
+        Returns True if the skill existed and was removed, False otherwise.
+        """
+        skill_path = self._skills_dir / f"{name}.py"
+        removed_file = False
+        if skill_path.exists():
+            skill_path.unlink()
+            removed_file = True
+
+        registry_path = self._skills_dir / "registry.json"
+        if registry_path.exists():
+            try:
+                data = json.loads(registry_path.read_text())
+                if isinstance(data, dict):
+                    skills_list = data.get("skills", [])
+                    if isinstance(skills_list, list):
+                        data["skills"] = [s for s in skills_list if s.get("name") != name]
+                    self._write_registry_json(data)
+            except Exception:
+                pass
+
+        if name in self._skills:
+            del self._skills[name]
+            return True
+        return removed_file
+
     def get_status(self) -> dict[str, Any]:
         return {
             "loaded": len(self._skills),
