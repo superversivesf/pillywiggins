@@ -143,6 +143,8 @@ docker compose restart redis
 docker compose exec redis redis-cli PING   # confirm
 ```
 
+**If Redis won't start:** Older deployments had `cap_drop: [ALL]` and `read_only: true` on the redis service — Redis needs to write to its data directory and switch to the `redis` user. These constraints were removed in commit 716862b (2026-05-19). Check logs for "Permission denied" or "Read-only file system" errors and remove those hardening options from the redis service definition.
+
 **Impact:** Agent continues processing messages. Conversation context (recent chat history) resets on restart. Private memory, council memory, and scheduling are unaffected.
 
 ### 3.4 PostgreSQL Down
@@ -165,13 +167,20 @@ docker compose exec postgres pg_isready -U postgres  # confirm
 
 **Impact:** Private memory (long-term knowledge) is unreachable while PostgreSQL is down. Agents continue processing messages but cannot recall past learnings. No data loss — pgvector data is on persistent volume.
 
-**If PostgreSQL won't start (corruption):**
-```bash
-docker compose logs postgres --tail 50  # check for corruption messages
-# Check disk space:
-df -h
-du -sh pgdata/
-```
+**If PostgreSQL won't start:**
+
+- **Security hardening prevents chown/chmod (historical):** Older deployments had `cap_drop: [ALL]` and `read_only: true` on the postgres service. PostgreSQL needs to `chown`/`chmod` its data directory and write to persistent volumes. These constraints were removed in commit 716862b (2026-05-19). If you're on an older compose file, remove `cap_drop`, `read_only`, and `security_opt` from the postgres service definition (these should only appear on nats, searxng, and agent services — not databases).
+  ```bash
+  docker compose logs postgres --tail 30    # look for "Permission denied" or "Read-only file system"
+  ```
+
+- **Corruption or disk space:**
+  ```bash
+  docker compose logs postgres --tail 50  # check for corruption messages
+  # Check disk space:
+  df -h
+  du -sh pgdata/
+  ```
 
 ### 3.5 NATS Down
 
@@ -243,6 +252,76 @@ docker compose logs searxng --tail 20
 - **SearXNG healthcheck failing agents:** See §7 Gotchas — if agents `depends_on` SearXNG with `condition: service_healthy`, a failed SearXNG healthcheck causes agent restarts. Change to `service_started` or remove the dependency.
 - **Brave Search API alternative:** If SearXNG is unreliable, configure `BRAVE_API_KEY` in `.env` (free tier: ~1,000 searches/month). The agent will use Brave instead.
 - **Sandbox skill timeout:** If a specific skill consistently hangs, check the skill's code for infinite loops or external API calls without timeouts. Increase `SANDBOX_SKILLS` timeout or fix the skill.
+
+### 3.8 Agent Crash-Loop on Startup (Missing `self._settings`)
+
+**Symptom:** Agent container starts and exits immediately (`docker compose ps` shows restarts climbing rapidly). Logs show `AttributeError: 'PillywigginAgent' object has no attribute '_settings'` or a bare traceback from `_start_scheduler()`.
+
+**Root cause:** The `PillywigginAgent.__init__()` referenced `self._settings` in 35 locations (including `_start_scheduler()` at line 267, which is **outside** any try/except block) but never assigned it from the constructor. The Settings object was created in `__main__.py` but not passed through to the agent constructor.
+
+**Fix (commit 977d0dc, 2026-05-23):** The constructor now accepts a `settings: Settings | None = None` parameter and assigns it as `self._settings`. `__main__.py` passes `settings=settings` when constructing the agent. Update your agent code to the latest version or verify the `settings` kwarg is passed.
+
+```bash
+# Check agent logs for the specific error
+docker compose logs <agent> --tail 30 | grep -i "has no attribute\|_settings\|_start_scheduler"
+
+# If on an older version, update and rebuild:
+git pull
+docker compose up -d --build <agent>
+```
+
+**Note:** This bug caused a fatal crash loop — the agent never started because `_start_scheduler()` ran before any exception handlers were in place. Symptoms included: (1) `_start_scheduler()` crash at line 267 (no try/except), (2) silenced `_start_council_memory()` and `_start_nats_bus()` crashes (caught by try/except).
+
+### 3.9 AgentLogger Crash on Read-Only Filesystem
+
+**Symptom:** Agent container starts but crashes immediately with `OSError: [Errno 30] Read-only file system` in `logging_utils.py` or `skills/logger.py`. Agent shows `exited` or `unhealthy`.
+
+**Root cause:** Agent containers are hardened with `read_only: true` and `cap_drop: [ALL]`. `AgentLogger` (in `logging_utils.py`) called `mkdir()` and tried to create a `RotatingFileHandler` on a read-only filesystem. Similarly, skills' `logger.py` attempted the same.
+
+**Fix (commits 73d5b66 + f7a280b, 2026-05-19):**
+
+1. **`docker-compose.yaml`:** Agent services need a writable tmpfs mount for `/app/logs` with owner uid/gid matching the non-root appuser:
+   ```yaml
+   tmpfs:
+     - /tmp
+     - /app/logs:uid=1000,gid=1000
+   ```
+
+2. **Code-level fallback:** Both `logging_utils.py` and `skills/logger.py` now wrap file handler setup in `try/except OSError`. On read-only filesystems, they gracefully fall back to console-only logging (no file handler) instead of crashing.
+
+```bash
+# Verify the tmpfs mount exists
+docker compose exec <agent> mount | grep /app/logs
+
+# If missing, add the tmpfs mount to your docker-compose.yaml and rebuild:
+docker compose up -d --build <agent>
+```
+
+**Note:** The `--build` flag is needed because the Dockerfile also creates the `/app/logs` directory with `chown appuser:appuser` at build time (commit 4b65b6d).
+
+### 3.10 Scheduled Messages Not Saved to Conversation History
+
+**Symptom:** Agents send scheduled messages successfully (e.g., daily check-ins, reminders), but when users reply or ask follow-ups, the agent cannot recall the scheduled message it just sent. The agent behaves as if it has "amnesia" for its own scheduled output.
+
+**Root cause:** `_builtin_send_message_handler` (called by the scheduler for `send_message` tasks) called `brain.run()` without passing `message_history` and never saved the response. The agent's conversation history, Redis cache, and PostgreSQL store were never updated for scheduled messages — only for direct user interactions via `handle_message()`.
+
+**Fix (commit ecb78b1, 2026-05-19):** `_builtin_send_message_handler` now:
+1. Loads conversation history via `self._get_history(conversation_key)` before the LLM call
+2. Passes `message_history=history` to `brain.run()`
+3. After receiving the response, persists `result.all_messages()` to both Redis cache and PostgreSQL store
+4. Updates the in-memory history via `self._set_history()`
+
+This matches the behavior of `handle_message()`, giving the agent full recall of its own scheduled messages.
+
+```bash
+# Verify the fix: check agent handles scheduled messages by looking at logs
+docker compose logs <agent> --tail 50 | grep "send_message for"
+
+# No action needed if on latest code. If scheduled messages still aren't remembered,
+# verify you're running a build from commit ecb78b1 or later:
+git log --oneline -1
+docker compose up -d --build <agent>
+```
 
 ---
 
@@ -474,6 +553,51 @@ depends_on:
   searxng:
     condition: service_started  # instead of service_healthy
 ```
+
+### 7.8 Compose v5 Rejects `no_new_privileges: true` Syntax
+
+**Problem:** Docker Compose v5 (released late 2025) rejects `no_new_privileges: true` as a top-level service key with a parse error. Older Compose v2.x tolerated it (treating it as a no-op), but v5 enforces stricter schema validation.
+
+**Error message:**
+```
+services.<name> Additional properties are not allowed ('no_new_privileges' was unexpected)
+```
+
+**Fix:** Replace the top-level key with the correct `security_opt` syntax:
+```yaml
+# WRONG (rejected by Compose v5):
+services:
+  agent:
+    no_new_privileges: true   # ❌
+
+# CORRECT (works on all Compose versions):
+services:
+  agent:
+    security_opt:
+      - "no-new-privileges:true"   # ✅
+```
+
+The currently deployed `docker-compose.yaml` and `docker-compose.yaml.example` already use the correct `security_opt` syntax for all hardened services (nats, searxng, agent template). If you encounter the parse error, your compose file is using the legacy format — update it to `security_opt`.
+
+**Current Docker Compose version on this project:** v5.1.4. Compose v5 is fully supported.
+
+### 7.9 Healthcheck Uses `pgrep`, Not HTTP
+
+**Problem (historical):** The Dockerfile healthcheck previously used `python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/healthz')"` but the agent has no HTTP healthz endpoint — it's a background process, not a web server. This healthcheck always failed, making agents show `unhealthy` in `docker compose ps` even when running fine.
+
+**Fix (commit 4b65b6d, 2026-05-18):**
+1. The runtime image now installs `procps` (provides `pgrep`, `ps`) in the Dockerfile
+2. The healthcheck command was replaced with: `pgrep -f 'pillywiggins --agent-id' > /dev/null || exit 1`
+
+```bash
+# Verify the healthcheck works
+docker compose exec <agent> pgrep -f 'pillywiggins --agent-id' && echo "agent running"
+
+# Check the healthcheck status
+docker compose ps <agent>
+```
+
+If your Dockerfile still references `localhost:8080/healthz`, update to the `pgrep` check. No healthz endpoint exists in the application code — the old check was a configuration error, not a missing endpoint.
 
 ---
 

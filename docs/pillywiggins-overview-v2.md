@@ -144,7 +144,7 @@ skills/
 
 MCP (Model Context Protocol) is a standard for connecting AI agents to external tools. Pillywiggins can optionally connect to MCP servers (like n8n) for external integrations. But the primary skill system is simpler — it's just Python files in a folder. No HTTP servers to run, no protocol to implement, no spec to comply with. When an agent builds a skill, it writes a .py file, not a microservice.
 
-MCP is available as an optional add-on for connecting to external tool ecosystems if you want it later.
+MCP is available as an optional add-on for connecting to external tool ecosystems. MCP servers are configured globally via the onboard wizard and loaded as PydanticAI toolsets at agent startup — each agent discovers and registers its MCP tools through the same dynamic tool-loading path used for local skills.
 
 ---
 
@@ -182,6 +182,8 @@ scheduling:
 Each agent's cron runs **inside its own process**. If Discord's cron fires while Telegram's is sleeping, they don't interfere. Jobs survive container restarts because they're backed by Redis — if the container crashes at 8:59am, it picks up the 9:00am job when it comes back.
 
 This is different from most frameworks where cron is either global (one scheduler for everything) or bolted on as an afterthought. Here, each agent's personality file defines its own schedule, and that schedule is as much a part of the agent's identity as its tone of voice.
+
+Scheduled messages are persisted to the agent's conversation history. This means cron-triggered interactions — morning greetings, daily digests, memory cleanup — are recorded just like user-initiated conversations. The agent can recall what it said in past scheduled messages, and those interactions contribute to its long-term memory context.
 
 ---
 
@@ -317,6 +319,18 @@ For the full command reference, see the **View Logs** section in the project [RE
 
 ---
 
+## Security
+
+Pillywiggins uses a 3-layer prompt injection defense system to protect agents from malicious messages:
+
+1. **XML wrapping** — Incoming messages are wrapped in XML tags that delineate user content from system instructions, creating a clear structural boundary that the LLM respects.
+2. **Sandwich defense** — System instructions are repeated both before and after user input ("pre-prompt / user content / post-prompt"), so even if the user attempts to override mid-conversation instructions, the post-prompt re-establishes context.
+3. **Canary tokens** — Unique marker strings are embedded in system prompts. If these tokens appear in the LLM's response (indicating the prompt was leaked or exploited), the agent flags the exchange for security review.
+
+These layers work together: XML wrapping provides structural isolation, sandwich defense provides contextual resilience, and canary tokens provide a detection mechanism when the first two layers are bypassed.
+
+---
+
 ## The Technology Stack (and Why Each Piece)
 
 | What | Technology | Why This One |
@@ -331,7 +345,7 @@ For the full command reference, see the **View Logs** section in the project [RE
 | Skills | Python files + sandbox | Simple, no protocol overhead, agents can write them |
 | Channel libs | discord.py, slack_bolt, etc. | Official or best-in-class per platform |
 | Scheduling | APScheduler + Redis | Per-agent cron, persistent across restarts |
-| External tools | MCP (optional) | For connecting to n8n or third-party tool servers |
+| MCP servers | mcp (Python SDK) + PydanticAI toolsets | — |
 
 ---
 

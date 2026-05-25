@@ -1,6 +1,6 @@
 [project]
 name = "pillywiggins"
-version = "0.3.0"
+version = "0.4.0"
 description = "A council of AI agents, not a chatbot with multiple faces."
 requires-python = ">=3.12"
 license = "MIT"

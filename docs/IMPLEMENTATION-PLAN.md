@@ -1,7 +1,7 @@
 # Pillywiggins: Implementation Plan & Checklist
 
 **Version 2.0 — April 2026**  
-**Last verified: May 2026** — Telegram default, adapters complete, hardening partial  
+**Last verified: May 2026** — Telegram default, adapters complete, hardening partial (prompt injection, memory consolidation done)  
 **Canonical architecture: `pillywiggins-overview-v2.md` (Docker Compose)**
 
 ---
@@ -15,7 +15,7 @@
 | 3 — Skills System | Agents build, test, and deploy skills collaboratively | 50–70h | Phase 2 | **Done** (Phase 3 of 5-phase remediation) |
 | 4 — Second Agent + Communication | Two agents with isolated state, shared skills, council memory, per-agent cron | 30–40h | Phase 3 | **Done** (Phase 4 of 5-phase remediation) |
 | 5 — Full Fleet | All five channels live with complete feature set | 40–60h | Phase 4 | **Partial** (adapters + personalities done; multi-agent concurrency pending) |
-| 6 — Hardening | Rate limiting, logging, healthchecks, backups — 24/7 reliable | 40–50h | Phase 5 | **Partial** (rate limiting, structured logging, healthchecks, restart policies, backup script, security hardening done; prompt injection detection, memory consolidation, runbook, unattended ops pending) |
+| 6 — Hardening | Rate limiting, logging, healthchecks, backups — 24/7 reliable | 40–50h | Phase 5 | **Partial** (rate limiting, structured logging, healthchecks, restart policies, backup script, security hardening, prompt injection detection, memory consolidation, output sanitization, MCP integration, multi-provider support, Claude skill importer, deployment fixes done; token bucket refactor, ops runbook, unattended ops pending) |
 
 ---
 
@@ -89,7 +89,7 @@
   ```
 - [x] Create `pyproject.toml` with dependencies: `pydantic-ai`, `asyncpg`, `redis`, `nats-py`, `python-telegram-bot`, `slack-bolt`, `matrix-nio`, `aiosmtplib`, `apscheduler`, `pydantic-settings`, `pydantic`
 - [x] Create `Dockerfile` (multi-stage: build with uv, runtime with Python 3.12 slim)
-- [x] Create `env.example` with all required environment variables:
+- [x] Create `env.example` with all required environment variables (including all 9 providers: Ollama, OpenAI, Anthropic, Groq, DeepSeek, Mistral, OpenRouter, Google Gemini, xAI — May 2026):
   ```env
   # Database
   DATABASE_URL=postgresql://pillywiggins:password@postgres:5432/pillywiggins
@@ -799,7 +799,12 @@ ALL of the following must pass before proceeding:
 
 - [x] Implement token-bucket-style rate limiting per agent: max 10 LLM calls/minute (overview-v2 §9) (`cell-2r4g0k-moch5faq7q2`)
 - [ ] Implement token bucket rate limiter (refined / generic version)
-- [ ] Basic prompt injection detection layer (regex filter, conversation pattern monitoring)
+- [x] Prompt injection detection: 3-layer defense (removed keyword matching) — _(May 2026: `src/pillywiggins/security/` with input sanitization, context boundary detection for 9 chat template patterns, output canary token check)_
+- [x] Token pattern detection: 13 API key formats (AWS, GitHub, OpenAI, Slack, etc.) scanned on input
+- [x] Context boundary injection detection: 9 chat template patterns (ChatML, Llama, Mistral, Vicuna, Alpaca, DeepSeek, etc.)
+- [x] Output sanitization: canary token check before sending responses to users
+- [x] AgentLogger graceful degradation on read-only filesystem: falls back to `/tmp/` logging
+- [x] `.env` file permissions: `chmod 600 .env` enforcement test added
 - [ ] PydanticAI `retries=2` and 120s overall timeout to prevent infinite tool loops (partial — embedding calls have retries, brain agent does not yet)
 
 #### 6.2 Structured logging and health
@@ -815,8 +820,9 @@ ALL of the following must pass before proceeding:
 #### 6.3 Conversation summarization and memory consolidation
 
 - [ ] Implement conversation summarization: compress old history to save context window
-- [ ] Implement memory consolidation: periodic summarization of old private memories
-- [ ] Memory importance scoring and pruning (low-importance, old memories expire)
+- [x] Implement memory consolidation: `consolidate_memory` tool for periodic summarization of old private memories _(May 2026: trims old high-importance memories into summaries, retains recent memories intact)_
+- [x] Memory pruning: `prune_by_age` removes memories older than N days with importance below threshold, `prune_to_max` caps total memory count per agent _(May 2026: both tools callable through PydanticAI brain)_
+- [x] Memory importance scoring: existing importance field used for pruning decisions
 
 #### 6.4 Automated backups
 
@@ -831,6 +837,10 @@ ALL of the following must pass before proceeding:
 - [x] Council memory write validation enforcement (content length, tag whitelist, rate limit, dedup)
 - [x] Skill sandbox strictness: no access to `DATABASE_URL`, tokens, or app code (`restricted_env()` strips secrets with `DENIED_ENV_PATTERNS`)
 - [x] `.env` file permissions: `chmod 600 .env`, confirmed `.gitignore` excludes it
+- [x] Prompt injection detection: 3-layer defense (input sanitization, context boundary detection, output canary check) — _(May 2026)_
+- [x] Token pattern detection: 13 API key formats (AWS, GitHub, OpenAI, Slack, HuggingFace, etc.) — _(May 2026)_
+- [x] Context boundary injection detection: 9 chat template patterns — _(May 2026)_
+- [x] AgentLogger read-only filesystem resilience: graceful fallback to `/tmp/` — _(May 2026)_
 - [ ] Run `chmod 600 .env` enforcement in CI or during `pillywiggins onboard`
 
 #### 6.6 Operations runbook
@@ -858,6 +868,14 @@ ALL of the following must pass before proceeding:
 - [x] PostgreSQL backup script works and produces valid compressed backup
 - [x] RLS enforcement: agent A cannot read agent B's private memories
 - [x] Skill sandbox: no access to secrets, 30s timeout enforced
+- [x] Prompt injection detection: 3-layer defense functional (input scan, context boundary, output canary)
+- [x] Token pattern detection: 13 API key formats detected and masked
+- [x] Memory consolidation: prune_by_age and prune_to_max tools operational
+- [x] Multi-provider support: 9 providers available in `pillywiggins onboard`, model listing for OpenAI-compatible APIs
+- [x] MCP integration: server configuration via onboard wizard, `skills/mcp_servers.json` auto-loading, `_build_mcp_toolsets()` in brain.py
+- [x] Claude skill importer: `pillywiggins import-skills` CLI with 14 tests covering parsing, conversion, file I/O
+- [x] Bug fixes: Web search Settings() removed from skills, tool parameter schema (__signature__ fix), memory recall prompt strengthened _(May 2026)_
+- [x] Deployment fixes: cap_drop removed for postgres/redis, Dockerfile healthcheck fixed (pgrep), security_opt fix, /app/logs tmpfs with correct uid/gid, settings parameter in PillywigginAgent, display_name chain propagation, scheduled message history persistence, sandbox env vars for skills
 - [x] `.env` secured: `chmod 600`, excluded from `.gitignore`
 - [x] Healthchecks present on infrastructure services (postgres, redis, nats, searxng)
 - [x] Health failure triggers automatic container restart (`restart: unless-stopped` written by onboard wizard)
@@ -872,7 +890,7 @@ ALL of the following must pass before proceeding:
 | Single machine failure | Daily PostgreSQL backups, documented recovery, restart policies |
 | Agent infinite tool loop | PydanticAI `retries=2`, 120s overall timeout, per-agent rate limiting |
 
-**(Phase 6 status: PARTIAL — rate limiting, structured logging, healthchecks, restart policies, backup script, security hardening, sandbox done; token bucket refactor, prompt injection detection, memory consolidation, ops runbook, unattended-ops validation pending)**
+**(Phase 6 status: PARTIAL — rate limiting, structured logging, healthchecks, restart policies, backup script, security hardening, prompt injection detection (3-layer), token pattern detection (13 formats), context boundary injection (9 patterns), output sanitization, memory consolidation/pruning, AgentLogger resilience, MCP integration, multi-provider support (9 providers), Claude skill importer, deployment fixes, sandbox done; token bucket refactor, conversation summarization, ops runbook, unattended-ops validation, backup scheduling, .env CI enforcement pending)**
 
 ---
 
