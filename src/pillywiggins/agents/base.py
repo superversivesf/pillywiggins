@@ -748,7 +748,10 @@ class PillywigginAgent:
 
             wrapped_content = f"<user_message>\n{sanitized_content}\n</user_message>"
 
-            await self._maybe_summarize_history(conversation_key)
+            try:
+                await self._maybe_summarize_history(conversation_key)
+            except Exception:
+                pass
 
             result = await self._brain.run(
                 wrapped_content,
