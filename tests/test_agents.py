@@ -56,6 +56,8 @@ def test_switch_model_creates_new_brain(agent):
         "http://localhost:11434",
         "",
         skill_registry=agent.skill_registry,
+        mcp_servers=None,
+        retries=2,
     )
 
 
@@ -786,6 +788,8 @@ def test_switch_model_passes_skill_registry(personality):
         "http://localhost:11434",
         "",
         skill_registry=mock_registry,
+        mcp_servers=None,
+        retries=2,
     )
 
 
@@ -814,6 +818,8 @@ def test_refresh_skills_recreates_brain_with_current_registry(personality):
         "http://localhost:11434",
         "",
         skill_registry=mock_registry,
+        mcp_servers=None,
+        retries=2,
     )
 
 

@@ -58,7 +58,10 @@ services:
     - no-new-privileges:true
     tmpfs:
     - /tmp
-    command: nats-server -js -m 8222
+    command: nats-server -c /etc/nats/nats-server.conf -js -m 8222
+    volumes:
+    - natsdata:/data
+    - ./nats-server.conf:/etc/nats/nats-server.conf:ro
     deploy:
       resources:
         limits:
@@ -167,4 +170,5 @@ networks:
 volumes:
   pgdata: null
   redisdata: null
+  natsdata: null
   searxng_data: null

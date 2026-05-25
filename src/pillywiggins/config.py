@@ -21,12 +21,17 @@ class Settings(BaseSettings):
     llm_base_url: str = "http://host.docker.internal:11434/v1"
     llm_api_key: str = ""
     model_name: str = "qwen3.5:8b"
+    llm_retries: int = 2
     embedding_model: str = "nomic-embed-text"  # default for Ollama embedding
     embedding_dimension: int = 768  # updated at startup by resolve_embedding_config
     telegram_bot_token: str = ""
     discord_bot_token: str = ""
+    _llm_rate_limit: int = 10  # max LLM calls per window (token bucket capacity)
+    _llm_rate_window: float = 60.0  # window in seconds for token refill
     compact_keep_messages: int = 6
     compact_truncate_message_chars: int = 2000
+    compact_summary_enabled: bool = True
+    compact_threshold_messages: int = 20
     allowed_user_ids: str = ""
     memory_retention_days: int = 90
     memory_max_entries: int = 1000

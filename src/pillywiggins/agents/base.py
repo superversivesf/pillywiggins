@@ -87,6 +87,12 @@ class PillywigginAgent:
         self._skill_registry = skill_registry
         self._compact_keep_messages = compact_keep_messages
         self._compact_truncate_message_chars = compact_truncate_message_chars
+        self._compact_summary_enabled = (
+            settings.compact_summary_enabled if settings is not None else True
+        )
+        self._compact_threshold_messages = (
+            settings.compact_threshold_messages if settings is not None else 20
+        )
         self._database_url = database_url
         self._nats_url = nats_url
         self._mcp_servers: list[dict[str, Any]] | None = mcp_servers
@@ -96,10 +102,16 @@ class PillywigginAgent:
         self._adapter: Any = None
         self._lock = asyncio.Lock()
         self._agent_logger = AgentLogger(agent_id)
-        # Rate limiting: max 10 LLM calls per minute per agent
-        self._llm_call_timestamps: list[float] = []
-        self._llm_rate_limit = 10  # calls
-        self._llm_rate_window = 60.0  # seconds
+        # Token bucket rate limiter: max calls per window, smoothed via token refill
+        if settings:
+            self._max_tokens: float = float(getattr(settings, '_llm_rate_limit', 10))
+            window: float = float(getattr(settings, '_llm_rate_window', 60.0))
+            self._token_rate: float = self._max_tokens / max(window, 1.0)
+        else:
+            self._max_tokens: float = 10.0
+            self._token_rate: float = 10.0 / 60.0
+        self._tokens: float = self._max_tokens
+        self._last_refill: float = time.monotonic()
         self._brain: Agent = self._rebuild_brain()
         self._seen_mentions_this_limit_cycle: dict[str, int] = {}
         self._conversation_histories: dict[str, list[ModelMessage]] = {}
@@ -118,6 +130,7 @@ class PillywigginAgent:
 
     def _rebuild_brain(self) -> Agent:
         """Re-create the brain agent with the current model and skill registry."""
+        retries = self._settings.llm_retries if self._settings else 2
         return create_brain(
             self._model_name,
             self._provider,
@@ -125,6 +138,7 @@ class PillywigginAgent:
             self._api_key,
             skill_registry=self._skill_registry,
             mcp_servers=self._mcp_servers,
+            retries=retries,
         )
 
     async def load_history(self, conversation_key: str | None = None) -> None:
@@ -470,6 +484,31 @@ class PillywigginAgent:
             "channel": self.personality.channel,
         }
 
+    async def _maybe_summarize_history(
+        self, conversation_key: str | None = None
+    ) -> str | None:
+        """Auto-summarize history if it exceeds the compact threshold.
+
+        Called before each brain.run() to keep context window manageable.
+        Returns the summary text if compaction occurred, or None if not needed.
+        """
+        if not self._compact_summary_enabled:
+            return None
+
+        history = self._get_history(conversation_key)
+        if len(history) <= self._compact_threshold_messages:
+            return None
+
+        logger.info(
+            "Auto-summarizing history for %s (%d messages exceeds threshold of %d)",
+            self.agent_id,
+            len(history),
+            self._compact_threshold_messages,
+        )
+
+        result = await self.compact_history(conversation_key)
+        return result
+
     async def compact_history(self, conversation_key: str | None = None) -> str:
         history = self._get_history(conversation_key)
         keep_count = self._compact_keep_messages
@@ -629,22 +668,26 @@ class PillywigginAgent:
         return await self.handle_message(message)
 
     def _check_rate_limit(self) -> str | None:
-        """Check if agent has exceeded LLM call rate limit. Returns error message if limited."""
+        """Token-bucket rate limiter: refills tokens based on elapsed time, then
+        consumes 1 token per LLM call. Returns error message if bucket is empty."""
         now = time.monotonic()
-        cutoff = now - self._llm_rate_window
-        self._llm_call_timestamps = [ts for ts in self._llm_call_timestamps if ts > cutoff]
-        if len(self._llm_call_timestamps) >= self._llm_rate_limit:
+        elapsed = now - self._last_refill
+        # Refill: add earned tokens, cap at bucket capacity
+        self._tokens = min(self._max_tokens, self._tokens + elapsed * self._token_rate)
+        self._last_refill = now
+
+        if self._tokens < 1:
             logger.warning(
-                "Agent %s rate limit hit (%d calls in %ds)",
+                "Agent %s token bucket empty (max=%.0f calls/%.0fs)",
                 self.agent_id,
-                self._llm_rate_limit,
-                int(self._llm_rate_window),
+                self._max_tokens,
+                self._max_tokens / self._token_rate if self._token_rate > 0 else 0,
             )
             return (
                 "I'm processing a lot of messages right now. "
                 "Please wait a moment and try again."
             )
-        self._llm_call_timestamps.append(now)
+        self._tokens -= 1
         return None
 
     async def handle_message(self, message: UnifiedMessage) -> str:
@@ -704,6 +747,8 @@ class PillywigginAgent:
                 return "I cannot process that request."
 
             wrapped_content = f"<user_message>\n{sanitized_content}\n</user_message>"
+
+            await self._maybe_summarize_history(conversation_key)
 
             result = await self._brain.run(
                 wrapped_content,

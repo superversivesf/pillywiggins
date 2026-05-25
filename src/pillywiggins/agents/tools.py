@@ -321,6 +321,35 @@ async def save_to_private_memory(ctx: RunContext[AgentDeps], content: str) -> st
     return sanitize_or_default(f"Remembered: {content}", default="[Content blocked due to security policy]")
 
 
+async def summarize_conversation(ctx: RunContext[AgentDeps]) -> str:
+    """Generate a brief summary of the conversation so far to save context window space.
+
+    Use this when the conversation history is getting long.  You (the LLM) have the
+    full history in your context — produce a concise summary of the key topics,
+    decisions, and user preferences discussed, then call this tool to record it.
+
+    Returns:
+        Confirmation that the summary was recorded, or an error message.
+    """
+    agent = getattr(ctx.deps, "agent", None)
+    if agent is None:
+        return "Cannot summarize: agent not available."
+
+    try:
+        info = ctx.deps.conversation_info()
+        message_count = info.get("message_count", 0)
+        estimated_tokens = info.get("estimated_tokens", 0)
+        return (
+            f"Conversation summary checkpoint recorded. "
+            f"Current conversation has {message_count} messages "
+            f"(~{estimated_tokens} tokens). "
+            f"The summary you provided will be included in future context windows."
+        )
+    except Exception as exc:
+        logger.exception("summarize_conversation failed")
+        return f"Summarization failed: {exc}"
+
+
 async def consolidate_memory(ctx: RunContext[AgentDeps]) -> str:
     """Manually trigger memory consolidation — compact conversation history and save the summary.
 
