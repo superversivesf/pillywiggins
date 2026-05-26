@@ -162,9 +162,18 @@ async def _builtin_custom(**kwargs: Any) -> None:
             output = getattr(result, "output", str(result))
 
             if isinstance(args, dict) and "conversation_key" in args:
+                conv_key = args["conversation_key"]
                 adapter = getattr(handler, "_adapter", None)
                 if adapter is not None:
-                    await adapter.send(args["conversation_key"], output)
+                    await adapter.send(conv_key, output)
+
+                new_history = result.all_messages()
+                if hasattr(handler, "_set_history"):
+                    handler._set_history(new_history, conv_key)
+                if hasattr(handler, "_cache") and handler._cache is not None:
+                    await handler._cache.save(handler.agent_id, new_history, conversation_key=conv_key)
+                if hasattr(handler, "_store") and handler._store is not None:
+                    await handler._store.save(conv_key, new_history)
 
             logger.info("custom prompt executed for %s: %s", agent_id, output)
             return
