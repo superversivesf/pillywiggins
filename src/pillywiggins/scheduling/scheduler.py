@@ -159,7 +159,14 @@ async def _builtin_custom(**kwargs: Any) -> None:
                     embedding_dimension=handler._settings.embedding_dimension,
                 ),
             )
-            logger.info("custom prompt executed for %s: %s", agent_id, getattr(result, "output", result))
+            output = getattr(result, "output", str(result))
+
+            if isinstance(args, dict) and "conversation_key" in args:
+                adapter = getattr(handler, "_adapter", None)
+                if adapter is not None:
+                    await adapter.send(args["conversation_key"], output)
+
+            logger.info("custom prompt executed for %s: %s", agent_id, output)
             return
 
         logger.info("custom action for %s completed (no skill or prompt configured)", agent_id)
