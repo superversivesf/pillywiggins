@@ -97,6 +97,7 @@ class PillywigginAgent:
         self._nats_url = nats_url
         self._mcp_servers: list[dict[str, Any]] | None = mcp_servers
         self._settings = settings
+        self._aliases: list[str] = [agent_id.lower()]
         self._nats_bus: NatsBus | None = None
         self._scheduler: AgentScheduler | None = None
         self._adapter: Any = None
@@ -583,21 +584,18 @@ class PillywigginAgent:
         self._set_history(new_history, conversation_key)
         return f"Compacted {len(old_messages)} messages into summary. Keeping {keep_count} recent."
 
-    def _is_addressed_to_me(self, content: str) -> bool:
+    def add_alias(self, name: str) -> None:
+        """Register an additional name this agent responds to (e.g. Telegram @username)."""
+        if name and name.lower() not in self._aliases:
+            self._aliases.append(name.lower())
+
+    def is_addressed_to_me(self, content: str) -> bool:
         """Check if the text contains an explicit mention/address of this agent."""
         mentions = {m.group(1).lower() for m in _MENTION_PATTERN.finditer(content)}
         addr_match = _ADDRESS_PATTERN.match(content)
-        agent_lower = self.agent_id.lower()
-
-        addr_lower = ""
-        if addr_match:
-            addr_lower = (addr_match.group(1) or addr_match.group(2)).lower()
-
-        return (
-            any(m == agent_lower or m.startswith(agent_lower) for m in mentions)
-            or addr_lower == agent_lower
-            or addr_lower.startswith(agent_lower)
-        )
+        aliases = set(self._aliases)
+        addr_lower = (addr_match.group(1) or addr_match.group(2)).lower() if addr_match else ""
+        return bool(mentions & aliases) or addr_lower in aliases
 
     def should_process_message(
         self,
@@ -626,11 +624,7 @@ class PillywigginAgent:
         match = _ADDRESS_PATTERN.match(content)
         if match:
             addressed_to = match.group(1) or match.group(2)
-            # Check if addressed to us: match agent_id OR Telegram-style usernames
-            # like puck_superversive_bot that contain our agent_id as prefix
-            addr_lower = addressed_to.lower()
-            agent_lower = self.agent_id.lower()
-            if addr_lower != agent_lower and not addr_lower.startswith(agent_lower):
+            if addressed_to.lower() not in set(self._aliases):
                 logger.info(
                     "Agent %s ignoring message addressed to %s", self.agent_id, addressed_to
                 )
@@ -664,7 +658,7 @@ class PillywigginAgent:
                 return False
             # We are going to process it; increment counter for bot messages
             # that are not explicitly addressed to us.
-            if is_bot and not self._is_addressed_to_me(content):
+            if is_bot and not self.is_addressed_to_me(content):
                 self._seen_mentions_this_limit_cycle[convo] = count + 1
 
         return True

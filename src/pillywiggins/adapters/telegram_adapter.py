@@ -53,6 +53,16 @@ class TelegramAdapter(BaseAdapter):
         if not self._app:
             await self.connect()
         await self._app.initialize()
+
+        try:
+            me = await self._app.bot.get_me()
+            username = me.username
+            if username:
+                self.agent.add_alias(username)
+                logger.info("Registered Telegram @%s as alias for %s", username, self.agent.agent_id)
+        except Exception:
+            pass
+
         await self._app.start()
         await self._app.updater.start_polling()
         await self._idle()
