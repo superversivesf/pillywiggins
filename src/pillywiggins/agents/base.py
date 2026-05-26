@@ -586,13 +586,17 @@ class PillywigginAgent:
     def _is_addressed_to_me(self, content: str) -> bool:
         """Check if the text contains an explicit mention/address of this agent."""
         mentions = {m.group(1).lower() for m in _MENTION_PATTERN.finditer(content)}
-        addressed_to = None
-        match = _ADDRESS_PATTERN.match(content)
-        if match:
-            addressed_to = (match.group(1) or match.group(2)).lower()
+        addr_match = _ADDRESS_PATTERN.match(content)
+        agent_lower = self.agent_id.lower()
+
+        addr_lower = ""
+        if addr_match:
+            addr_lower = (addr_match.group(1) or addr_match.group(2)).lower()
+
         return (
-            self.agent_id.lower() in mentions
-            or addressed_to == self.agent_id.lower()
+            any(m == agent_lower or m.startswith(agent_lower) for m in mentions)
+            or addr_lower == agent_lower
+            or addr_lower.startswith(agent_lower)
         )
 
     def should_process_message(
@@ -622,8 +626,11 @@ class PillywigginAgent:
         match = _ADDRESS_PATTERN.match(content)
         if match:
             addressed_to = match.group(1) or match.group(2)
-            # Case-insensitive comparison so "Wormwood" == "wormwood"
-            if addressed_to.lower() != self.agent_id.lower():
+            # Check if addressed to us: match agent_id OR Telegram-style usernames
+            # like puck_superversive_bot that contain our agent_id as prefix
+            addr_lower = addressed_to.lower()
+            agent_lower = self.agent_id.lower()
+            if addr_lower != agent_lower and not addr_lower.startswith(agent_lower):
                 logger.info(
                     "Agent %s ignoring message addressed to %s", self.agent_id, addressed_to
                 )
