@@ -51,6 +51,9 @@ logs/
 *.log
 
 
+# Project management
+.hive/
+
 # Test / coverage
 .pytest_cache/
 htmlcov/
