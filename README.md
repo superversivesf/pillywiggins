@@ -2,7 +2,60 @@
 
 **A council of AI agents, not a chatbot with multiple faces.**
 
-Each agent has its own personality, private memory, and communication channel. They share a common noticeboard (council memory) but keep their own notebooks. One crashes? The others keep working.
+Each agent has its own personality, private memory, and communication channel. They share a common noticeboard but keep their own notebooks. One crashes? The others keep working.
+
+## Why Pillywiggins?
+
+### The problem with single-agent AI assistants
+
+A single chatbot — whether it's ChatGPT, Claude, or a local model — is one personality talking everywhere. Slack DMs, Discord servers, email threads: same voice, same memory, same biases. If you want different tones for different contexts, you're switching accounts or writing custom system prompts for every conversation.
+
+Multi-agent frameworks like CrewAI and LangGraph promise agent teams, but they're designed for task orchestration — decomposing a goal into subtasks and farming them out. They're batch processors, not always-on companions. And they don't solve memory isolation: your Slack conversations bleed into your Discord agent's context.
+
+### What Pillywiggins does differently
+
+**True council, not a committee.** Each agent runs as its own process with its own personality YAML, private memory sandboxed at the database level, and its own cron schedule. A bug in Puck's Telegram handler can't take down Ariel on Slack. What you told Puck in private DM stays in Puck's private memory — Ariel literally can't read it.
+
+**Every agent has a voice.** Choose from 90+ personality templates across 10 themes: a fairy court, a starship bridge crew, a tavern, a workshop, a medical clinic — or write your own. Each personality defines tone, traits, and behavior, not just a name.
+
+**Agents build their own tools — with you.** Tell an agent "build me a tool that checks if a website is up." It drafts the Python, writes tests, runs them in a sandbox, and shows you the results. You iterate, approve, and the skill is shared with every agent automatically. No IDE, no deployment pipeline, no MCP server to configure. This is a first-class feature, not a future roadmap item.
+
+**No provider lock-in.** 9 LLM providers supported — Ollama (local), OpenAI, Groq, Together, OpenRouter, vLLM, LiteLLM, and custom OpenAI-compatible endpoints. Swap per agent during onboarding. Puck can run on your RTX GPU while Wormwood uses OpenRouter's free tier.
+
+**Runs at home. Full stop.** No cloud accounts, no API quotas, no data leaving your machine. One `docker compose up` starts everything: agents, PostgreSQL, Redis, NATS. Connects to your local Ollama. Your Discord token. Your Slack bot. Your data, your hardware.
+
+### Comparison
+
+|  | Single Chatbot | CrewAI / LangGraph | Pillywiggins |
+|--|:---:|:---:|:---:|
+| Multiple personalities | One per account | Task-roles | 90+ YAML templates |
+| Memory isolation | None | Thread-based | Database-enforced (RLS) |
+| Always-on agents | One session | Batch-only | Persistent processes |
+| Agent-built skills | No | No | Yes — collaborative |
+| Per-agent schedules | No | No | Yes — cron in personality YAML |
+| Runs locally | Varies | Cloud-biased | `docker compose up` |
+| Multi-channel | One | N/A | Discord, Slack, Telegram, Matrix, Email |
+| Prompt injection defense | Varies | None | 3-layer (input, output, memory) |
+
+### Who is this for?
+
+**Homelabbers and self-hosters** who want AI companions running on their own hardware — no cloud subscription, no data leaving the house.
+
+**Families and shared houses** where multiple people each have their own agent. Mom talks to Sunflower on Telegram; Dad talks to Barkeep on Discord. The agents share skills and council memory behind the scenes but keep private conversations private. Each agent learns its own user's preferences without cross-contamination.
+
+**Tinkerers** who want agents that grow over time. The skill library expands as you and your agents build tools together. What starts as "check if a website is up" becomes a personal toolbox of 20 utilities your agents built for you.
+
+### Channels
+
+| Channel | Status |
+|---------|--------|
+| Telegram | Stable, well-tested |
+| Discord | Adapter implemented |
+| Slack | Adapter implemented |
+| Matrix | Adapter implemented |
+| Email | Adapter implemented |
+
+All five adapters produce the same internal `UnifiedMessage` format — the agent brain doesn't know or care which channel a message came from. Telegram is the most battle-tested; other channels need real-world mileage.
 
 ## Quick Start
 
@@ -98,43 +151,34 @@ docker compose logs --tail=5000 > pillywiggins-logs.txt
 - [ONBOARD.md](ONBOARD.md) — Setup, configuration, and troubleshooting
 - [docs/pillywiggins-overview-v2.md](docs/pillywiggins-overview-v2.md) — Architecture, design decisions, and how everything fits together
 
-## Features
+## More Features
 
-### Multi-provider LLM support
+**MCP server support.** Connect external tools via the Model Context Protocol — filesystem access, GitHub management, Brave Search, or any MCP-compatible server. Configured globally via `pillywiggins onboard`, shared across all agents. See [docs/MCP.md](docs/MCP.md).
 
-Pillywiggins works with 9 LLM providers out of the box, selectable per-agent during onboarding:
-
-| Provider | Type | Needs API Key |
-|----------|------|:---:|
-| Ollama | Local, self-hosted | No |
-| Ollama Cloud | ollama.com | Yes |
-| OpenAI | Cloud | Yes |
-| Groq | Fast inference | Yes |
-| Together AI | Cloud | Yes |
-| OpenRouter | Multi-model gateway | Yes |
-| vLLM | Self-hosted inference server | No |
-| LiteLLM Proxy | Multi-provider gateway | No |
-| Custom | Any OpenAI-compatible API | Optional |
-
-Each agent gets its own LLM config — Puck can use local Ollama while Wormwood uses OpenRouter. The onboard wizard polls your provider for available models so you can browse with arrow keys.
-
-### MCP servers (global tools)
-
-Pillywiggins connects to MCP (Model Context Protocol) servers for shared tools available to all agents. During onboarding (`pillywiggins onboard` → "Configure MCP servers"), you can add stdio or HTTP-based MCP servers — connect a filesystem server for file access, a GitHub server for repo management, or any other MCP-compatible tool. The config is written to `skills/mcp_servers.json` and shared across agents.
-
-### Claude skill import
-
-Bring your existing Claude-style skills into Pillywiggins:
+**Claude skill import.** Already have Claude skills? Import them directly:
 
 ```bash
 pillywiggins import-skills --source path/to/skill.md --output skills/
 ```
 
-This parses `.skill.md` files and converts them to Pillywiggins' Python-native skill format. Point `--source` at a single file or a directory to batch-import.
+**Display name override.** Give agents a different display name than their personality YAML — set during onboarding.
 
-### Display names
+### Personality themes
 
-During onboarding, you can give each agent a custom display name that overrides the personality name in conversations — your agents don't have to be called what their personality YAML says.
+90+ personalities across 10 themes, all YAML-driven:
+
+| Theme | Directory | Flavor |
+|-------|-----------|--------|
+| Fey Court | `fey_court/` | Mischievous fairies, gatekeepers, healers |
+| Starship Bridge | `bridge/` | Chief engineer, science officer, counselor |
+| Tavern | `tavern/` | Barkeep, bard, alchemist, rumormonger |
+| Workshop | `workshop/` | Foreman, inspector, fixer, scout |
+| Clinic | `clinic/` | Therapist, coach, nutritionist, pharmacist |
+| Study | `study/` | Historian, editor, skeptic, synthesist |
+| Kitchen | `kitchen/` | Chef, forager, taster, host |
+| Studio | `studio/` | Critic, curator, muse, director |
+| Ship | `ship/` | Captain, navigator, lookout, boatswain |
+| Defaults | `_defaults/` | Per-channel sensible defaults |
 
 ## Architecture
 
