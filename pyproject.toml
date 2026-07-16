@@ -23,7 +23,7 @@ dependencies = [
     "questionary>=2.0",
     "pgvector>=0.2.4",
     "sentence-transformers",
-    "mcp>=1.0.0",
+    "mcp>=1.28.1",
 ]
 
 [project.scripts]
